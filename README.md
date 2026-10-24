@@ -7,12 +7,12 @@ Small, well-established physics simulations in Python. Each one uses an integrat
 From the repository root, with Python 3.10 or newer:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv ../venv
+source ../venv/bin/activate
 pip install -r requirements.txt
 ```
 
-The dependencies are numpy, matplotlib, pillow, and pytest. No display is required. The scripts use Matplotlib's Agg backend unless you pass `--show` and a display is available.
+The dependencies are numpy, matplotlib, pillow, pytest, and PyQt6 (GUI backend). No display is required. The harmonic and orbit scripts use Matplotlib's Agg backend unless you pass `--show` and a display is available.
 
 ## Run
 
@@ -20,11 +20,14 @@ The dependencies are numpy, matplotlib, pillow, and pytest. No display is requir
 python -m simulations.harmonic
 python -m simulations.harmonic --compare
 python -m simulations.orbit
+python -m simulations.star_system  # live interactive GUI
+python -m simulations.star_system --star sun --planet earth --planet jupiter --output output/star-system.png
 ```
 
 Plots and an animation are written under `output/`. Details, presets, and the other command-line flags are in each simulation's README:
 
 - [Harmonic oscillator](simulations/harmonic/README.md) — a mass on a spring, with damping and a sinusoidal drive
+- [Interactive star system](simulations/star_system/README.md) — tunable stars and planets with full N-body gravity
 - [Two-body orbit](simulations/orbit/README.md) — a planet and a star on elliptical orbits
 
 ## Tests
