@@ -1,0 +1,6 @@
+numpy>=1.24
+matplotlib>=3.8
+pillow>=10
+pytest>=7.4
+# GUI backend (Tk is not bundled with every Python installation).
+PyQt6>=6.5
