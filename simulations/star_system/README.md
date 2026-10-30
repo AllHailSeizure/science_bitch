@@ -58,6 +58,85 @@ On backends that support blitting, static controls and guides are cached while
 moving bodies, trails, and readouts are repainted. Camera changes, resizing,
 and edited controls refresh that cache. Other backends use normal full redraws.
 
+## Reproducible populations (Issue #6 Foundation)
+
+Create a population through the command line, either in the live observatory or
+as a display-free export:
+
+```bash
+python -m simulations.star_system --population belt --count 200 --inner 2 --outer 3.5 --seed 42
+python -m simulations.star_system --planet jupiter --population ring --inner 3.2 --count 64 --angles even --seed 7 --years 1 --output output/ring.png
+python -m simulations.star_system --population disk --inner 1.5 --outer 4 --count 1000 --seed 42 --output output/disk.png
+```
+
+`ring` uses a single radius (`--outer` defaults to `--inner` and must equal it).
+`belt` samples radius uniformly between the bounds. `disk` samples uniformly in
+annular area, so radius squared is uniform. Both require inner < outer; their
+default outer radius is 3.5 AU. All radii are initial distances from the star's
+center, must be positive and finite, and must lie outside its surface. These are
+planar populations, without thickness, eccentricity dispersion, or inclination.
+`--angles random` samples independent uniform angles; `--angles even` spaces
+angles equally with a seeded random orientation. Quantity is 1-2000 particles
+in total; seeds are nonnegative integers. The same settings, catalog bodies,
+distances, and software versions reconstruct the same state using NumPy PCG64.
+Restart regenerates that state and resets time and trails. A different seed
+changes the realization. Changing a planet, distance, or star also restarts it.
+Selecting a star whose surface contains the population is rejected recoverably.
+
+These particles have zero mass: they feel every massive body's unsoftened
+Newtonian gravity, but exert no gravity and do not interact with one another.
+Their circular prograde starting velocities use `sqrt(G M_reference / radius)`
+relative to the reference body's position and velocity. This is an initial guess,
+not an equilibrium or a promise of stability in a perturbed system. No forces,
+clustering, or capture outcomes are scripted. There is no physical collision,
+accretion, bounce, or fragmentation response. Overlapping test particles do not
+interact. An unresolved particle/massive-body or massive/massive close encounter
+halts the whole run under the existing timescale guard; time reports completed
+steps only. Visible dots have no physical contact radius.
+
+Particles appear as small points alongside the major bodies. Pause, Resume,
+Step, Fit view, click-to-inspect, and Follow apply to populated systems. Particle
+inspection reports star-relative distance and speed; trails remain limited to
+major bodies to bound display work. Restart reproduces the population while
+retaining pause state. Native desktop interaction has not been manually verified
+on this cloud workspace; Agg checks exercise playback, restart, selection,
+following, and rendering, and CLI exports use the same scene.
+
+The reusable Python API is `Population` plus
+`with_population(system, settings, reference_radius=...)`. It returns an
+independent `System`, preserves existing bodies and time, and appends test
+particles. `reference` is the index of a positive-mass body; supply its known
+physical radius in AU for surface validation (the API default is a point).
+It supports arbitrary massive reference configurations, including multiple
+stars supplied by a caller, but those systems have no stability guarantee.
+The current catalog CLI/observatory offers star-relative populations only.
+Initialization can shorten the fixed timestep to the inner-radius reference
+period / 600. This constructor is not a live insertion operation.
+
+Measured on the cloud workspace (Python 3.12, NumPy 2.3.5), 100 physics steps
+with Sun/Earth/Jupiter took about 0.65, 0.82, and 1.59 ms/step for 200, 1000,
+and 2000 particles respectively. These are indicative physics-only timings,
+not desktop frame-rate promises. Gravity/encounter work scales with total bodies
+times massive bodies, rather than with the square of the particle count. More
+massive bodies, close inner radii, drawing, and stored history add cost. The
+existing live work budget reports when it cannot achieve the requested speed.
+
+Verification covers seeded initial states/evolution, radial distributions,
+equally spaced angles, circular reference velocities, reference frame offsets,
+timestep selection, one isolated ring revolution (position error < 1e-7 AU),
+absence of particle backreaction, and close-encounter rejection. A matched
+32-particle ring at 3.2 AU with seed 7 evolves for one initial ring period:
+removing Jupiter's gravitational mass while preserving initial positions,
+velocities, and timestep produces a maximum star-relative displacement
+difference greater than 0.01 AU. This demonstrates perturbation, not Trojan
+capture or long-term stability.
+
+This completes the cloud-testable population foundation, not all of #6.
+Interactive population authoring through #5 and preparation/save/reload and
+calculate-first playback through #8 remain future integration work. Settings
+are explicit immutable data ready for those workflows; persistence is not yet
+implemented.
+
 ## Physics and display
 
 `core.py` imports no plotting code. Every body, including the moving star, feels

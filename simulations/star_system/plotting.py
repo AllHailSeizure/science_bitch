@@ -8,6 +8,7 @@ from matplotlib.widgets import RadioButtons, Button, Slider
 
 from .core import make_system, SOLAR_RADIUS_AU
 from .data import STARS, PLANETS
+from .populations import with_population
 from .rendering import BACKGROUND, PANEL, TEXT, MUTED, ACCENT, CanvasPainter, draw
 
 FRAME_SECONDS = 1 / 60
@@ -30,8 +31,11 @@ def _button(fig, bounds, label):
 
 
 class App:
-    def __init__(self, star='sun', planets=('earth', 'jupiter')):
+    def __init__(self, star='sun', planets=('earth', 'jupiter'), population=None):
+        if population is not None and population.reference != 0:
+            raise ValueError('The current observatory supports star-relative populations only.')
         self.star, self.planets = star, list(planets)
+        self.population = population
         self.distances = [PLANETS[p].distance for p in planets]
         self.paused = False
         self.following = False
@@ -134,6 +138,15 @@ class App:
             self.sliders.append(slider)
 
     def change_star(self, key):
+        if self.population is not None and self.population.inner <= STARS[key].radius*SOLAR_RADIUS_AU:
+            self.status.set_text('Population would be inside this star; choose a smaller star or wider radii.')
+            # Restore the picker without firing another change callback.
+            self.star_picker.eventson = False
+            self.star_picker.set_active(list(STARS).index(self.star))
+            self.star_picker.eventson = True
+            self.painter.invalidate()
+            self.fig.canvas.draw_idle()
+            return
         self.star = key
         self.rebuild_sliders()
         self.restart()
@@ -153,6 +166,9 @@ class App:
 
     def restart(self):
         self.system = make_system(self.star, self.planets, self.distances)
+        if self.population is not None:
+            self.system = with_population(self.system, self.population,
+                                          STARS[self.star].radius*SOLAR_RADIUS_AU)
         self.trails = []
         self.pending = 0.
         self.halted = False
@@ -164,7 +180,7 @@ class App:
         self.ax.callbacks.connect('ylim_changed', self.painter.invalidate)
         self.painter.set_artists([*self.scene.moving_artists,
                                   self.inspector, self.mode, self.status])
-        self.selected_index = min(self.selected_index, len(self.planets))
+        self.selected_index = min(self.selected_index, len(self.system.masses)-1)
         self._refresh()
 
     def _refresh(self):
@@ -174,11 +190,16 @@ class App:
         if index == 0:
             body = STARS[self.star]
             details = f'{body.name}\n{body.mass:g} solar masses\n{body.radius:g} solar radii   /   {body.temperature:,.0f} K'
-        else:
+        elif index <= len(self.planets):
             key = self.planets[index-1]
             body = PLANETS[key]
             distance = np.linalg.norm(self.system.r[index]-self.system.r[0])
             details = f'{body.name}\n{body.radius:,.0f} km radius\n{distance:.4g} AU from star'
+        else:
+            distance = np.linalg.norm(self.system.r[index]-self.system.r[0])
+            speed = np.linalg.norm(self.system.v[index]-self.system.v[0])
+            details = (f'Particle {index-len(self.planets)} / massless\n'
+                       f'{distance:.4g} AU from star\n{speed:.4g} AU / yr relative to star')
         self.inspector.set_text(details)
         if self.following:
             center = self.scene.positions[index]
