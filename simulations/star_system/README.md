@@ -12,7 +12,7 @@ pytest -q
 pytest -s tests/test_star_system.py
 ```
 
-The GUI is a live Matplotlib window using RadioButtons, Buttons, and Sliders.
+The GUI is a live Matplotlib observatory with dark control panels, illuminated planet disks, glowing stars, fading trails, and a body inspector.
 PyQt6 provides a backend when Python lacks Tk. A desktop display is required
 for the GUI; the output command forces Agg and needs no display. Stars are
 `proxima`, `sun`, `sirius`, `rigel`; planet keys are their lowercase names.
@@ -24,12 +24,39 @@ once; selecting an existing body is a no-op. Distance sliders are logarithmic,
 labeled in AU, and start at catalog distances. They span 0.005–80 AU, with the
 lower limit raised above the selected star's surface. Switching to a giant
 clamps any now-interior orbit to 1.02 stellar radii. Moving a distance slider,
-adding a planet, changing star, or pressing Reset rebuilds the initial system,
-clears trails and resets time. Reset preserves current selections and distances.
+adding a planet, changing star, or pressing Restart rebuilds the initial system,
+clears trails and resets time. Restart preserves current selections and distances.
 The speed slider sets requested years per wall-clock second without changing
-the physics timestep. Frames have a bounded compute budget; a visible message
+the physics timestep. Each frame advances at most 150 steps and yields after
+approximately 6 ms of physics work (at step boundaries); a visible message
 reports when the requested speed exceeds it. Close encounters that cannot be
 resolved halt with a message; reset or adjust distances to resume.
+
+## Navigation and playback
+
+| Control | Action |
+| --- | --- |
+| Pause / Resume, or Space | Stop or resume evolution without rebuilding the system |
+| Step, or `.` | Pause and advance one fixed physics timestep |
+| Mouse wheel over the view | Zoom around the cursor |
+| Left drag over the view | Pan; this also stops following a body |
+| Click a star or planet | Select it and show its details in the inspector |
+| Follow body / Unfollow | Keep the selected body centered at the current zoom |
+| Fit view, Home, or `0` | Stop following and frame the current system |
+| Restart | Clear time and trails, keeping selected bodies, distances, and pause state |
+
+The speed slider requests simulated years per second. Zoom is still on the
+compressed radial scale, not a linear AU scale. Shaded disks retain a readable
+screen size while zooming. Adding a body or changing a star/distance rebuilds
+the initial system as before. This update changes presentation and controls;
+moons, swarm particles, and scenario saving remain part of the
+[Evolving star-system sandbox milestone](https://github.com/AllHailSeizure/science_bitch/milestone/1).
+
+The desktop timer targets 60 updates per second and accounts for time spent in
+the callback. Actual frame rate depends on the system, viewport, and backend.
+On backends that support blitting, static controls and guides are cached while
+moving bodies, trails, and readouts are repainted. Camera changes, resizing,
+and edited controls refresh that cache. Other backends use normal full redraws.
 
 ## Physics and display
 
@@ -58,14 +85,16 @@ encounters; it is not a guarantee for arbitrary unstable systems. There is no
 collision/merger, tidal, relativistic, stellar evolution, or habitable-zone
 model. Bodies are point masses; planets are not physically destroyed by heat.
 
-The view follows the star. A radial `asinh(r / 0.05 AU)` mapping preserves
-angles while compressing distance, and the extent expands automatically. Rings
+The initial view is centered on the star; drag to pan, scroll to zoom, or follow a selected body. A radial `asinh(r / 0.05 AU)` mapping preserves
+angles while compressing distance. Fit view frames the current positions. Rings
 carry physical AU labels. Shapes and apparent speeds are distorted by this
-mapping. Trails contain at most 1500 integration samples. **Marker sizes are
+mapping. Trails retain at most 1500 integration samples and draw at most 400
+vertices each, including their first and latest samples. This display sampling
+does not change integration or the retained history. **Marker sizes are
 not to scale**: star diameter in points is `12 + 16 log10(1 + 8 R/Rsun)`;
-planet diameter is `5 + 2 log10(1 + R/km / 1000)`. These monotonic compression
+planet diameter is `14 + 7 log10(1 + R/km / 1000)`. These monotonic compression
 rules make small planets visible and giants visibly larger than dwarfs.
-Stellar colors approximate the Planckian locus using
+Planet shading faces the star in the orbital plane, with a small ambient term to keep the night hemisphere visible. Surface markings are stylized procedural illustrations, not geographic maps. Stellar halos, decorative background stars, and shading do not affect the physics. Camera limits persist between frames; **Fit view** recenters and frames the current system. Stellar colors approximate the Planckian locus using
 [Tanner Helland's temperature-to-RGB fit](https://tannerhelland.com/2012/09/18/convert-temperature-rgb-algorithm-code.html).
 A 3050 K dwarf appears warm orange-red, not saturated red; hotter stars appear
 blue-white. Brightness is normalized. This is an approximate blackbody display,
@@ -127,8 +156,13 @@ radii and temperatures, strictly increasing blue/red color ratio with stellar
 temperature, and increasing star marker diameter with physical radius. Invalid
 orbits, duplicate bodies, and nonfinite distances are rejected.
 
-The full repository suite passes: 45 tests. GUI verification under `xvfb-run`
-used mouse events to exercise star and planet radio selectors, Add, distance,
-speed and Reset, checked timer-driven time advancement, and captured Proxima
-and Rigel windows. Verification artifacts are outside the checkout under
-`/workspace/science_bitch/artifacts/` and are not committed.
+The suite includes 45 physics/catalog checks and 21 display/control checks.
+The display checks use Agg and Matplotlib mouse/key events to verify lighting
+direction, sprite positions, fading trails, retained artists/camera, pause and
+single-step, time advancement, zoom, pan, selection/follow, rebuilding controls,
+ten-body layout, and close-encounter halting. Rendering checks also cover cached
+frames, bounded display trails, actual step accounting under a work budget,
+resize/full-redraw equivalence, exports, and the non-blitting fallback.
+Run `python -m pytest -q`.
+Still exports use the same renderer as the live window. These headless checks
+do not establish native desktop input behavior on every GUI backend.
