@@ -22,14 +22,28 @@ MAX_TRAIL_VERTICES = 400
 class CanvasPainter:
     """Cache static pixels and repaint moving artists on blit-capable backends."""
 
-    def __init__(self, canvas):
+    def __init__(self, canvas, overlay_axes=()):
         self.canvas = canvas
         self.artists = []
         self.background = None
         self.text_bounds = {}
         self.use_blit = canvas.supports_blit
+        self.overlay_axes = overlay_axes
         canvas.mpl_connect('draw_event', self._on_draw)
         canvas.mpl_connect('resize_event', self.invalidate)
+
+    @property
+    def overlay_axes(self):
+        return self._overlay_axes
+
+    @overlay_axes.setter
+    def overlay_axes(self, axes):
+        for ax in getattr(self, '_overlay_axes', ()):
+            ax.set_animated(False)
+        self._overlay_axes = list(axes)
+        for ax in self._overlay_axes:
+            ax.set_animated(self.use_blit)
+        self.invalidate()
 
     def invalidate(self, event=None):
         self.background = None
@@ -41,6 +55,7 @@ class CanvasPainter:
         self.text_bounds.clear()
         for artist in self.artists:
             artist.set_animated(self.use_blit)
+        self.overlay_axes = self.overlay_axes
         self.invalidate()
 
     def _on_draw(self, event):
@@ -52,6 +67,7 @@ class CanvasPainter:
             for artist in self.artists:
                 if artist.axes is None:
                     artist.draw(event.renderer)
+            self._draw_overlay(event.renderer)
             self.invalidate()
             return
         self.background = self.canvas.copy_from_bbox(self.canvas.figure.bbox)
@@ -62,13 +78,20 @@ class CanvasPainter:
         for artist in self.artists:
             if artist.get_visible():
                 self.canvas.figure.draw_artist(artist)
+        self._draw_overlay(self.canvas.get_renderer())
+
+    def _draw_overlay(self, renderer):
+        # Keep overlays out of the cached background. Drawing their translucent
+        # edges twice changes pixels, and moving scene artists must stay below.
+        for ax in sorted(self.overlay_axes, key=lambda ax: ax.get_zorder()):
+            if ax.get_visible():
+                ax.draw(renderer)
 
     def _blit_regions(self):
         figure = self.canvas.figure
         renderer = self.canvas.get_renderer()
         axes = {artist.axes for artist in self.artists if artist.axes is not None}
-        # Include marker and label overhang beyond the viewport. The sidebar
-        # controls need no transfer to Tk while only the orbital view moves.
+        # Include marker/label overhang and the overlay repainted above it.
         regions = [ax.bbox.padded(.8*figure.dpi) for ax in axes]
         for artist in self.artists:
             if artist.axes is None:
@@ -158,7 +181,7 @@ def star_sprite(star):
 
 
 def planet_size(planet):
-    return 14 + 7*np.log10(1 + PLANETS[planet].radius/1000)
+    return 4 + 3*np.log10(1 + PLANETS[planet].radius/1000)
 
 
 class Scene:
@@ -169,7 +192,7 @@ class Scene:
         self.selected = None
         ax.clear()
         ax.set_facecolor(BACKGROUND)
-        ax.set_aspect('equal', adjustable='box')
+        ax.set_aspect('auto')
         ax.set_xticks([])
         ax.set_yticks([])
         for spine in ax.spines.values():
@@ -212,8 +235,10 @@ class Scene:
 
     @property
     def moving_artists(self):
-        return [*self.trails, self.particles, self.highlight, self.star_artist,
-                *self.bodies, *self.labels, self.clock]
+        # Guide text can overlap trails. Paint it in the same z-order as a full
+        # axes draw, rather than baking it below every moving artist.
+        return [*self.trails, *self.ax.texts, self.particles, self.highlight,
+                self.star_artist, *self.bodies]
 
     def _background(self):
         rng = np.random.default_rng(24)
@@ -273,8 +298,10 @@ class Scene:
 
     def fit_view(self):
         extent = max(2., np.max(np.linalg.norm(self.positions, axis=1))*1.25)
-        self.ax.set_xlim(-extent, extent)
-        self.ax.set_ylim(-extent, extent)
+        ratio = self.ax.bbox.height / max(self.ax.bbox.width, 1)
+        half_width = extent / min(1., ratio)
+        self.ax.set_xlim(-half_width, half_width)
+        self.ax.set_ylim(-half_width*ratio, half_width*ratio)
 
 
 def draw(ax, system, star, planets, trails=None):
