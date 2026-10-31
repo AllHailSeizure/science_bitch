@@ -85,10 +85,12 @@ def build_system(setup):
         from .populations import with_population
         pop = setup.population
         if pop.reference_id not in ids:
-            raise ValueError('Population reference body is missing.')
+            raise ValueError(f'Population reference body {pop.reference_id!r} is missing. Choose an existing massive reference.')
         index = ids.index(pop.reference_id)
+        if specs[index].mass <= 0:
+            raise ValueError(f'Population reference {pop.reference_id!r} must have positive mass. Choose a massive body.')
         if specs[index].radius is None:
-            raise ValueError('Population surface validation requires a known reference radius.')
+            raise ValueError(f'Population reference {pop.reference_id!r} needs a known physical radius (AU) for surface validation.')
         system = with_population(system, replace(pop.settings, reference=index), specs[index].radius)
         # Explicit dt is authoritative for general setups; never silently shorten here.
         system.dt = setup.dt

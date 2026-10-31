@@ -1,5 +1,5 @@
 """Immutable authored definitions. Distances AU, masses solar, velocities AU/year."""
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Mapping, TYPE_CHECKING
 import numpy as np
@@ -64,13 +64,16 @@ class InitialBody:
 
 @dataclass(frozen=True)
 class PopulationSpec:
+    """Authored identity; Population.reference is only a legacy engine adapter."""
     id: str
     reference_id: str
     settings: 'Population'
 
     def __post_init__(self):
-        if not self.id or not self.reference_id:
+        if not isinstance(self.id, str) or not self.id.strip() or not isinstance(self.reference_id, str) or not self.reference_id.strip():
             raise ValueError('Population and reference IDs are required.')
+        # A numeric row has no meaning in authored metadata or a reordered setup.
+        object.__setattr__(self, 'settings', replace(self.settings, reference=0))
 
 @dataclass(frozen=True)
 class InitialSetup:
