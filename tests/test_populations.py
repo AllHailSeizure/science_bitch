@@ -6,6 +6,72 @@ import pytest
 
 from simulations.star_system.core import G, System, make_system
 from simulations.star_system.populations import MAX_PARTICLES, Population, with_population
+from simulations.star_system.model import BodySpec, InitialBody, InitialSetup, PopulationSpec
+from simulations.star_system.initialization import build_system
+
+
+def binary_population_setup():
+    first = BodySpec('First star', 'star', 1., .00465)
+    second = BodySpec('Second star', 'star', .6, .003)
+    settings = Population(kind='ring', inner=1., outer=1., count=12, seed=23, angles='even')
+    return InitialSetup('Binary ring', (
+        InitialBody('first', first, (-20., 3.), (.2, -.1)),
+        InitialBody('second', second, (40., -7.), (-.3, .4))),
+        dt=.0001, population=PopulationSpec('rocks', 'second', settings))
+
+
+def test_population_reference_survives_body_reordering():
+    setup = binary_population_setup()
+    original = build_system(setup)
+    reordered = build_system(replace(setup, bodies=setup.bodies[::-1]))
+    for key in original.body_ids:
+        i, j = original.body_ids.index(key), reordered.body_ids.index(key)
+        np.testing.assert_array_equal(original.system.r[i], reordered.system.r[j])
+        np.testing.assert_array_equal(original.system.v[i], reordered.system.v[j])
+        assert original.body_specs[i] == reordered.body_specs[j]
+    assert original.body_ids[2:] == tuple(f'rocks:{i}' for i in range(12))
+
+
+def test_population_around_second_star_uses_its_state():
+    setup = binary_population_setup()
+    prepared = build_system(setup)
+    r = prepared.system.r[2:]-setup.bodies[1].r
+    v = prepared.system.v[2:]-setup.bodies[1].v
+    np.testing.assert_allclose(np.linalg.norm(r, axis=1), 1., atol=1e-14)
+    np.testing.assert_allclose(np.sum(v*v, axis=1), G*.6, rtol=1e-14)
+    np.testing.assert_allclose(np.sum(r*v, axis=1), 0., atol=5e-14)
+    assert np.all(r[:, 0]*v[:, 1]-r[:, 1]*v[:, 0] > 0)
+    for i, body in enumerate(setup.bodies):
+        np.testing.assert_array_equal(prepared.system.r[i], body.r)
+        np.testing.assert_array_equal(prepared.system.v[i], body.v)
+    assert prepared.system.dt == setup.dt
+
+
+@pytest.mark.parametrize('problem', ['missing', 'zero mass', 'unknown radius', 'surface'])
+def test_missing_population_reference_is_recoverable(problem):
+    setup = binary_population_setup()
+    valid = build_system(setup)
+    r, v = valid.system.r.copy(), valid.system.v.copy()
+    if problem == 'missing':
+        invalid = replace(setup, bodies=setup.bodies[:1])
+    else:
+        spec = replace(setup.bodies[1].spec, **{
+            'zero mass': dict(kind='particle', mass=0.),
+            'unknown radius': dict(radius=None), 'surface': dict(radius=2.)}[problem])
+        invalid = replace(setup, bodies=(setup.bodies[0], replace(setup.bodies[1], spec=spec)))
+    with pytest.raises(ValueError, match='Population.*(reference|surface)'):
+        build_system(invalid)
+    np.testing.assert_array_equal(valid.system.r, r)
+    np.testing.assert_array_equal(valid.system.v, v)
+    assert valid.setup is setup
+
+
+def test_authored_population_does_not_persist_numeric_reference():
+    setup = binary_population_setup()
+    pop = replace(setup.population, settings=replace(setup.population.settings, reference=19))
+    assert pop.settings.reference == 0  # compatibility field, never a saved row identity
+    built = build_system(replace(setup, population=pop))
+    np.testing.assert_array_equal(built.system.r, build_system(setup).system.r)
 
 
 @pytest.mark.parametrize('kind', ['ring', 'disk', 'belt'])
