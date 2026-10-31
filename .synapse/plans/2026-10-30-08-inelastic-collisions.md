@@ -1,6 +1,6 @@
 # Simplified inelastic collision implementation plan
 
-**Goal:** Implement #8's physical-contact capability using an explicit, reproducible perfectly inelastic merge option.
+**Goal:** Implement #8's nonstellar physical-contact capability using an explicit, reproducible perfectly inelastic merge option.
 
 **Architecture:** Separate physical contact/response from rendering and from the existing numerical close-encounter guard. Preserve the current collision-free Yoshida path; an opt-in collision-aware stepping path must resolve contact in forward physical time, emit membership-changing events, and feed the same live/recorded workflows.
 
@@ -10,7 +10,7 @@
 
 - “Contact and its resulting response use declared physical properties/radii supplied by #5; illustrative marker overlap and numerical close-encounter limits are distinguishable from physical collision.”
 - “Define the supported collision settings, interaction pairs, and response before claiming collision behavior is complete; preserve those choices in reproducible starting setups.”
-- The original issue deliberately chose no response. The user's 2026-10-30 direction was “Inelastic merging I think. Does that reflect cosmological collision?” This plan proposes **perfectly inelastic merging**, with its limits explained; remaining interaction/remnant choices are a judgment task.
+- The user selected simplified inelastic merging, then explicitly deferred stellar mergers to the dedicated [binary-star merger experiment #14](https://github.com/AllHailSeizure/science_bitch/issues/14). This plan supports nonstellar merging only; contact involving a star halts with a clear unsupported-contact message. It must not implement #14 or a generic stellar touch-and-merge rule.
 - Requires plans 2, 5, 6; sequence after 7 because shared history/controller/renderer files overlap. Collision-free work does not wait on this plan.
 
 ## Scientific interpretation
@@ -38,8 +38,8 @@ Do not describe this as a general model of cosmological collisions. Galaxy encou
 
 **Interfaces:** Produce `CollisionPolicy`, `CollisionEvent`, and `merge_pair(prepared, first_id, second_id) -> (PreparedSystem, CollisionEvent)` with deterministic remnant identity and provenance.
 
-- [ ] Settle supported interactions with the owner before coding them. Proposed initial scope: positive-mass/positive-mass sphere contact merges; test-particle/positive-mass contact removes the test particle with zero mass/momentum feedback; test-particle/test-particle contact is ignored. Confirm whether stars participate under this same explicitly idealized rule or should report unsupported stellar contact. No planet/star structural realism is implied by generic merging.
-- [ ] Settle remnant properties: recommend volume-additive physical radius `cbrt(R1**3 + R2**3)`, combined mass, center-of-mass position/velocity, a stable new ID with both parent IDs in an event, and user-visible combined naming. Volume addition is a chosen constant-volume approximation, not a measurement or stellar-evolution result. Temperature/composition are unknown after impact; don't propagate a source's measured values as measured remnant properties. A luminous display fallback, if needed, must be marked illustrative.
+- [ ] Implement the selected interaction scope: two positive-mass nonstellar bodies merge on resolved sphere contact; test-particle/nonstellar massive-body contact removes the particle with zero mass/momentum feedback; particle/particle contacts are ignored. Any contact involving a star halts clearly without mutation and identifies the deferred dedicated feature #14. Ordinary binary gravitational evolution remains supported; a supported binary orbit does not imply a modeled merger. No structural realism is implied by generic nonstellar merging.
+- [ ] Use volume-additive physical radius `cbrt(R1**3 + R2**3)`, combined mass, center-of-mass position/velocity, a stable new ID with both parent IDs in an event, and user-visible combined naming. Volume addition is a chosen constant-volume approximation, not a measurement. Temperature/composition are unknown after impact; do not propagate source measurements as measured remnant properties. Remnants remain nonstellar; stellar structure and luminous stellar remnants belong to #14.
 - [ ] Record the accepted pair/remnant rules, model version, and mode identifier `perfect_merge` in README and settings. Retain `none` for legacy behavior. Missing/unknown required radii block the physical collision mode recoverably; they never use sprite radii as a fallback.
 - [ ] Write isolated response tests with known masses/positions/velocities. Run `python -m pytest -q tests/test_collisions.py -k merge`; expect missing response. Implement the response equations:
 
