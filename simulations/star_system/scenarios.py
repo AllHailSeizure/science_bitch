@@ -78,7 +78,8 @@ def compare_recordings(first, second):
     original, control = initial[perturbation], initial[1-perturbation]
     jupiter = reference_id(original, 'jupiter')
     expected = set(original.body_ids)-{jupiter}
-    if set(control.body_ids) != expected or setups[0].collision_mode != setups[1].collision_mode:
+    if (set(control.body_ids) != expected or setups[0].collision_mode != setups[1].collision_mode
+            or setups[0].collision_policy != setups[1].collision_policy):
         raise ValueError('Matched initial bodies/model settings were changed.')
     for key in control.body_ids:
         i, j = original.body_ids.index(key), control.body_ids.index(key)

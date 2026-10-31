@@ -72,11 +72,11 @@ def _moon_step_limit(system, ids, specs, references, indices=None):
         limit = min(limit, recommended_moon_step(system.r[i]-system.r[parent], system.masses[parent], system.masses[i]))
     return limit
 
-def _validate_surfaces(r, specs):
+def _validate_surfaces(r, specs, collision_mode='none'):
     sources = np.array([i for i,s in enumerate(specs) if s.mass and s.mass > 0], dtype=int)
     if not len(sources):
         return
-    radii = np.array([s.radius or 0. for s in specs])
+    radii = np.array([0. if collision_mode == 'perfect_merge' and s.mass == 0 else (s.radius or 0.) for s in specs])
     dist = np.linalg.norm(r[:,None,:]-r[None,sources,:],axis=-1)
     dist[sources,np.arange(len(sources))] = np.inf
     overlaps = np.argwhere(dist <= radii[:,None]+radii[None,sources])
@@ -116,7 +116,7 @@ def build_system(setup):
     if any(spec.mass is None for spec in specs):
         raise ValueError('Gravity requires known mass: supply a custom mass for unknown catalog values.')
     r, v = (np.array([state[i] for state in states]) for i in (0, 1))
-    _validate_surfaces(r, specs)
+    _validate_surfaces(r, specs, setup.collision_mode)
     system = System(np.array([s.mass for s in specs]), r, v, setup.dt)
     ids = tuple(bodies)
     if setup.population is not None:
@@ -135,13 +135,18 @@ def build_system(setup):
         particle = BodySpec('Test particle', 'particle', 0., None, color='#d8dfb3', provenance='generated population')
         ids += tuple(f'{pop.id}:{i}' for i in range(pop.settings.count))
         specs += (particle,)*pop.settings.count
-    _validate_surfaces(system.r, specs)
+    _validate_surfaces(system.r, specs, setup.collision_mode)
     references = tuple(body.reference_id for body in setup.bodies) + (None,)*(len(ids)-len(setup.bodies))
     moon_limit = _moon_step_limit(system, ids, specs, references)
     if system.dt > moon_limit*(1+1e-12):
         raise ValueError(f'Moon timescale unresolved: fixed dt must be <= {moon_limit:.9g} yr (initial relative period / 600).')
-    system.validate_step()
-    return PreparedSystem(system, ids, specs, setup, reference_ids=references)
+    prepared = PreparedSystem(system, ids, specs, setup, reference_ids=references)
+    if setup.collision_mode == 'perfect_merge':
+        from .collisions import validate_collision_state
+        validate_collision_state(prepared)
+    else:
+        system.validate_step()
+    return prepared
 
 def insert_body(prepared, body):
     if body.id in prepared.body_ids:
@@ -159,7 +164,8 @@ def insert_body(prepared, body):
     specs = prepared.body_specs + (body.spec,)
     ids = prepared.body_ids + (body.id,)
     references = prepared.reference_ids + (body.reference_id,)
-    _validate_surfaces(system.r, specs)
+    mode = prepared.setup.collision_mode if prepared.setup else 'none'
+    _validate_surfaces(system.r, specs, mode)
     limit = system.resolution_limit()
     if np.isfinite(limit):
         system.dt = min(old.dt, limit*.5)
@@ -167,7 +173,11 @@ def insert_body(prepared, body):
     # associations are inspection metadata, including if a parent later vanishes.
     if body.spec.kind == 'moon':
         system.dt = min(system.dt, _moon_step_limit(system, ids, specs, references, (len(ids)-1,)))
-    system.validate_step()
+    if mode == 'perfect_merge':
+        from .collisions import validate_collision_state
+        validate_collision_state(PreparedSystem(system, ids, specs, prepared.setup, reference_ids=references))
+    else:
+        system.validate_step()
     message = f'Inserted {body.spec.name}; starting setup unchanged.'
     if system.dt != old.dt:
         message += f' New fixed-step segment: dt {old.dt:.6g} -> {system.dt:.6g} yr.'

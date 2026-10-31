@@ -236,8 +236,8 @@ class ExperimentEditor:
         self.widgets, self.fields = [], {}
         for key, label, value, y in [('name', 'Experiment name', app.initial_setup.name, .81),
                                     ('path', 'JSON path', 'output/experiment.json', .64),
-                                    ('capture_name', 'New setup name', app.initial_setup.name+' / captured', .39),
-                                    ('capture_path', 'Capture JSON path', 'output/experiment-captured.json', .33)]:
+                                    ('capture_name', 'New setup name', app.initial_setup.name+' / captured', .375),
+                                    ('capture_path', 'Capture JSON path', 'output/experiment-captured.json', .32)]:
             box = TextBox(self.fig.add_axes((.28, y, .64, .045)), label+'  ', initial=value,
                           color='#1b3044', hovercolor='#294b60')
             box.label.set_color(TEXT); box.text_disp.set_color(TEXT)
@@ -246,8 +246,16 @@ class ExperimentEditor:
         self._button((.50, .74, .42, .045), 'Prepare selected setup', self.prepare)
         self._button((.07, .565, .39, .045), 'Save initial setup', self.save_initial)
         self._button((.50, .565, .42, .045), 'Load into preparation', self.load)
-        self.fig.text(.07, .525, 'Initial save restores the configured beginning, including its original seed.\n'
-                      'Evolution and live insertions do not change that starting setup.', color=MUTED, fontsize=10, va='top')
+        self.fig.text(.07, .535, 'Initial save restores the configured beginning, including its original seed.\n'
+                      'Evolution and live insertions do not change that starting setup.', color=MUTED, fontsize=9, va='top')
+        self.collision_picker = RadioButtons(self.fig.add_axes((.07, .44, .35, .055)),
+            ('none', 'perfect_merge'), active=int(app.initial_setup.collision_mode == 'perfect_merge'), activecolor=ACCENT, useblit=False)
+        self.collision_picker.ax.set_facecolor(PANEL)
+        for label in self.collision_picker.labels:
+            label.set_color(TEXT); label.set_fontsize(9)
+        self.widgets.append(self.collision_picker)
+        self._button((.50, .45, .42, .04), 'Apply collisions + RESET', self.collisions)
+        self.fig.text(.07, .435, 'Perfect merge: nonstellar spheres / point tracers; stellar contact halts (#14).', color=MUTED, fontsize=8, va='top')
         self._button((.07, .26, .85, .045), 'Save current state as new setup', self.save_current)
         self.fig.text(.07, .245, 'Capture writes a separate named epoch at time zero, including explicit particles.\n'
                       'The current experiment stays selected. Load the file to use the new epoch.', color=MUTED, fontsize=10, va='top')
@@ -287,6 +295,15 @@ class ExperimentEditor:
     def prepare(self, event=None):
         self.finish()
         self.app.prepare_setup()
+
+    def collisions(self, event=None):
+        try:
+            self.app.set_collision_mode(self.collision_picker.value_selected)
+        except ValueError as exc:
+            self.error.set_text(fill(str(exc), 105)); self.fig.canvas.draw_idle(); return
+        self.was_paused = True
+        self.was_playing = False
+        self.finish()
 
     def save_initial(self, event=None):
         self._action(lambda: self.app.session.save_initial(self.fields['path'].text),

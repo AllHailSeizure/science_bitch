@@ -1,5 +1,5 @@
 """Own the selected starting epoch separately from drafts and mutable live state."""
-from dataclasses import replace
+from dataclasses import replace, asdict
 
 from .initialization import build_system, recommended_moon_step
 from .model import InitialBody, InitialSetup
@@ -42,7 +42,10 @@ def capture_current_setup(prepared, initial_setup, name):
         provenance['capture_note'] += ' Smaller fixed dt required by current moon period / 600.'
     if initial_setup.preset_id or initial_setup.provenance.get('origin_preset'):
         provenance['origin_preset'] = initial_setup.preset_id or initial_setup.provenance['origin_preset']
-    captured = InitialSetup(name.strip(), tuple(bodies), dt, provenance=provenance)
+    from .collisions import CollisionEvent
+    provenance['collision_events'] = [asdict(event) for event in prepared.events if isinstance(event, CollisionEvent)]
+    captured = InitialSetup(name.strip(), tuple(bodies), dt, collision_mode=initial_setup.collision_mode,
+                            collision_policy=initial_setup.collision_policy, provenance=provenance)
     build_system(captured)
     return captured
 
