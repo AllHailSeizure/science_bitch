@@ -218,6 +218,7 @@ def test_escape_cancel_retains_authored_evolved_state_exactly(authored_app, paus
 
 
 def test_open_cancel_and_window_close_preserve_evolved_state(app):
+    app.toggle_pause()  # Startup is preparation; explicitly run before cancel testing.
     app._advance(5)
     previous, positions, velocities = app.system, app.system.r.copy(), app.system.v.copy()
     elapsed = app.system.time

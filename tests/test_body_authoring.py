@@ -139,6 +139,7 @@ def test_editor_live_placement_arrow_drag_confirm_retains_camera_and_restart(app
     assert new_id not in app.prepared.body_ids and app.system.time==0
 
 def test_editor_cancel_invalid_and_hidden_widgets_preserve_state(app):
+    app.toggle_pause()  # Explicitly enter live mode from paused preparation.
     app._advance(3)
     previous=app.system; r=previous.r.copy(); v=previous.v.copy(); elapsed=previous.time
     click(app,app.sidebar.add.ax); editor=app.body_editor
@@ -291,6 +292,7 @@ def test_generated_particle_preparation_edit_remove_is_explicitly_deferred():
 
 def test_moon_editor_catalog_distance_vector_cancel_and_live_insertion(app):
     from simulations.star_system.data import AU_KM
+    app.toggle_pause()  # Cancel must restore the live mode selected by the user.
     app._advance(3); app._refresh()
     click(app,app.sidebar.body_ax,(.3,.92-.15-.04))
     assert app.selected_id=='earth'

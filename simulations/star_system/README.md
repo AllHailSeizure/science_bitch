@@ -5,6 +5,7 @@ Run from the repository root with `requirements.txt` installed:
 ```powershell
 python -m simulations.star_system
 python -m simulations.star_system --star sun --planet earth --planet jupiter --years 1 --output output/star-system.png
+python -m simulations.star_system --load output/experiment.json --years 0.01 --output output/restored.png
 python -m pytest -q
 ```
 
@@ -56,7 +57,7 @@ positive reference mass and nonzero separation. Reference velocity is added at
 commit time, once. This aid does not promise stability, binding, or capture in
 an N-body system.
 
-**Confirm** validates the draft and leaves playback paused until Resume.
+**Confirm** validates the draft and leaves evolution paused until Run live/Resume.
 **Cancel**, Escape, or closing the app discards the draft; cancel restores the
 previous pause state and preserves the evolved positions, velocities, and time.
 Invalid drafts remain open with a recoverable explanation and preserve the
@@ -65,8 +66,11 @@ Menu button can still hide/show the editor, making its widgets inactive.
 
 ## Starting setup and evolved state
 
-The application owns two distinct objects: immutable `App.initial_setup` and the
-mutable `App.prepared.system` trajectory. **Live insertion** changes only the
+`App.session` (`ExperimentSession`) owns the immutable `initial_setup`, a
+validated `draft`, and the mutable `prepared` trajectory. `App.initial_setup`
+and `App.prepared` expose those selected objects. The application opens in
+**PREP**, paused at time zero. **Run live** or Step starts evolution.
+**Live insertion** changes only the
 active trajectory, preserving every existing position, velocity, and elapsed
 time exactly. It appends a new row even when particles already occupy earlier
 rows. It retains the camera, existing scene artists, selected identity, and
@@ -79,7 +83,7 @@ insertions, resets elapsed time and trails, and retains the pause state.
 Add, **Edit selected**, and **Remove selected** then update its initial bodies.
 The complete candidate setup is validated before replacement, including body
 and population references. Removing a referenced body fails recoverably.
-Resume or Step leaves preparation and starts ordinary live evolution.
+Run live or Step leaves preparation and starts ordinary live evolution.
 
 **Prepare circular** opens the retained star/planet preset controls after
 entering preparation. These keep the original unique-planet, golden-angle,
@@ -90,18 +94,82 @@ discard custom bodies. General preparation supports arbitrary physical
 positions and velocities, one isolated body, multiple stars, and stars-only
 binaries. No single-star assumption is imposed by the general renderer.
 
-Save/reload and calculated playback are later plans. The agreed save workflow
-will offer both the original initial setup and the current evolved state as a
-separately named new setup with a fresh initial epoch and source-time
-provenance. Explicit captured particles must be preserved, rather than being
-regenerated over an evolved state. No capture/save UI is implemented here.
+**Experiment / Save / Load...** opens a shared experiment window. Edit the name
+and choose **Apply name** to update the heading and starting setup. The
+Sun/Earth/Jupiter compatibility preset uses the original circular two-body
+velocity guesses and barycentric shift; it is illustrative, not an ephemeris
+or stability guarantee. Opening its factory returns an independent immutable
+setup. Editing its name, bodies, population or moons creates a custom copy
+with preset-origin metadata; the supplied preset remains unchanged. Use the
+same body/population editors for free preparation.
+
+**Save initial setup** writes the configured beginning to the explicit JSON
+path, even after evolution or live insertion. Loading or restarting this
+setup regenerates its original seeded population. **Save current state as new
+setup** requires a different name and a separate capture path. It saves the
+current coordinates, velocities and live additions as a new starting epoch
+at time zero; it leaves the current experiment selected. Every current
+particle becomes an explicit zero-mass initial body and `population` becomes
+null, preventing duplicate generation. The original generator, seed and
+settings survive only in capture provenance, together with source setup
+digest, source name/time and step. Load the captured file to select it.
+
+Captured reference associations, including moons, are retained by subtracting
+each parent's **current** position and velocity once. Capture may need a
+smaller fixed dt under the current moon period / 600 check; the new dt and
+reason are saved and shown. This is a fresh numerical segment, not a promise
+of uninterrupted trajectory continuation. General close-encounter validation
+still applies; an invalid capture fails without changing the running state.
+
+**Load into preparation** validates the complete file before replacing the
+experiment, then pauses at time zero. An invalid file leaves the active
+setup, vectors and draft recoverable. Escape/Close discards unapplied name
+fields and restores the prior pause state. All experiment-window operations
+use the existing Matplotlib backend, with no additional dependency.
+
+### JSON compatibility and numerical identity
+
+The public API is `save_setup(setup, path)`, `load_setup(path)` and
+`setup_digest(setup)` in `persistence.py`. Version 1 stores explicit AU,
+solar_mass, Julian_year, AU/Julian_year and K units; complete physical values
+and property sources/overrides; stable IDs, relative reference vectors,
+fixed dt and collision mode; preset/name provenance; source, model and
+numerical version identifiers; and NumPy environment metadata. A generated
+population stores PCG64, generator version, identity, reference ID and all
+settings including seed. Catalog keys are descriptive; loading never looks
+up replacement physical values in the current catalog.
+
+The supported identities are `star-system-setup-v1`,
+`planar-newtonian-point-mass-v1`, `fixed-yoshida4-v1`, and
+`planar-circular-population-v1`. Unknown schemas, physical/model fields,
+generators/settings, invalid references, invalid types/shapes/ranges,
+nonfinite numbers and non-JSON content are rejected. Only collision mode
+`none` is supported. No pickle, eval, executable save data or silent migration
+is used. Saves validate and encode before writing, then atomically replace
+the destination through a uniquely owned sibling temporary file; failure
+preserves an existing valid destination.
+
+Canonical JSON uses sorted keys and disallows NaN/Infinity; SHA-256 identifies
+the complete setup/provenance. On the same supported environment, restored
+initial arrays are exactly equal and deterministic evolution agrees to
+`rtol=1e-12, atol=1e-12` after 50 identical steps in regression tests. There is
+no universal cross-version/platform bitwise guarantee. Use the stored version
+metadata when comparing results.
+
+`--load PATH` accepts `--years` and `--output` and uses the general renderer
+for arbitrary bodies, multiple stars, particles and moons. It rejects any
+explicit legacy construction flag (`--star`, `--planet`, `--population`,
+`--count`, `--inner`, `--outer`, `--seed`, `--angles`), even with a default
+value. Existing full CLI options and export commands remain available.
+Initial setups and evolved captures are distinct from recorded results;
+calculation/recording/playback and saved recordings are separate later work.
 
 ## Navigation and evolution
 
 | Control | Action |
 | --- | --- |
 | Menu [M], `m` outside editors | Show/hide sidebar, preserving state and camera |
-| Pause / Resume, Space | Pause or resume; Resume exits preparation |
+| Run live / Pause / Resume, Space | Run live exits preparation; pause/resume an evolving system |
 | Step, `.` | Pause and attempt one fixed step; exit preparation |
 | Mouse wheel over scene | Zoom around cursor |
 | Left drag outside authoring | Pan and stop following |
@@ -242,8 +310,9 @@ world positions in km and AU. Use the body list to select close identities when
 exaggerated markers overlap; follow, zoom, pause, and step use the common controls.
 Lighting still uses stellar illumination, independently of the orbital parent.
 Missing parents are reported by ID without selecting a substitute. The reusable
-`relative_state(StateFrame, body_id)` path also supports later recorded frames;
-save/reload and calculated playback remain separate plans.
+`relative_state(StateFrame, body_id)` path also supports later recorded frames.
+Save/reload retains parent references and edited initial velocity; calculated
+playback remains separate work.
 
 An illustrative isolated circular Earth-Moon setup uses 384400 km from the
 [NASA Moon Fact Sheet](https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html)
@@ -289,7 +358,7 @@ control does not bypass that cost. There are no tides, formation, stellar
 evolution, 3D, or physical collisions. Marker overlap has no contact effect.
 Future generic nonstellar mergers and stellar-contact halts belong to plan 8;
 there is no moon-specific collision outcome here. Issue #9 remains open for
-the separate save/reload and recorded-inspection integration in plans 5-6.
+the separate recorded-inspection and contact-model integration.
 
 ## Reproducible populations
 
@@ -349,11 +418,10 @@ multiple-star systems. Test particles represent rocks whose gravitational
 influence is neglected: they feel every massive body but do not backreact or
 interact with one another. The model remains 2D with no physical collisions.
 
-Issue #6 remains open. Persistence must save/reload full settings, seed,
-population ID, and reference ID and verify regenerated initial particle states.
+Persistence saves/reloads full settings, seed, population ID and reference ID,
+with exact regenerated initial particle states checked in the same environment.
 Calculated playback must retain population identities, timestamps, complete or
-halted status, pause, and step. Neither save/reload nor recorded calculation is
-implemented by this population integration.
+halted status, pause, and step; recorded calculation remains separate work.
 
 ## Shared APIs for the following plans
 
@@ -363,12 +431,15 @@ implemented by this population integration.
 - `rendering.py`: `draw_system(ax, prepared, history=()) -> Scene`; retained `draw(...)` accepts the old numeric/circular arguments. `Scene.artists_by_id`, `labels_by_id`, `trails_by_id`, `origin_id`, and `origin` support identity-based integration. `Scene.update(prepared, history)` appends new artists without resetting the camera.
 - `authoring.py`: `BodyEditor` and its `reference_state`, `vectors`, `draft_body`, `commit`, `finish` draft lifecycle. `App.edit_body`, `prepare_setup`, `selected_id`, `_install_prepared`, and `_sync_painter` provide the controller integration points. Register new widget axes with sidebar visibility and the painter's overlay axes.
 - `population_editor.py`: `PopulationEditor` validates a complete candidate `InitialSetup` before Apply/Remove, using the shared `authoring.reference_ids` choices. Its separate figure owns its widgets and close/Escape lifecycle; the main scene's overlay axes retain the existing painter contract.
+- `persistence.py`: `save_setup`, `load_setup`, `setup_digest`; strict schema/model/numerical/generator versions above. Setup identity includes all configured values and provenance.
+- `experiments.py`: `ExperimentSession(initial_setup)` owns `initial_setup`, `draft`, `prepared`; `begin_draft`, `update_draft`, `apply_draft`, `cancel_draft`, `select`, `restart`, `save_initial`, `save_current`, `load` provide explicit transitions. `capture_current_setup(prepared, initial_setup, name)` returns an independent validated initial epoch. `App.initial_setup`/`prepared` delegate to session ownership, and `_install_prepared` remains the scene-installation path.
+- `scenarios.py`: `get_scenario(key)` returns an independent immutable setup; `DESCRIPTIONS` holds preset descriptions. `sun-earth-jupiter` is the compatibility preset. Extend this shared registry for future scenarios.
 
 The body-authoring tests provide arbitrary/binary, reference-chain, populated
 insertion, live draft events, invalid/cancel, inverse mapping, velocity scaling,
 and multi-star lighting fixtures. The generic renderer never assumes a fixed
-star/planet prefix. Future snapshot capture can store explicit particle bodies
-with `population=None`, avoiding regeneration of evolved particle coordinates.
+star/planet prefix. Current-state capture stores explicit particle bodies with
+`population=None`, avoiding regeneration of evolved particle coordinates.
 
 ## Checked outcomes
 
@@ -423,3 +494,35 @@ at `output/moon-preparation-preview.png` and `output/moon-inspector-preview.png`
 separation, fixed-step disclosure, body-list selection, and stellar illumination.
 These artifacts remain in ignored `output/`; no native desktop interaction is
 claimed by these Agg checks.
+
+Persistence integration commands:
+
+```powershell
+C:\Python314\python.exe -m pytest -q --tb=short --basetemp output/pytest-persistence-final-08
+C:\Python314\python.exe -m pytest -q tests/test_experiment_persistence.py tests/test_experiment_controls.py tests/test_populations.py::test_population_playback_restart_and_render tests/test_star_system_display.py::test_running_frames_reuse_background_without_full_redraw --tb=short --basetemp output/pytest-persistence-final-targeted-11
+C:\Python314\python.exe -m simulations.star_system --load output/moon-population-setup.json --years 0.01 --output output/loaded-moon-population.png
+C:\Python314\python.exe -m simulations.star_system --star sun --planet earth --planet jupiter --years 1 --output output/legacy-system.png
+C:\Python314\python.exe -m simulations.star_system --population belt --count 24 --seed 42 --years 0.01 --output output/legacy-population.png
+git diff --check
+git diff --check codex/issue-9-moons...HEAD
+```
+
+The full integration run reported **239 passed, 2 failed in 329.81 seconds**,
+with 29 expected Agg window notices. Both failures were legacy tests assuming
+startup was already live: the population test toggled the new paused state
+before checking unchanged coordinates, and the renderer test counted the new
+PREP-to-LIVE label redraw as steady motion. Their setup now explicitly follows
+the preparation/live contract. A small provenance refinement also retains
+the origin preset through repeated circular rebuilds. The subsequent targeted
+run passed **62 tests in 15.81 seconds**, including both corrected failures,
+all persistence/control tests and the provenance regression, with three
+expected Agg notices. The full suite was not rerun after those refinements.
+
+All three CLI commands above succeeded. The loaded file combines an edited
+Moon velocity with a seeded Earth-relative ring; both the automated subprocess
+test and independent CLI command rebuild it in a fresh process. Its
+1350x1350 PNG and the normal App/dialog previews at
+`output/preparation-controls.png` and `output/experiment-controls.png` were
+visually inspected for heading, preparation/live controls, separate save
+paths and epoch/step disclosure. These are ignored local artifacts; native
+desktop input and multiwindow behavior remain unverified.
