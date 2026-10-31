@@ -27,8 +27,8 @@ first whole configured physics step at or after that duration; the form shows
 the resolved integer step count, fixed dt and resolved end time before start.
 Output stride samples every N physics steps; it never changes physics dt.
 
-Calculation uses `build_system` and the same transactional `System.step` as
-live evolution. Each GUI tick accepts at most 150 steps and yields after a
+Calculation uses `build_system` and the same transactional `advance_prepared`
+boundary as live evolution. Each GUI tick accepts at most 150 steps and yields after a
 6 ms work slice (a single whole solver step must finish or reject). Progress,
 physical elapsed time and **Cancel calculation** remain visible. Initial and
 final valid states are always included, even between output strides. Cancel
@@ -50,7 +50,9 @@ no interpolation: the scene clock is the displayed frame's actual timestamp.
 requested/resolved end times, actual terminal time, completion state and reason
 stay with the result. Each frame carries its own IDs, physical properties,
 parent associations and events; body membership need not stay fixed. Missing
-selected bodies/parents report removal without selecting a replacement.
+selected bodies/parents report removal. An explicit merge-event mapping can
+transfer selection/follow to its remnant, with a visible disclosure; absorbed
+tracers stay selected as removed and have no remnant mapping.
 Ordinary samples retain the camera; fit and follow remain explicit actions.
 
 Trails use timestamped world frames, retain at most 1500 samples and display at
@@ -81,7 +83,7 @@ for a partial `RecordedRun`. `result` is available at termination and includes
 immutable `source_setup`, `frames`, status and actual timestamps. `Playback(run)`
 exposes `current_frame`, `play()`, `pause()`, `next_sample()` and
 `advance(wall_seconds, years_per_second)`. Event/membership changes preserve
-off-stride boundary samples; collision physics is still a separate deliverable.
+exact-time PRE/POST collision frames even between output samples.
 
 ## Authoring a body
 
@@ -95,8 +97,8 @@ The editor exposes name, kind, mass in **solar masses**, physical radius in
 velocity in **AU per Julian year**. Known catalog properties retain field-level
 provenance. Changed physical values are marked user-authored overrides. A blank
 value means unknown. Gravity requires a known mass; radius can remain unknown
-because contact is not modeled. No physical contact claim can be made for such a
-body. Unknown radii use a fixed display marker without assigning a physical
+in collision mode `none`. The optional physical collision mode requires a known
+radius for every massive body, including stars. Unknown radii use a fixed display marker without assigning a physical
 value. Unknown temperature uses an explicitly illustrative color fallback.
 
 The selected massive body's ID is shown as the default reference. If a particle
@@ -211,8 +213,11 @@ The supported identities are `star-system-setup-v1`,
 `planar-newtonian-point-mass-v1`, `fixed-yoshida4-v1`, and
 `planar-circular-population-v1`. Unknown schemas, physical/model fields,
 generators/settings, invalid references, invalid types/shapes/ranges,
-nonfinite numbers and non-JSON content are rejected. Only collision mode
-`none` is supported. No pickle, eval, executable save data or silent migration
+nonfinite numbers and non-JSON content are rejected. Collision mode `none`
+retains its original schema-1 encoding/digest; `perfect_merge` additionally stores
+the explicit collision policy, rules, bounds and `positive-verlet-swept-parabola-v1`
+numerical identity. Unsupported policy/numerical versions fail before install.
+No pickle, eval, executable save data or silent migration
 is used. Saves validate and encode before writing, then atomically replace
 the destination through a uniquely owned sibling temporary file; failure
 preserves an existing valid destination.
@@ -230,7 +235,7 @@ explicit legacy construction flag (`--star`, `--planet`, `--population`,
 `--count`, `--inner`, `--outer`, `--seed`, `--angles`), even with a default
 value. Existing full CLI options and export commands remain available.
 Initial setups and evolved captures are distinct from recorded results;
-calculation/recording/playback and saved recordings are separate later work.
+recordings remain in memory and are not serialized by setup saves.
 
 ## Navigation and evolution
 
@@ -275,9 +280,9 @@ Gravity is unsoftened Newtonian gravity in 2D:
 Positive masses mutually interact; zero-mass test particles feel massive bodies
 without backreaction or particle/particle gravity. Units use 1 AU = 149597870700 m,
 1 solar mass = 1.98847e30 kg, 1 Julian year = 365.25 days, and SI
-G = 6.67430e-11. No integrator or dependency has been replaced.
+G = 6.67430e-11. The collision-free integrator and dependencies are unchanged.
 
-The fixed-step fourth-order Yoshida composition of velocity Verlet uses
+In collision mode `none`, the fixed-step fourth-order Yoshida composition of velocity Verlet uses
 [Yoshida 1990](https://doi.org/10.1016/0375-9601(90)90092-3). The legacy circular
 constructor retains shortest initial orbital period / 600. A general
 `InitialSetup` carries an explicit positive fixed `dt` in years; unresolved
@@ -312,10 +317,136 @@ Step-halving fixtures, measured on this implementation, compare dt = 0.0005 and
 Legacy tests retain isolated orbital-period relative tolerance 1e-7, Kepler-law
 2e-7, energy 1e-7, angular/linear momentum 1e-11, and multi-planet period 0.5%
 (which permits real perturbations). These tests establish their fixtures only.
-There are no physical collisions, mergers, tides, relativity, stellar evolution,
-3D, or scripted capture outcomes. Future generic inelastic collisions are
-nonstellar only and halt on stellar contact. Stellar mergers belong to the
-separate deferred issue #14, including binaries.
+These conservation/accuracy checks apply to collision-free evolution. The optional
+nonstellar contact model below has different numerics and conservation limits.
+There are no tides, relativity, stellar evolution, 3D, or scripted capture outcomes.
+
+### Optional idealized nonstellar contacts
+
+Open **Experiment / Save / Load...**, choose `none` or `perfect_merge`, and use
+**Apply collisions + RESET**. This explicitly rebuilds the selected starting
+setup in paused preparation, including when invoked from LIVE/RECORDED; existing
+recordings and their source setups remain immutable. An invalid selection leaves
+the current state recoverable. Physical contact uses world AU and supplied physical
+radii, independently of zoom, marker size, compression or rotating coordinates.
+Initial surface overlap/contact is rejected for revision. Missing massive radii
+block this mode; tracers are points and may have no radius.
+
+| Pair | `perfect_merge` response |
+| --- | --- |
+| Two positive-mass nonstellar bodies | Merge at resolved physical sphere contact |
+| Zero-mass tracer and positive-mass nonstellar body | Absorb/remove the point tracer; zero mass/momentum feedback |
+| Two tracers | Ignore contact and mutual gravity |
+| Any contact involving a star | Halt the entire macro step unchanged, explicitly referencing deferred stellar-merger #14 |
+
+Ordinary binary gravity remains supported; an orbit is not a stellar-merger model.
+The versioned policy is `nonstellar-perfect-merge-v1`, pair rule
+`nonstellar-massive-merge-point-tracer-absorb-star-halt-v1`, and remnant rule
+`volume-com-planet-reference-map-v1`. Simultaneous physical contacts form connected
+massive groups, processed in sorted stable-ID order, with sorted-parent identities
+and recursively retained ancestry. Unaffected rows retain their relative order.
+Remnants get a deterministic hash ID and combined name, summed mass, center-of-mass
+position/velocity, and radius `cbrt(sum(R**3))`. This is a volume-addition
+approximation. Remnants are nonstellar `planet` bodies; temperature/composition are
+unknown, catalog identity and measured sources are not inherited. Existing parent
+references explicitly map to the new planet ID, so moons remain inspectable and
+capturable without dangling or silently invalid saved references. This association
+adds no force and guarantees no binding. Remnant parent reference is world/None.
+Generated IDs reserve current and historical identities (including captured
+epochs) and choose a deterministic suffix when a custom ID already occupies the
+hash. Subsequent merges retain captured-epoch ancestry as well as active events.
+
+Response conserves mass/linear momentum to floating-point precision. The recorded
+lost relative translational kinetic energy is
+`0.5*sum(m_i*|v_i-v_COM|**2)` (for a pair,
+`0.5*m1*m2/(m1+m2)*|v1-v2|**2`). The orbital-angular-momentum residual about the
+COM is recorded as **unmodeled internal spin**. Total energy and modeled orbital
+angular momentum are not claimed conserved across merges. Heat, spin evolution,
+ejecta, fragmentation, erosion, hit-and-run, tides and stellar impact physics are
+absent. Real planetary impacts have several outcome regimes; see
+[Leinhardt & Stewart](https://arxiv.org/abs/1106.6084v3) and
+[Stewart & Leinhardt](https://arxiv.org/abs/1109.4588v3). This option does not
+implement those richer models or cosmological/galaxy collisions.
+
+`perfect_merge` uses a separately named **positive-time velocity-Verlet** solver.
+It never responds to Yoshida's negative middle stage. One live Step still advances
+exactly the configured macro dt, applying the earliest contact then its remainder.
+Every actual substep is at most macro dt/8 and half the original engine's
+gravity/crossing limit at both start and accepted fully kicked endpoint. Endpoint
+failures halve the candidate interval. Thus a larger initial macro dt can be
+internally resolved; the close-encounter guard is not globally bypassed. A bound of
+100,000 attempted subdivisions/responses per macro, 64 root bisections, finite
+state checks and representable clock advancement give a clear numerical halt with
+whole-macro rollback on failure, including metadata, events and membership.
+
+The swept Verlet drift is `r(t)=r0+v0*t+a0*t²/2`. An O(N*massive-count)
+vectorized chord broad phase expands by `|a_relative|*h²/8`; candidate quadratic
+distance extrema partition the quartic into monotone intervals for entry-root
+bisection or tangency detection. No tracer/tracer candidate matrix is constructed.
+An insufficient configured refinement budget halts rather than accepting a root
+whose bracket exceeds the declared time tolerance.
+Detection precedes endpoint force evaluation, so a crossed singular endpoint is
+not evaluated first. Time ties are within `1e-12*max(1,macro_dt)` years **and**
+must satisfy the chosen-time sphere geometry within `R*1e-12 + 64*epsilon*max(R,d)`
+AU; time proximity alone cannot merge still-separated pairs. The stationary-point
+test uses squared-distance tolerance `R²*1e-12 + 32*epsilon*coefficient_scale`;
+an inconsistent refined geometry halts. Settings and solver/pair/remnant versions
+are saved explicitly. These bounds are safeguards, not arbitrary-trajectory accuracy
+guarantees or a symplecticity claim for irreversible merging.
+
+Observed fixtures use physical radii .1 AU and initial separation 2 AU. A
+10 AU/yr head-on approach with masses 1e-14 and 2e-14 solar masses contacts at
+0.18 yr within 1e-10 yr, including transit beyond both endpoint spheres. Grazing,
+near-miss, earliest-event/remainder, point absorption, simultaneous groups and
+row-reordering checks pass. For masses 1e-4/2e-4 solar and initial relative speed
+1 AU/yr, measured contact times are:
+
+| Macro dt (yr) | Contact time (yr) | Difference from dt=.0025 reference |
+| ---: | ---: | ---: |
+| .08 | 1.783919964365049 | 2.1593e-6 yr |
+| .04 | 1.783918381350481 | 5.7625e-7 yr |
+| .02 | 1.783917948979112 | 1.4387e-7 yr |
+| .0025 reference | 1.783917805104718 | — |
+
+This fixture/window shows convergence. A coarser .16 yr trial had nonmonotonic
+error due to adaptive clipping; no universal monotone/error bound is asserted.
+Same-environment save/reload/calculation reproduces checked contact times, IDs,
+properties and arrays exactly. Cross-platform bitwise agreement is not promised.
+PRE/POST frames carry physical timestamps and event metadata off output stride;
+constituent trails end and remnant trails begin under their own IDs. Current-state
+capture retains mode, policy, ancestry and remapped references as a new epoch.
+Memory-budget rejection retains the last accepted whole macro and never reports
+completion. Replay selects immutable frames and calls neither stepping path.
+
+A supported 2,000-tracer Sun/Jupiter ring macro (2,002 bodies, dt=.009540592642 yr)
+took **0.035611 s** in the measured Python 3.14 run. This exceeds the 6 ms GUI
+target: cancellation and wall-budget yielding occur **between atomic macros**.
+Pathological encounters can require many more subdivisions and take much longer
+before the bounded halt. This measurement does not establish interactive pacing
+for arbitrary body counts/encounters. The in-memory event frames also consume
+budget beyond normal output samples.
+
+### Final dependency-stack acceptance audit
+
+Live acceptance lists for #4–#9 and deferred #14 were reread on 2026-10-31.
+This audit describes the implemented stack and its verification boundary; it
+does not merge PRs or close issues. #6 is already closed externally and remains so.
+
+| Issue / plans | Implemented integration and acceptance evidence |
+| --- | --- |
+| #4 / 1 | Full-window overlay, camera/input controls, physical inspection, retained rendering and scenario naming; display/control regressions and normal App exports. Native desktop interaction remains unverified. |
+| #5 / 2 | Sourced/custom bodies, relative placement/velocity vectors, repeated identities, multi-star gravity and preserved live insertion; authoring/catalog/physics tests. Physical radii feed contact, never marker sizes. |
+| #6 / 3,5,6,8 | Seeded reference-relative populations save/reload/calculate/replay with stable IDs. Point-tracer absorption has no feedback; particle/particle interactions remain omitted. |
+| #9 / 4,5,6,8 | Planet-relative initial states and timescale limits, live insertion, separation inspection, save/replay; contact uses the same nonstellar response and explicit remnant-parent mapping. No forced binding or tides. |
+| #8 / 5,6,8 | Named/custom preparation, separate initial/current saves, strict version recovery, bounded calculation and immutable replay, retained live mode, versioned physical contact and PRE/POST events. Numerical/unsupported-contact/memory halts preserve partial accepted output and report incomplete status. |
+| #7 / 7 | Sun/Jupiter ring preset and matched control, rotating historical view and labeled geometric guides; original collision-none behavior remains covered. Optional collision mode changes numerical identity; no Trojan/capture/stability guarantee. |
+| #14 | Stellar contact halts transactionally; no stellar merger/remnant, dissipation or stellar structure is implemented. |
+
+The selected minimal recording controls remain duration/stride/budget, forward
+Play/Pause/Next, and in-memory results. Timeline scrubbing, reverse navigation,
+persisted recordings, preference persistence and richer comparison dashboards
+remain outside this delivered scope. Real-impact outcomes and arbitrary-system
+accuracy/performance are limited to the explicit approximation and fixtures above.
 
 ## Sourced catalog
 
@@ -423,10 +554,10 @@ and second-star fixtures verify finite mutually forced evolution at this step,
 not long-term stability or guaranteed binding. Resolving a moon can require
 many more steps per simulated year than the surrounding planets; the pacing
 control does not bypass that cost. There are no tides, formation, stellar
-evolution, 3D, or physical collisions. Marker overlap has no contact effect.
-Future generic nonstellar mergers and stellar-contact halts belong to plan 8;
-there is no moon-specific collision outcome here. Issue #9 remains open for
-the separate recorded-inspection and contact-model integration.
+evolution or 3D. Marker overlap has no contact effect. Optional `perfect_merge`
+uses the shared nonstellar response for moons; collision-free moon accuracy
+checks above do not validate a physical impact outcome. Saved/replayed moon
+references and remnant-parent mappings use the same shared workflow.
 
 ## Reproducible populations
 
@@ -473,23 +604,25 @@ python -m simulations.star_system --planet jupiter --population ring --inner 3.2
 ```
 
 The CLI flags remain the original star-relative convenience path; general
-references are authored through the shared setup/UI, with `--load` deferred to
-the persistence plan. Ring uses one radius; disk samples annular area uniformly;
+references are authored through the shared setup/UI and `--load`. Ring uses one radius; disk samples annular area uniformly;
 belt samples radius uniformly. Random or evenly spaced angles use NumPy PCG64 and an explicit
 nonnegative seed. Counts are 1-2000, with at most 2000 total zero-mass particles
 including explicitly authored ones; radii are finite/outside the reference
 surface, and velocities are circular prograde guesses relative to the reference state.
 Restart reproduces the population. Individual particles can be inspected and
-followed; their own trails are omitted to bound display work. There is no
-physical clustering/accretion response or stability promise, especially for
+followed; the selected particle has a bounded trail. There is no
+particle self-gravity/accretion or stability promise, especially for
 multiple-star systems. Test particles represent rocks whose gravitational
 influence is neglected: they feel every massive body but do not backreact or
-interact with one another. The model remains 2D with no physical collisions.
+interact with one another. In optional `perfect_merge`, point tracers are absorbed
+by nonstellar massive bodies without feedback, ignored by other tracers, and
+halt on stellar contact. The Jupiter preset defaults to collision mode `none`;
+changing modes is an explicit reset and a different numerical model.
 
 Persistence saves/reloads full settings, seed, population ID and reference ID,
 with exact regenerated initial particle states checked in the same environment.
-Calculated playback must retain population identities, timestamps, complete or
-halted status, pause, and step; recorded calculation remains separate work.
+Calculated playback retains population identities, timestamps, complete or
+halted status, pause, and sample stepping.
 
 ## Sun–Jupiter perturbation experiments
 
@@ -741,3 +874,38 @@ inspected. Normal App previews `output/jupiter-rotating-live.png`,
 distinct particle IDs, physical vectors, actual trail intervals/sampling,
 matched source/time/status readouts, frame availability, and labeled geometric
 guides. These artifacts remain ignored. Native desktop interaction is unverified.
+
+Collision integration commands:
+
+```powershell
+C:\Python314\python.exe -m pytest -q --tb=short --basetemp output/pytest-collisions-final-14
+C:\Python314\python.exe -m pytest -q tests/test_collisions.py tests/test_collision_workflows.py tests/test_star_system_display.py::test_export_keeps_inspector_text_and_recovers_live_cache --tb=short --basetemp output/pytest-collisions-post-17
+C:\Python314\python.exe -m pytest -q tests/test_collisions.py::test_remnant_id_avoids_current_and_historical_identities_deterministically --tb=short --basetemp output/pytest-collisions-identity-18
+C:\Python314\python.exe -m simulations.star_system --load output/collision-setup.json --years 0.4 --sample-stride 100 --output output/collision-saved-cli.png
+C:\Python314\python.exe -m simulations.star_system --star sun --planet earth --planet jupiter --years 1 --output output/collision-legacy-cli.png
+git diff --check
+git diff --check codex/issue-7-jupiter...HEAD
+```
+
+The full integration run passed **322 tests in 428.77 seconds**, with 35 expected
+Agg window notices. Review then tightened configurable contact-refinement failure,
+reserved current/historical/captured remnant IDs, added explicit stellar pair and
+natural close-approach checks, and refined caption spacing/provenance/units and
+model-label layout. The focused run passed **39 tests in 32.59 seconds**, with one
+expected Agg notice. A final captured-ancestry lookup assertion passed its focused
+identity regression (**1 passed in 0.12 seconds**). This is the final verification
+boundary; the full suite was not repeated after those scoped refinements.
+
+Both CLI commands succeeded. The workflow tests also run saved collision and
+unsupported-stellar-contact exports in fresh processes: normal completion exits 0;
+stars halt with exit 2 and an inspectable incomplete PNG. The separately reviewed
+CLI images are 1350x1350. Normal App previews `output/collision-preparation.png`,
+`output/collision-live-remnant.png`, `output/collision-recorded-pre.png`, and
+`output/collision-recorded-post.png` (1776x1104), plus
+`output/collision-policy.png` (1020x1020), were visually inspected for explicit
+mode/reset, exact event time, membership, remnant provenance, diagnostic units,
+selection mapping and replay source/status. The policy caption and remnant
+unknown-property text were separated from adjacent controls/preview, and the
+model label was given its own line to preserve the CLI clock. These artifacts
+remain ignored local outputs; no native desktop input or multiwindow validation
+is claimed.
