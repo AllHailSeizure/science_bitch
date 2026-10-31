@@ -60,8 +60,22 @@ and edited controls refresh that cache. Other backends use normal full redraws.
 
 ## Reproducible populations (Issue #6 Foundation)
 
-Create a population through the command line, either in the live observatory or
-as a display-free export:
+Open **Population...** in the observatory to create, edit, or remove its
+star-relative population. The separate settings window offers ring/disk/belt,
+count, radii in AU, seed, and random/even angular spacing. Ring uses one radius;
+the outer-radius field is disabled. Opening settings pauses evolution and
+disables the main system-edit and playback widgets while the draft is open.
+**Apply and restart** validates the draft and rebuilds the initial experiment,
+resetting time/trails and leaving playback paused. **Remove and restart** does
+the same without particles. Existing bodies also return to their configured
+initial states; these actions do not insert into an evolved trajectory. Cancel,
+Escape, or closing settings discards the draft, preserves the evolved state,
+and restores the prior pause state. Invalid inputs keep the draft open and the
+current experiment intact. New settings default to a 200-particle belt at
+2-3.5 AU with seed 0; reopening settings uses the applied configuration.
+
+The same population settings are available through the command line, either
+in the live observatory or as a display-free export:
 
 ```bash
 python -m simulations.star_system --population belt --count 200 --inner 2 --outer 3.5 --seed 42
@@ -83,8 +97,10 @@ Restart regenerates that state and resets time and trails. A different seed
 changes the realization. Changing a planet, distance, or star also restarts it.
 Selecting a star whose surface contains the population is rejected recoverably.
 
-These particles have zero mass: they feel every massive body's unsoftened
-Newtonian gravity, but exert no gravity and do not interact with one another.
+These are test particles representing rocks whose gravitational influence is
+neglected, not photons. The numerical model assigns zero mass: they feel every
+massive body's unsoftened Newtonian gravity, but exert no gravity and do not
+interact with one another.
 Their circular prograde starting velocities use `sqrt(G M_reference / radius)`
 relative to the reference body's position and velocity. This is an initial guess,
 not an equilibrium or a promise of stability in a perturbed system. No forces,
@@ -131,11 +147,14 @@ velocities, and timestep produces a maximum star-relative displacement
 difference greater than 0.01 AU. This demonstrates perturbation, not Trojan
 capture or long-term stability.
 
-This completes the cloud-testable population foundation, not all of #6.
-Interactive population authoring through #5 and preparation/save/reload and
-calculate-first playback through #8 remain future integration work. Settings
-are explicit immutable data ready for those workflows; persistence is not yet
-implemented.
+Population settings and physics are covered by headless tests, including actual
+Matplotlib button events for apply/remove/cancel, invalid-draft recovery, and
+editor close behavior. The inspector labels individual rocks as test particles.
+This is not all of #6: general reference/velocity authoring through #5 and
+preparation/save/reload and calculate-first playback through #8 remain future
+integration work. Settings are explicit immutable data ready for those workflows;
+persistence is not yet implemented. Native multiwindow behavior and desktop
+usability still need manual verification on a desktop backend.
 
 ## Physics and display
 
