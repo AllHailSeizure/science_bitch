@@ -12,6 +12,7 @@ from .history import StateFrame
 from .initialization import build_system
 from .persistence import setup_digest
 from .model import InitialSetup
+from .collisions import advance_prepared
 
 DEFAULT_MAX_BYTES = 256 * 1024 * 1024
 
@@ -153,11 +154,11 @@ class Calculation:
         advanced = 0
         while not self.done and advanced < max_steps:
             try:
-                self.prepared.system.step()
+                outcome = advance_prepared(self.prepared)
             except ValueError as exc:
                 self._finish('halted', str(exc))
                 break
-            candidate = StateFrame.capture(self.prepared)
+            candidate = StateFrame.capture(outcome.prepared)
             changed = candidate.events != self._checkpoint.events or candidate.body_ids != self._checkpoint.body_ids
             same_metadata = all(getattr(candidate, name) is getattr(self._checkpoint, name)
                                 for name in ('body_ids', 'body_specs', 'reference_ids', 'events'))
@@ -165,9 +166,12 @@ class Calculation:
             # thousands of shared particle definitions on every physics step.
             candidate_bytes = self._checkpoint_bytes if same_metadata else frame_storage_bytes(candidate) + 256
             # Future event steps retain both sides even between stride samples.
-            additions = ([self._checkpoint] if changed and self._frames[-1] is not self._checkpoint else [])
+            additions = list(outcome.event_frames)
+            if changed and not additions and self._frames[-1] is not self._checkpoint:
+                additions = [self._checkpoint]
             sampled = changed or (self.completed_steps+1) % self.request.sample_stride == 0
-            required = (self._checkpoint_bytes if additions else 0) + candidate_bytes
+            addition_sizes = [frame_storage_bytes(frame)+256 for frame in additions]
+            required = sum(addition_sizes) + candidate_bytes
             if self._bytes + required > self.request.max_bytes:
                 previous = self._checkpoint
                 from dataclasses import replace
@@ -179,7 +183,8 @@ class Calculation:
                 break
             for frame in additions:
                 self._frames.append(frame)
-                self._bytes += self._checkpoint_bytes
+            self._bytes += sum(addition_sizes)
+            self.prepared = outcome.prepared
             self._checkpoint = candidate
             self._checkpoint_bytes = candidate_bytes
             self.completed_steps += 1

@@ -15,6 +15,7 @@ from .experiments import ExperimentSession
 from .scenarios import get_scenario
 from .recording import Calculation, CalculationRequest
 from .playback import Playback
+from .collisions import advance_prepared, mapped_selection
 
 FRAME_SECONDS = 1 / 60
 PHYSICS_BUDGET_SECONDS = .006
@@ -141,6 +142,15 @@ class App:
     def load_setup(self, path):
         from .persistence import load_setup
         self.select_setup(load_setup(path))
+
+    def set_collision_mode(self, mode):
+        """Explicitly restart selected starting setup in paused preparation."""
+        from dataclasses import replace
+        from .experiments import custom_copy
+        self.select_setup(custom_copy(replace(self.initial_setup, collision_mode=mode), self.initial_setup))
+        self.status.set_text(f'Collision mode {mode}; reset to starting setup in preparation. '
+                            'Perfect merge: nonstellar spheres / point tracers; stellar contact halts (#14).')
+        self._refresh()
 
     def save_current_setup(self, path, name):
         if self.playback is None:
@@ -412,15 +422,19 @@ class App:
         selected = self.selected_id if not reset else None
         membership_changed = frame.body_ids != self.prepared.body_ids
         prepared = PreparedSystem(System(frame.masses, frame.r, frame.v, frame.dt, frame.time),
-            frame.body_ids, frame.body_specs, events=frame.events, reference_ids=frame.reference_ids)
+            frame.body_ids, frame.body_specs, setup=self.playback.recording.source_setup,
+            events=frame.events, reference_ids=frame.reference_ids)
         self.prepared, self.system = prepared, prepared.system
         self.history = list(self.playback.recording.frames[max(0, self.playback.index-MAX_HISTORY+1):self.playback.index+1])
         if reset:
             self.scene = draw_system(self.ax, prepared, self.history, frame_mode=self.frame_mode)
+            self.ax.callbacks.connect('xlim_changed', self.painter.invalidate)
+            self.ax.callbacks.connect('ylim_changed', self.painter.invalidate)
             self.selected_index = 0
             self.following = False
         elif selected is not None:
-            self.selected_id = selected
+            mapped = mapped_selection(selected, frame.events) if selected not in frame.body_ids else selected
+            self.selected_id = mapped
         self.halted = self.playback.recording.status == 'halted'
         self.paused = not self.playback.playing
         run = self.playback.recording
@@ -431,6 +445,8 @@ class App:
             self.set_experiment_name(run.source_name)
             self.sidebar._sync()
         self.status.set_text(f'{run.status.upper()}: {run.reason or "Calculation finished."}')
+        if selected is not None and self.selected_id != selected:
+            self.status.set_text(self.status.get_text()+f' Following explicit merge mapping: {selected} -> {self.selected_id}.')
         from textwrap import fill
         self.scene.result_info.set_text(f'RECORDED / {run.status.upper()} / sample {self.playback.index+1:,}/{len(run.frames):,}\n'
             f'Source: {run.source_name} [{run.setup_digest[:12]}]\n'
@@ -587,6 +603,13 @@ class App:
                 if body.temperature is not None:
                     details += f'\n{body.temperature:,.0f} K'
                 details += f'\nID: {self.selected_id}\n{body.provenance}'
+                from .collisions import CollisionEvent
+                collision = next((event for event in reversed(self.prepared.events)
+                    if isinstance(event, CollisionEvent) and event.remnant_id == self.selected_id), None)
+                if collision is not None:
+                    details += (f'\nParents: {", ".join(collision.parent_ids)}'
+                                f'\nKE loss [M_sun AU²/yr²]: {collision.lost_relative_kinetic:.5g}'
+                                f'\nSpin [M_sun AU²/yr]: {collision.unmodeled_spin:.5g} (unmodeled)')
                 if body.kind == 'moon':
                     relative = relative_state(StateFrame.capture(self.prepared), self.selected_id)
                     if relative is None:
@@ -645,12 +668,23 @@ class App:
         deadline = None if budget_seconds is None else time.perf_counter()+budget_seconds
         completed = 0
         for _ in range(count):
+            selected = self.selected_id
+            old_events = len(self.prepared.events)
             try:
-                self.system.step()
+                outcome = advance_prepared(self.prepared)
             except ValueError as exc:
                 self.halted = True
                 self.status.set_text(str(exc))
                 break
+            self.prepared, self.system = outcome.prepared, outcome.prepared.system
+            self.selected_id = mapped_selection(selected, self.prepared.events[old_events:])
+            if self.prepared.events[old_events:]:
+                self.status.set_text(self.prepared.events[-1].message +
+                    (f' Following explicit merge mapping: {selected} -> {self.selected_id}.' if self.selected_id != selected else ''))
+            if outcome.event_frames:
+                self.history.extend(outcome.event_frames)
+                self.scene.update(self.prepared, self.history)
+                self._sync_painter()
             self.preparing = False
             self.trails.append((self.system.r-self.system.r[0]).copy())
             self.history.append(StateFrame.capture(self.prepared))

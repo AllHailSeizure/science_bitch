@@ -269,7 +269,7 @@ class Scene:
             artist.set_visible(present)
             self.labels_by_id[key].set_visible(present)
             if key in self.trails_by_id:
-                self.trails_by_id[key].set_visible(present)
+                self.trails_by_id[key].set_visible(present or any(hasattr(frame, 'body_ids') and key in frame.body_ids for frame in self.history))
         for key, spec in zip(self.prepared.body_ids, self.prepared.body_specs):
             if spec.kind == 'particle' or key in self.artists_by_id:
                 continue
@@ -281,7 +281,7 @@ class Scene:
             self.artists_by_id[key] = body
             self.labels_by_id[key] = self.ax.annotate(spec.name, (0, 0), xytext=(16, 10), textcoords='offset points',
                                                     fontsize=9, color=MUTED, annotation_clip=True, zorder=8)
-            if key != self.origin_id:
+            if key != self.origin_id or spec.kind != 'star':
                 line = LineCollection([], linewidths=1.05, zorder=2)
                 self.ax.add_collection(line)
                 self.trails_by_id[key] = line
@@ -355,7 +355,7 @@ class Scene:
         label = LABELS[self.frame_mode]
         if self.frame_mode == 'sun-relative':
             label = prepared.body_specs[origin_index].name+'-relative / inertial axes'
-        self.heading.set_text(label)
+        self.heading.set_text(label+('\nModel: perfect_merge' if prepared.setup is not None and prepared.setup.collision_mode == 'perfect_merge' else ''))
         self._update_reference_guides()
         for i, (key, spec) in enumerate(zip(prepared.body_ids, prepared.body_specs)):
             if spec.kind == 'particle' or key not in self.artists_by_id:
@@ -372,10 +372,11 @@ class Scene:
                 body.offsetbox.set_data(planet_sprite(spec, self.transform.vectors(direction)))
             self.labels_by_id[key].xy = self.positions[i]
         for key, line in self.trails_by_id.items():
-            if key not in prepared.body_ids:
+            spec = (prepared.body_specs[prepared.body_ids.index(key)] if key in prepared.body_ids else
+                    next((frame.body_specs[frame.body_ids.index(key)] for frame in self.history if hasattr(frame, 'body_ids') and key in frame.body_ids), None))
+            if spec is None:
                 line.set_segments([])
                 continue
-            spec = prepared.body_specs[prepared.body_ids.index(key)]
             self._set_trail(line, key, spec.color or '#b7c9df')
         self.select(self.selected)
 
@@ -399,7 +400,9 @@ class Scene:
             if hasattr(frame, 'body_ids'):
                 try:
                     if key not in frame.body_ids:
-                        raise ValueError('Missing body')
+                        if points:
+                            break  # constituent ended; do not attach a remnant ID
+                        continue  # remnant not born yet
                     transform = frame_transform(frame, self.frame_mode, self.origin_id)
                     points.append(transform.positions(frame.r[frame.body_ids.index(key)]))
                     times.append(frame.time)
