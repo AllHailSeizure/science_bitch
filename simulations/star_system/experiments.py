@@ -52,6 +52,11 @@ class ExperimentSession:
         self.initial_setup = setup
         self.prepared = build_system(setup)
         self.draft = setup
+        self.recordings = ()
+
+    def retain_recording(self, recording):
+        """Results keep their own source identity as the preparation draft changes."""
+        self.recordings += (recording,)
 
     def select(self, setup):
         prepared = build_system(setup)

@@ -240,12 +240,22 @@ class Scene:
         self.heading = ax.text(.025, .97, '', transform=ax.transAxes, color=TEXT, fontsize=15, va='top', zorder=10)
         self.clock = ax.text(.975, .965, '', transform=ax.transAxes, ha='right', va='top', color=TEXT,
                              fontsize=11, fontfamily='monospace', zorder=10)
+        self.result_info = ax.text(.975, .915, '', transform=ax.transAxes, ha='right', va='top', color=TEXT,
+                                   fontsize=9, zorder=10,
+                                   bbox=dict(facecolor=BACKGROUND, alpha=.9, edgecolor='none', pad=5))
         ax.text(.025, .025, 'COMPRESSED DISTANCES / BODY SIZES EXAGGERATED / ILLUSTRATIVE LIGHTING',
                 transform=ax.transAxes, color=MUTED, fontsize=7, zorder=10)
         self.update(prepared, history)
         self.fit_view()
 
     def _ensure_artists(self):
+        for key, artist in self.artists_by_id.items():
+            present = (key in self.prepared.body_ids and
+                       self.prepared.body_specs[self.prepared.body_ids.index(key)].kind != 'particle')
+            artist.set_visible(present)
+            self.labels_by_id[key].set_visible(present)
+            if key in self.trails_by_id:
+                self.trails_by_id[key].set_visible(present)
         for key, spec in zip(self.prepared.body_ids, self.prepared.body_specs):
             if spec.kind == 'particle' or key in self.artists_by_id:
                 continue
@@ -294,6 +304,9 @@ class Scene:
             from dataclasses import replace
             prepared = replace(self.prepared, system=prepared)
         self.prepared = prepared
+        if self.origin_id not in prepared.body_ids:
+            self.origin_id = next((key for key, spec in zip(prepared.body_ids, prepared.body_specs)
+                                   if spec.kind == 'star'), prepared.body_ids[0])
         self._ensure_artists()
         system = prepared.system
         origin_index = prepared.body_ids.index(self.origin_id)
@@ -301,19 +314,26 @@ class Scene:
         self.positions = coordinates(system.r-self.origin)
         particle_indices = [i for i, s in enumerate(prepared.body_specs) if s.kind == 'particle']
         self.particles.set_offsets(self.positions[particle_indices])
-        self.clock.set_text(f'{system.time:,.3f} yr')
+        self.clock.set_text(f'{system.time:,.8g} yr')
         self.heading.set_text(prepared.body_specs[origin_index].name)
         for i, (key, spec) in enumerate(zip(prepared.body_ids, prepared.body_specs)):
-            if key not in self.artists_by_id:
+            if spec.kind == 'particle' or key not in self.artists_by_id:
                 continue
             body = self.artists_by_id[key]
             body.xy = body.xybox = self.positions[i]
+            body.offsetbox.set_zoom(body_size(spec)/(160*.34 if spec.kind == 'star' else 80))
+            self.labels_by_id[key].set_text(spec.name)
             light = dominant_star(prepared, i)
-            if spec.kind != 'star':
+            if spec.kind == 'star':
+                body.offsetbox.set_data(star_sprite(spec))
+            else:
                 direction = system.r[light]-system.r[i] if light is not None else (1, 0)
                 body.offsetbox.set_data(planet_sprite(spec, direction))
             self.labels_by_id[key].xy = self.positions[i]
         for key, line in self.trails_by_id.items():
+            if key not in prepared.body_ids:
+                line.set_segments([])
+                continue
             points = []
             for frame in history if history is not None else ():
                 if hasattr(frame, 'body_ids'):
