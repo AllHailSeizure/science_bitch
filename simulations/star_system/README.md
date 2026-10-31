@@ -44,7 +44,9 @@ Click the scene to place the draft. Display coordinates are compressed by
 view origin before being interpreted as AU. The velocity arrow uses a separate
 **linear scale of 12 pixels per AU/year**. Its tip changes both velocity
 components when dragged; twice the speed produces twice the arrow length at
-the same scale. The legend reports components, speed, and units. Arrow direction
+the same scale. The legend reports relative and system components, speed,
+separation in km/AU, and units. **Separation (km)** rescales the relative position
+along its current direction (or +x from zero). Arrow direction
 and length describe velocity relative to the chosen reference, not compressed
 position units.
 
@@ -155,7 +157,8 @@ A halt explains that smaller fixed dt or wider spacing is needed. Preparation
 also rejects missing/cyclic references, nonfinite states, duplicate IDs, unknown
 required masses, and overlap of known physical surfaces.
 
-Live insertion can shorten the step to half the validated resolution limit.
+Live insertion can shorten the step to half the validated resolution limit,
+or to the inserted moon's initial relative period / 600, whichever is smaller.
 The displayed insertion event records old/new dt and starts a new integration
 segment, while retaining old vectors/time exactly. Each uninterrupted segment
 has a fixed step; an edited trajectory is not claimed to be one unmodified
@@ -203,6 +206,90 @@ Primary records checked on 2026-10-30:
 - [Bond et al. 2017](https://arxiv.org/html/1703.10625v1): Sirius masses and Sirius B atmosphere-derived radius/temperature; quoted internal fit errors exclude larger systematics.
 - [NASA Exoplanet Archive 51 Peg](https://exoplanetarchive.ipac.caltech.edu/overview/51%20Peg) and [HD 209458](https://exoplanetarchive.ipac.caltech.edu/overview/HD_209458): selected `ps` default solutions, including original publication references. The 2026-10-30 51 Peg b solution reports true mass (Cont et al. 2026), not RV minimum mass; its radius is unknown. HD 209458 b uses Stassun et al. 2017 mass/transit radius. No composite model-estimated radius is substituted.
 - [NASA planetary fact sheets](https://nssdc.gsfc.nasa.gov/planetary/factsheet/), [JPL planets](https://ssd.jpl.nasa.gov/planets/phys_par.html), [Anglada-Escude et al. 2016](https://arxiv.org/html/1609.03449v1), and [Moravveji et al. 2012](https://arxiv.org/html/1202.1836v1): retained rounded legacy definitions; the latter identifies Rigel's mass as an evolutionary estimate.
+
+## Planet-relative moons
+
+Select a planet, choose **Add a body**, then the **moon** category and a catalog
+definition (Moon, Io, Europa, Ganymede, Callisto, or Titan). For a custom moon,
+choose **custom**, set Kind to `moon`, and supply the required physical values.
+The selected planet is the explicit default parent. If no planet is selected,
+choose one with **Parent: next planet** or enter its stable ID; stars, particles,
+missing IDs, and `world` are rejected as moon parents. The catalog identifies
+physical properties, not a host or an ephemeris.
+
+Enter the planet-relative separation in km or Cartesian x/y in AU, adjust the
+relative velocity components/handle, or use the two-body circular aid. The
+legend names the parent and shows both relative and system vectors. Physical
+Radius (AU) is the body's surface radius; Separation (km) is center-to-center
+orbital spacing. Neither is the planet's system position. During preparation,
+the draft fixed dt decreases as necessary to the initial relative period / 600;
+the field and legend disclose the chosen value. A directly supplied
+`InitialSetup.dt` remains explicit and is rejected if coarser than that moon
+bound or the general encounter guard. This is an initial circular accuracy aid,
+not a guarantee for eccentric or rapidly perturbed orbits.
+
+Confirmation resolves the parent's **initial** position/velocity in preparation
+or its **current** position/velocity during live insertion, exactly once. Live
+insertion never recenters the planet; every existing body/particle row and time
+is retained exactly. A smaller live dt is reported in an insertion event and
+starts a new fixed-step segment. Parent associations remain metadata after
+initialization: the same ordinary mutual gravity includes all positive masses.
+An excessive speed can carry the moon away; no reattachment, forced orbit, or
+permanent binding is imposed.
+
+The selected moon's inspector measures **current** separation from the displayed
+world positions in km and AU. Use the body list to select close identities when
+exaggerated markers overlap; follow, zoom, pause, and step use the common controls.
+Lighting still uses stellar illumination, independently of the orbital parent.
+Missing parents are reported by ID without selecting a substitute. The reusable
+`relative_state(StateFrame, body_id)` path also supports later recorded frames;
+save/reload and calculated playback remain separate plans.
+
+An illustrative isolated circular Earth-Moon setup uses 384400 km from the
+[NASA Moon Fact Sheet](https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html)
+(mean semimajor axis, updated 2024-01-11; checked 2026-10-30), with physical
+Earth/Moon masses and radii from `CATALOG`. This deliberately circular 2D fixture
+is not the real Moon's eccentric/inclined ephemeris or its observed period:
+
+```python
+from simulations.star_system.data import CATALOG, AU_KM
+from simulations.star_system.initialization import (
+    build_system, circular_relative_velocity, recommended_moon_step,
+)
+from simulations.star_system.model import InitialBody, InitialSetup
+
+earth, moon = CATALOG['earth'], CATALOG['moon']
+relative_r = (384400 / AU_KM, 0.)
+relative_v = circular_relative_velocity(relative_r, earth.mass, moon.mass)
+setup = InitialSetup('Illustrative circular Earth-Moon', (
+    InitialBody('earth', earth, (0., 0.), (0., 0.)),
+    InitialBody('moon', moon, relative_r, tuple(relative_v), 'earth'),
+), recommended_moon_step(relative_r, earth.mass, moon.mass))
+prepared = build_system(setup)
+```
+
+The model's rounded catalog and G give a two-body period of **27.2895002371
+days** (0.0747145797047 yr), dt **0.000124524299508 yr** (about 65.50 minutes).
+Over three periods, angular interpolation at each of the first three full turns
+measures the three successive orbital periods; normal Yoshida evolution gives:
+
+| Fixed step | Maximum relative period error | Maximum relative energy drift | Maximum relative angular-momentum drift | Relative position error after three periods |
+| --- | ---: | ---: | ---: | ---: |
+| Period / 600 | 1.11364e-8 | 1.79856e-14 | 8.77076e-15 | 5.39384e-10 AU |
+| Period / 1200 | 6.96010e-10 | 1.85407e-14 | 9.32587e-15 | 3.37102e-11 AU |
+
+The supported fixture bounds are period error <1e-6, energy drift <1e-7,
+angular-momentum drift <1e-10, and decreasing position error at dt/2 (measured
+about 16 times smaller). Energy and angular drift are already near floating-point
+roundoff; those values need not decrease monotonically with dt. Sun/Earth/Moon
+and second-star fixtures verify finite mutually forced evolution at this step,
+not long-term stability or guaranteed binding. Resolving a moon can require
+many more steps per simulated year than the surrounding planets; the pacing
+control does not bypass that cost. There are no tides, formation, stellar
+evolution, 3D, or physical collisions. Marker overlap has no contact effect.
+Future generic nonstellar mergers and stellar-contact halts belong to plan 8;
+there is no moon-specific collision outcome here. Issue #9 remains open for
+the separate save/reload and recorded-inspection integration in plans 5-6.
 
 ## Reproducible populations
 
@@ -271,8 +358,8 @@ implemented by this population integration.
 ## Shared APIs for the following plans
 
 - `model.py`: frozen `BodySpec`, `PropertySource`, `InitialBody`, `PopulationSpec`, and `InitialSetup`. Catalog keys identify definitions; body IDs identify instances. `PopulationSpec(id, reference_id, settings)` maps the stable reference to the legacy numeric index at initialization.
-- `initialization.py`: `build_system(setup) -> PreparedSystem(system, body_ids, body_specs, setup, events, segment)`, `insert_body(prepared, body)`, `circular_relative_velocity(r, M, m)`, and `legacy_setup(...)`. All vectors are world frame after one-time reference resolution. Insertion preserves old row order, including particle rows.
-- `history.py`: `StateFrame.capture(prepared)` copies time/dt/IDs/specs/masses/world r/v/events into read-only arrays. `App.history` retains 1500 frames; each displayed trail has at most 400 vertices. `App.trails` remains a relative-array compatibility adapter.
+- `initialization.py`: `build_system(setup) -> PreparedSystem(system, body_ids, body_specs, setup, events, segment, reference_ids=())`, `insert_body(prepared, body)`, `circular_relative_velocity(r, M, m)`, `recommended_moon_step(r, M, m)`, and `legacy_setup(...)`. All vectors are world frame after one-time reference resolution. Insertion preserves old row order, including particle rows. `reference_ids` is a body-aligned tuple of initial reference IDs or `None`; its empty default derives from setup IDs.
+- `history.py`: `StateFrame.capture(prepared)` copies time/dt/IDs/specs/masses/world r/v/events/reference_ids into read-only state. `StateFrame.reference_ids=()` defaults to all `None`. `relative_state(frame, body_id)` returns current relative vectors/separation or an explicit missing-reference result. Capture-current persistence must retain reference metadata while converting world vectors back relative to the captured parent once; storing world vectors plus an InitialBody reference would add the parent twice. `App.history` retains 1500 frames; each displayed trail has at most 400 vertices. `App.trails` remains a relative-array compatibility adapter.
 - `rendering.py`: `draw_system(ax, prepared, history=()) -> Scene`; retained `draw(...)` accepts the old numeric/circular arguments. `Scene.artists_by_id`, `labels_by_id`, `trails_by_id`, `origin_id`, and `origin` support identity-based integration. `Scene.update(prepared, history)` appends new artists without resetting the camera.
 - `authoring.py`: `BodyEditor` and its `reference_state`, `vectors`, `draft_body`, `commit`, `finish` draft lifecycle. `App.edit_body`, `prepare_setup`, `selected_id`, `_install_prepared`, and `_sync_painter` provide the controller integration points. Register new widget axes with sidebar visibility and the painter's overlay axes.
 - `population_editor.py`: `PopulationEditor` validates a complete candidate `InitialSetup` before Apply/Remove, using the shared `authoring.reference_ids` choices. Its separate figure owns its widgets and close/Escape lifecycle; the main scene's overlay axes retain the existing painter contract.
@@ -312,3 +399,27 @@ The required CLI command exited successfully and produced a visually inspected
 `output/population-editor-reviewed.png` (740x850) were visually inspected for
 the custom binary setup, reference name/ID/frame, units, fixed-step disclosure,
 and restart controls. These artifacts remain in ignored `output/`.
+
+Moon integration commands:
+
+```powershell
+C:\Python314\python.exe -m pytest -q tests/test_moons.py tests/test_body_authoring.py --basetemp output/pytest-moons-focused-05
+C:\Python314\python.exe -m pytest -q --tb=short --basetemp output/pytest-moons-final-06
+C:\Python314\python.exe -m pytest -q -s tests/test_moons.py -k orbit_converges --basetemp output/pytest-moons-periods-07
+C:\Python314\python.exe -m simulations.star_system --years 1 --output output/issue-9-cli.png
+git diff --check
+git diff --check codex/issue-6-population-integration...HEAD
+```
+
+The focused moon/authoring run passed **42 tests in 92.15 seconds**. The full
+integration run passed **182 tests in 302.42 seconds**, with the same 26 expected
+Agg population-window notices. A final refinement to measure each of the three
+successive periods separately passed its focused check (**1 passed**, 12
+deselected, 5.94 seconds); the table above records that measurement. Whitespace
+checks passed. The normal CLI export succeeded and its 1350x1350 PNG was
+visually inspected. Normal App preparation and selected-moon inspector exports
+at `output/moon-preparation-preview.png` and `output/moon-inspector-preview.png`
+(1776x1104) were visually inspected for parent name/ID, relative/system units,
+separation, fixed-step disclosure, body-list selection, and stellar illumination.
+These artifacts remain in ignored `output/`; no native desktop interaction is
+claimed by these Agg checks.

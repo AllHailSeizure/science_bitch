@@ -287,3 +287,64 @@ def test_generated_particle_preparation_edit_remove_is_explicitly_deferred():
         assert 'population settings' in app.status.get_text()
     finally:
         app.close(); plt.close(app.fig)
+
+
+def test_moon_editor_catalog_distance_vector_cancel_and_live_insertion(app):
+    from simulations.star_system.data import AU_KM
+    app._advance(3); app._refresh()
+    click(app,app.sidebar.body_ax,(.3,.92-.15-.04))
+    assert app.selected_id=='earth'
+    app.following=True; app._refresh()
+    r,v,t=app.system.r.copy(),app.system.v.copy(),app.system.time
+    click(app,app.sidebar.add.ax); e=app.body_editor
+    e.category.set_active(2)
+    assert e.fields['kind'].text=='moon' and e.fields['reference'].text=='earth'
+    e.fields['separation'].set_val('384400')
+    assert float(e.fields['x'].text)==pytest.approx(384400/AU_KM)
+    assert 'Earth [earth]' in e.legend.get_text() and 'system r' in e.legend.get_text()
+    click(app,e.circular.ax)
+    # Exercise the same linear velocity handle used for every authored body.
+    anchor=app.ax.transData.transform(e.anchor); start=app.ax.transData.transform(e.velocity_tip)
+    end=anchor+np.array((24,12))
+    for name,pixel in [('button_press_event',start),('motion_notify_event',end),('button_release_event',end)]:
+        app.fig.canvas.callbacks.process(name,MouseEvent(name,app.fig.canvas,*pixel,button=1))
+    np.testing.assert_allclose([float(e.fields[k].text) for k in ('vx','vy')],(2,1),atol=.1)
+    click(app,e.cancel.ax)
+    assert not app.paused and app.following
+    np.testing.assert_array_equal(app.system.r,r); np.testing.assert_array_equal(app.system.v,v)
+    assert app.system.time==t
+    click(app,app.sidebar.add.ax); e=app.body_editor; e.category.set_active(2)
+    e.fields['separation'].set_val('384400'); click(app,e.circular.ax)
+    relative_v=np.array([float(e.fields[k].text) for k in ('vx','vy')])
+    click(app,e.confirm.ax)
+    assert app.body_editor is None and app.paused and app.following
+    np.testing.assert_array_equal(app.system.r[:-1],r); np.testing.assert_array_equal(app.system.v[:-1],v)
+    np.testing.assert_array_equal(app.system.v[-1],v[1]+relative_v)
+    assert app.system.time==t and app.prepared.reference_ids[-1]=='earth'
+    assert app.system.dt < app.initial_setup.dt
+    assert 'fixed-step segment' in app.status.get_text()
+
+
+def test_moon_editor_custom_preparation_reference_prompt_invalid_and_cancel(app):
+    app.prepare_setup(); app.selected_id='sun'
+    click(app,app.sidebar.add.ax); e=app.body_editor
+    e.category.set_active(4); e.fields['kind'].set_val('moon')
+    assert e.fields['reference'].text==''
+    click(app,e.confirm.ax)
+    assert app.body_editor is e and 'planet' in e.error.get_text().lower()
+    click(app,e.reference_next.ax)
+    assert e.fields['reference'].text=='earth'
+    e.fields['name'].set_val('Custom satellite'); e.fields['mass'].set_val('1e-9'); e.fields['radius'].set_val('1e-7')
+    e.fields['separation'].set_val('500000'); click(app,e.circular.ax)
+    assert float(e.fields['dt'].text)<app.initial_setup.dt
+    assert 'period / 600' in e.legend.get_text()
+    e.fields['reference'].set_val('sun'); before=app.system
+    click(app,e.confirm.ax)
+    assert app.system is before and 'planet' in e.error.get_text().lower()
+    e.fields['reference'].set_val('earth'); click(app,e.confirm.ax)
+    assert app.body_editor is None and app.preparing and app.paused and app.system.time==0
+    assert app.initial_setup.bodies[-1].spec.name=='Custom satellite'
+    assert app.initial_setup.bodies[-1].reference_id=='earth'
+    click(app,app.sidebar.add.ax); e=app.body_editor; e.category.set_active(2)
+    app.fig.canvas.callbacks.process('key_press_event',KeyEvent('key_press_event',app.fig.canvas,key='escape'))
+    assert app.body_editor is None and app.preparing and app.paused

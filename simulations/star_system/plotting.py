@@ -8,7 +8,7 @@ from matplotlib.widgets import Slider
 from .core import SOLAR_RADIUS_AU
 from .data import STARS, PLANETS, AU_KM
 from .initialization import build_system, legacy_setup
-from .history import StateFrame, MAX_HISTORY
+from .history import StateFrame, MAX_HISTORY, relative_state
 from .rendering import BACKGROUND, PANEL, TEXT, MUTED, ACCENT, CanvasPainter, draw, draw_system
 from .sidebar import Sidebar
 
@@ -312,6 +312,14 @@ class App:
             if body.temperature is not None:
                 details += f'\n{body.temperature:,.0f} K'
             details += f'\nID: {self.selected_id}\n{body.provenance}'
+            if body.kind == 'moon':
+                relative = relative_state(StateFrame.capture(self.prepared), self.selected_id)
+                if relative is None:
+                    details += '\nParent: no initial association'
+                elif relative.missing:
+                    details += f'\nParent {relative.reference_id}: missing / removed\nSee state events; no replacement assigned.'
+                else:
+                    details += f'\nParent: {relative.reference_name} [{relative.reference_id}]\nCurrent separation: {relative.separation*AU_KM:,.7g} km\n{relative.separation:.8g} AU'
         self.inspector.set_text(details)
         self.sidebar.set_bodies([(key, f'{spec.name} [{key[:8]}]') for key,spec in zip(self.prepared.body_ids,self.prepared.body_specs)], self.selected_id)
         self.sidebar.update(self.system.time, self.speed.val, index)

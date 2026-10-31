@@ -6,17 +6,17 @@ import time
 import numpy as np
 from matplotlib.widgets import TextBox, Button, RadioButtons
 from matplotlib.patches import FancyArrowPatch
-from .data import CATALOG
+from .data import CATALOG, AU_KM
 from .model import BodySpec, InitialBody, PropertySource
-from .initialization import build_system, insert_body, circular_relative_velocity
+from .initialization import build_system, insert_body, circular_relative_velocity, recommended_moon_step
 from .rendering import PANEL, TEXT, MUTED, ACCENT, coordinates, inverse_coordinates
 
 VELOCITY_PIXELS_PER_AUYR = 12.
 
 
-def reference_ids(bodies, exclude=None, world=False):
+def reference_ids(bodies, exclude=None, world=False, kind=None):
     """Stable choices shared by body placement and initial population drafts."""
-    keys = [key for key, spec in bodies if spec.mass is not None and spec.mass > 0 and key != exclude]
+    keys = [key for key, spec in bodies if spec.mass is not None and spec.mass > 0 and key != exclude and (kind is None or spec.kind == kind)]
     return keys + (['world'] if world else [])
 
 
@@ -26,6 +26,7 @@ class BodyEditor:
         self.app, self.body_id = app, body_id
         self.was_paused, self.finished, self.dragging = app.paused, False, False
         self.axes, self.widgets, self.fields = [], [], {}
+        self._filling_spec = False
         self.spec = CATALOG['earth']
         initial = next((b for b in app.initial_setup.bodies if b.id == body_id), None)
         if initial is not None:
@@ -53,16 +54,15 @@ class BodyEditor:
         self.previous = self._button((.02,.652,.065,.026),'<', lambda e:self.browse(-1))
         self.load = self._button((.09,.652,.125,.026),'Load definition',lambda e:self.load_catalog(self.fields['catalog'].text))
         self.next = self._button((.22,.652,.065,.026),'>',lambda e:self.browse(1))
-        for key,label,value,y in [('name','Name',self.spec.name,.614),('kind','Kind',self.spec.kind,.579),('mass','Mass (solar)',self.spec.mass,.544),('radius','Radius (AU)',self.spec.radius,.509),('temperature','Star temp (K)',self.spec.temperature,.474),('reference','Reference ID',reference,.425),('x','x (AU)',initial.r[0] if initial else 1.,.387),('y','y (AU)',initial.r[1] if initial else 0.,.352),('vx','vx (AU/yr)',initial.v[0] if initial else 0.,.304),('vy','vy (AU/yr)',initial.v[1] if initial else 0.,.269),('dt','Fixed dt (yr)',app.initial_setup.dt if app.preparing else app.system.dt,.225)]:
+        for key,label,value,y in [('name','Name',self.spec.name,.614),('kind','Kind',self.spec.kind,.579),('mass','Mass (solar)',self.spec.mass,.544),('radius','Radius (AU)',self.spec.radius,.509),('temperature','Star temp (K)',self.spec.temperature,.474),('reference','Reference ID',reference,.425),('x','x (AU)',initial.r[0] if initial else 1.,.387),('y','y (AU)',initial.r[1] if initial else 0.,.352),('vx','vx (AU/yr)',initial.v[0] if initial else 0.,.309),('vy','vy (AU/yr)',initial.v[1] if initial else 0.,.275),('separation','Separation (km)','',.237),('dt','Fixed dt (yr)',app.initial_setup.dt if app.preparing else app.system.dt,.203)]:
             field(key,label,'' if value is None else value,y)
         self.fields['dt'].set_active(app.preparing)
         if not app.preparing:
             self.fields['dt'].label.set_text('dt auto <= (yr) ')
-        self.reference_next = self._button((.02,.193,.27,.026),'Reference: next massive / world',self.cycle_reference)
-        self.hint = self.panel.text(.05,.22,'', color=MUTED, fontsize=8, va='top')
-        self.circular = self._button((.02,.133,.27,.03),'Circular aid about reference',self.circular_aid)
-        self.confirm = self._button((.02,.087,.13,.032),'Confirm',self.commit)
-        self.cancel = self._button((.16,.087,.13,.032),'Cancel',lambda e:self.finish())
+        self.reference_next = self._button((.02,.164,.27,.026),'Reference: next massive / world',self.cycle_reference)
+        self.circular = self._button((.02,.119,.27,.03),'Circular aid about reference',self.circular_aid)
+        self.confirm = self._button((.02,.079,.13,.032),'Confirm',self.commit)
+        self.cancel = self._button((.16,.079,.13,.032),'Cancel',lambda e:self.finish())
         self.error = self.panel.text(.05,.065,'',color='#efb17b',fontsize=8,va='top',wrap=True)
         self.marker, = app.ax.plot([], [], 'o', color=ACCENT, markersize=7, zorder=20)
         self.arrow = FancyArrowPatch((0,0),(0,0),arrowstyle='->',shrinkA=0,shrinkB=0,mutation_scale=14,color=ACCENT,linewidth=1.5,zorder=21)
@@ -71,6 +71,10 @@ class BodyEditor:
         self.artists = [self.marker,self.arrow,self.legend]
         for key in ('reference','x','y','vx','vy'):
             self.fields[key].on_text_change(lambda text:self.preview())
+        self.fields['separation'].on_submit(self.set_separation)
+        self.fields['kind'].on_text_change(self.kind_changed)
+        self.fields['mass'].on_text_change(lambda text:self.preview())
+        self.kind_changed()
         self._describe()
         self.preview()
 
@@ -91,8 +95,38 @@ class BodyEditor:
         status = '; '.join(f'{k}: {v.status}' for k,v in self.spec.sources.items() if v.status not in ('measurement','rounded legacy measurement'))
         text = self.spec.name + (' — unknown '+', '.join(unknown)+'. Supply custom values when needed.' if unknown else '')
         self.notice.set_text(fill(text,width=49)+'\n'+fill(status[:110],width=49))
-        self.hint.set_position((.05,.197))
-        self.hint.set_text('Click to place; drag arrow tip for velocity.')
+
+    @property
+    def is_moon(self):
+        return self.fields['kind'].text.strip() == 'moon'
+
+    def kind_changed(self, text=None):
+        if self._filling_spec:
+            return
+        moon = self.is_moon
+        self.reference_next.label.set_text('Parent: next planet' if moon else 'Reference: next massive / world')
+        self.fields['reference'].label.set_text('Planet ID ' if moon else 'Reference ID ')
+        if moon and self.body_id is None:
+            p = self.app.prepared
+            choices = reference_ids(zip(p.body_ids,p.body_specs), kind='planet')
+            if self.fields['reference'].text.strip() not in choices:
+                selected = self.app.selected_id
+                self.fields['reference'].set_val(selected if selected in choices else '')
+        self.preview()
+
+    def set_separation(self, text):
+        try:
+            distance = float(text)/AU_KM
+            if not np.isfinite(distance) or distance <= 0:
+                raise ValueError('Separation must be finite and positive in km.')
+            r, _ = self.vectors()
+            r = r/np.linalg.norm(r)*distance if np.linalg.norm(r) else np.array([distance,0.])
+            for key,value in zip(('x','y'),r):
+                self.fields[key].set_val(f'{value:.16g}')
+            self.error.set_text('')
+        except ValueError as exc:
+            self.error.set_text(fill(str(exc),width=49))
+        self.preview()
 
     def change_category(self, category):
         if category == 'custom':
@@ -116,29 +150,38 @@ class BodyEditor:
         self._fill_spec()
 
     def _fill_spec(self):
+        self._filling_spec=True
         for key in ('name','kind','mass','radius','temperature'):
             value=getattr(self.spec,key)
             self.fields[key].set_val('' if value is None else str(value))
         self.fields['catalog'].eventson=False
         self.fields['catalog'].set_val(self.spec.catalog_key or 'custom')
         self.fields['catalog'].eventson=True
+        self._filling_spec=False
+        self.kind_changed()
         self.error.set_text(''); self._describe(); self.preview()
 
     def cycle_reference(self,event=None):
         p=self.app.prepared
-        keys=reference_ids(zip(p.body_ids,p.body_specs), exclude=self.body_id, world=True)
+        keys=reference_ids(zip(p.body_ids,p.body_specs), exclude=self.body_id, world=not self.is_moon, kind='planet' if self.is_moon else None)
+        if not keys:
+            self.error.set_text('Add a planet before authoring a moon.'); self.app.painter.paint(); return
         current=self.fields['reference'].text.strip()
         self.fields['reference'].set_val(keys[(keys.index(current)+1)%len(keys)] if current in keys else keys[0])
         self.preview()
 
     def reference_state(self):
         key=self.fields['reference'].text.strip()
-        if key == 'world': return np.zeros(2),np.zeros(2),None
+        if key == 'world' and not self.is_moon: return np.zeros(2),np.zeros(2),None
         p=self.app.prepared
         if not key or key not in p.body_ids:
+            if self.is_moon:
+                raise ValueError('Choose an existing planet ID as the moon parent.')
             raise ValueError('Choose a massive reference ID from the body list, or enter world.')
         if key == self.body_id: raise ValueError('A body cannot reference itself.')
         i=p.body_ids.index(key)
+        if self.is_moon and p.body_specs[i].kind != 'planet':
+            raise ValueError('A moon parent must be a planet with positive mass.')
         if p.system.masses[i] <= 0: raise ValueError('Choose a massive reference body.')
         return p.system.r[i],p.system.v[i],key
 
@@ -149,19 +192,41 @@ class BodyEditor:
         return r,v
 
     def preview(self):
-        if self.finished: return
+        if self.finished or self._filling_spec: return
         try:
-            r,v=self.vectors(); rr,_,_=self.reference_state()
+            r,v=self.vectors(); rr,vv,key=self.reference_state()
             anchor=coordinates(r+rr-self.app.scene.origin)
             pixel=self.app.ax.transData.transform(anchor)
             tip=self.app.ax.transData.inverted().transform(pixel+v*VELOCITY_PIXELS_PER_AUYR)
             self.marker.set_data([anchor[0]],[anchor[1]])
             self.arrow.set_positions(anchor,tip)
             self.anchor, self.velocity_tip=anchor,tip
-            self.legend.set_text(f'VELOCITY / linear {VELOCITY_PIXELS_PER_AUYR:g} px per AU/yr\nv = ({v[0]:.4g}, {v[1]:.4g}) AU/yr / speed {np.linalg.norm(v):.4g}')
+            reference = 'world' if key is None else f'{self.app.prepared.body_specs[self.app.prepared.body_ids.index(key)].name} [{key}]'
+            label = 'Parent' if self.is_moon else 'Reference'
+            distance = np.linalg.norm(r)
+            separation = self.fields['separation']
+            distance_text=f'{distance*AU_KM:.10g}'
+            if separation.text != distance_text:
+                separation.eventson=False; separation.set_val(distance_text); separation.eventson=True
+            text = (f'{label}: {reference} / '+('initial' if self.app.preparing else 'current')+' reference state\n'
+                    f'relative r = ({r[0]:.6g}, {r[1]:.6g}) AU / {distance:.6g} AU = {distance*AU_KM:,.7g} km\n'
+                    f'relative v = ({v[0]:.6g}, {v[1]:.6g}) AU/yr / speed {np.linalg.norm(v):.6g}\n'
+                    f'system r = ({(r+rr)[0]:.6g}, {(r+rr)[1]:.6g}) AU\n'
+                    f'system v = ({(v+vv)[0]:.6g}, {(v+vv)[1]:.6g}) AU/yr\n'
+                    f'Click to place; drag velocity tip / linear {VELOCITY_PIXELS_PER_AUYR:g} px per AU/yr')
+            if self.is_moon and self.fields['mass'].text.strip():
+                step=recommended_moon_step(r,self.app.system.masses[self.app.prepared.body_ids.index(key)],float(self.fields['mass'].text))
+                if self.app.preparing and float(self.fields['dt'].text)>step:
+                    self.fields['dt'].set_val(f'{step:.16g}')
+                text += f'\nMoon fixed dt <= {step:.9g} yr / initial relative period / 600'
+                if self.app.preparing:
+                    text += f'\nDraft fixed dt: {self.fields["dt"].text} yr'
+                text += '\nInitial aid only; no forced binding or reattachment.'
+            self.legend.set_text(text)
             for a in self.artists: a.set_visible(True)
-        except ValueError:
-            for a in self.artists: a.set_visible(False)
+        except ValueError as exc:
+            self.marker.set_visible(False); self.arrow.set_visible(False)
+            self.legend.set_text(fill(str(exc),width=65)); self.legend.set_visible(True)
         if hasattr(self.app,'painter'): self.app.painter.paint()
 
     def on_press(self,event):
