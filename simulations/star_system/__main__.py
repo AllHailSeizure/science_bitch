@@ -1,4 +1,4 @@
-"""Default: live GUI. --output: display-free PNG render."""
+"""Default: prepare/calculate/playback GUI. --output: display-free PNG render."""
 import argparse
 import math
 import sys
@@ -15,6 +15,8 @@ def main(argv=None):
     parser.add_argument('--planet', choices=PLANETS, action='append')
     parser.add_argument('--output', type=Path, help='Save a still image instead of opening the GUI')
     parser.add_argument('--years', type=float, default=0., help='Evolve before rendering (nonnegative)')
+    parser.add_argument('--sample-stride', type=int, default=10, help='Recording output stride in physics steps (default 10)')
+    parser.add_argument('--max-recording-mib', type=int, default=256, help='In-memory recording budget (default 256 MiB)')
     parser.add_argument('--population', choices=('ring', 'disk', 'belt'))
     parser.add_argument('--count', type=int, default=200, help='Massless particles (1-2000)')
     parser.add_argument('--inner', type=float, default=2., help='Inner population radius in AU from star')
@@ -48,20 +50,29 @@ def main(argv=None):
             with_population(make_system(args.star, planets), population,
                             STARS[args.star].radius*SOLAR_RADIUS_AU)
         if args.output:
-            prepared = build_system(loaded) if loaded is not None else None
-            system = prepared.system if prepared is not None else make_system(args.star,planets)
-            if population is not None and prepared is None:
-                system = with_population(system, population, STARS[args.star].radius*SOLAR_RADIUS_AU)
-            system.step(round(args.years/system.dt))
+            from .initialization import build_system, legacy_setup
+            from .recording import Calculation, CalculationRequest
+            setup = loaded if loaded is not None else legacy_setup(args.star, planets, population=population)
+            prepared = build_system(setup)
+            result = None
+            if args.years:
+                calc = Calculation(setup, CalculationRequest(args.years, args.sample_stride, args.max_recording_mib*1048576))
+                while not calc.done:
+                    calc.advance(150)
+                prepared, result = calc.prepared, calc.result
             fig,ax = plt.subplots(figsize=(9,9))
-            if prepared is not None:
-                draw_system(ax, prepared)
-                ax.set_title(loaded.name, color='#edf4f7')
-            else:
-                draw(ax,system,args.star,planets)
+            scene = draw_system(ax, prepared, result.frames if result else ())
+            ax.set_title(setup.name, color='#edf4f7')
+            if result:
+                scene.result_info.set_text(f'{result.status.upper()} / {result.completed_steps:,} steps\n'
+                    f'Requested {result.requested_end_time:.8g} yr / actual {result.actual_end_time:.8g} yr\n'
+                    f'Source {result.setup_digest[:12]}\n{result.reason}')
             args.output.parent.mkdir(parents=True,exist_ok=True)
             fig.savefig(args.output,dpi=150)
             plt.close(fig)
+            if result is not None and result.status != 'complete':
+                print(f'{result.status}: {result.reason}', file=sys.stderr)
+                return 2
         else:
             app = App(args.star,planets, population=population, setup=loaded)
             plt.show()

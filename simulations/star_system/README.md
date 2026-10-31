@@ -16,6 +16,73 @@ ten planet/dwarf-planet selectors. General catalog bodies and custom states are
 available through the authoring UI and Python API. A desktop backend is needed
 for interactive input; `--output` uses Agg without a display.
 
+## Calculate first, then inspect
+
+The primary flow is **PREP → CALCULATING → RECORDED**. Prepare bodies,
+populations and moons with the same editors, then choose **Calculate...**.
+Review the requested duration in years, positive integer output stride, and
+recording budget before **Start calculation**. The default visible budget is
+**256 MiB**. Duration must be finite and positive. The request rounds up to the
+first whole configured physics step at or after that duration; the form shows
+the resolved integer step count, fixed dt and resolved end time before start.
+Output stride samples every N physics steps; it never changes physics dt.
+
+Calculation uses `build_system` and the same transactional `System.step` as
+live evolution. Each GUI tick accepts at most 150 steps and yields after a
+6 ms work slice (a single whole solver step must finish or reject). Progress,
+physical elapsed time and **Cancel calculation** remain visible. Initial and
+final valid states are always included, even between output strides. Cancel
+keeps usable partial output. An unresolved encounter halts with its reason and
+last accepted whole step; neither cancellation nor halting is labeled complete.
+
+Preflight conservatively estimates retained Python/NumPy frame storage, shared
+metadata and an off-stride terminal checkpoint. An oversized request explains
+how to reduce duration/body count, increase output stride or raise the budget.
+Actual retained storage is checked as samples/events arrive; exceeding the
+budget rejects the new step and retains the last accepted checkpoint instead
+of silently dropping samples. This is a per-recording budget; other retained
+results and the renderer also consume application memory.
+
+**Play / Pause**, **Next sample**, and **yr/sec** select already calculated
+samples forward in recorded time. Replay never calls the integrator. There is
+no interpolation: the scene clock is the displayed frame's actual timestamp.
+**Restart** in RECORDED returns to its first sample. Source name, digest,
+requested/resolved end times, actual terminal time, completion state and reason
+stay with the result. Each frame carries its own IDs, physical properties,
+parent associations and events; body membership need not stay fixed. Missing
+selected bodies/parents report removal without selecting a replacement.
+Ordinary samples retain the camera; fit and follow remain explicit actions.
+
+Trails use timestamped world frames, retain at most 1500 samples and display at
+most 400 vertices per body. The sidebar reports actual retained start/end and
+duration, including sampling stride and history truncation. Duration is never
+inferred from sample count times the current dt, including unequal time segments.
+
+**Results (N)** cycles retained results, including older sources after editing
+or calculating another setup. Editing a recorded setup's name, bodies or
+population returns to PREP and needs a new calculation; prior immutable results
+keep their source name/digest. The experiment window labels the selected starting
+setup and current-state capture source separately. Capturing a displayed sample
+as a new setup uses that recording's original source definition/digest and actual
+sample time, even if another draft has since been edited. Setup JSON persists
+starting conditions; recordings themselves remain in memory for this session.
+Timeline scrubbing, reverse playback and comparison dashboards are not included.
+
+**Run live from starting setup** explicitly starts a fresh **LIVE** trajectory.
+Live Pause/Resume, one-dt **Step**, restart and insertion remain available.
+Add/population actions from RECORDED enter preparation, so recorded arrays are
+never insertion targets. The CLI `--years` path drives the same incremental
+calculator; `--sample-stride` (default 10) and `--max-recording-mib` (default 256)
+control its recording. `--years 0` still exports the initial setup directly.
+
+Python callers can use `Calculation(setup, CalculationRequest(duration_years,
+sample_stride, max_bytes))`, call `advance(max_steps)` until `done`, or `cancel()`
+for a partial `RecordedRun`. `result` is available at termination and includes
+immutable `source_setup`, `frames`, status and actual timestamps. `Playback(run)`
+exposes `current_frame`, `play()`, `pause()`, `next_sample()` and
+`advance(wall_seconds, years_per_second)`. Event/membership changes preserve
+off-stride boundary samples; collision physics is still a separate deliverable.
+
 ## Authoring a body
 
 **Add a body** pauses the active experiment and opens a draft in the sidebar.
@@ -69,7 +136,8 @@ Menu button can still hide/show the editor, making its widgets inactive.
 `App.session` (`ExperimentSession`) owns the immutable `initial_setup`, a
 validated `draft`, and the mutable `prepared` trajectory. `App.initial_setup`
 and `App.prepared` expose those selected objects. The application opens in
-**PREP**, paused at time zero. **Run live** or Step starts evolution.
+**PREP**, paused at time zero. **Calculate...** starts a recorded calculation;
+**Run live** or Step starts live evolution.
 **Live insertion** changes only the
 active trajectory, preserving every existing position, velocity, and elapsed
 time exactly. It appends a new row even when particles already occupy earlier
@@ -77,7 +145,7 @@ rows. It retains the camera, existing scene artists, selected identity, and
 follow target. An inserted body's history starts at insertion; it has no
 invented past trail.
 
-**Restart** reconstructs the selected starting setup, removes unsaved live
+In live/preparation mode, **Restart** reconstructs the selected starting setup, removes unsaved live
 insertions, resets elapsed time and trails, and retains the pause state.
 **Prepare setup** explicitly returns to that starting setup and pauses it.
 Add, **Edit selected**, and **Remove selected** then update its initial bodies.
@@ -526,3 +594,35 @@ test and independent CLI command rebuild it in a fresh process. Its
 visually inspected for heading, preparation/live controls, separate save
 paths and epoch/step disclosure. These are ignored local artifacts; native
 desktop input and multiwindow behavior remain unverified.
+
+Calculated-playback integration commands:
+
+```powershell
+C:\Python314\python.exe -m pytest -q --tb=short --basetemp output/pytest-playback-final-09
+C:\Python314\python.exe -m pytest -q tests/test_recording.py tests/test_recorded_playback.py tests/test_experiment_controls.py tests/test_star_system_display.py::test_export_keeps_inspector_text_and_recovers_live_cache tests/test_star_system_display.py::test_partial_redraw_matches_full_redraw_after_motion_and_resize --tb=short --basetemp output/pytest-playback-post-10
+C:\Python314\python.exe -m simulations.star_system --load output/playback-setup.json --years 0.03 --output output/playback-loaded-cli.png
+C:\Python314\python.exe -m simulations.star_system --star sun --planet earth --planet jupiter --years 1 --output output/playback-legacy-cli.png
+git diff --check
+git diff --check codex/issue-8-persistence...HEAD
+```
+
+The full integration run passed **269 tests in 357.53 seconds**, with 33
+expected Agg window notices. Final review then added displayed world r/v
+vectors to the inspector and two regressions for bounded time slicing and a
+naturally unresolved trajectory. The subsequent focused run passed **40 tests
+in 37.98 seconds**, including recorded capture after a different draft was
+edited, no-reintegration guards, full/cached/nonblit rendering, and live export
+cache recovery. The full suite was not repeated after those small refinements.
+
+The initially valid radial-infall setup (Sun plus Earth at 0.1 AU, zero initial
+velocity, dt = 1e-5 yr) naturally halted after **552 of 1000 requested steps** at
+**0.00552 yr**, retaining finite last-valid arrays and an explicit unresolved
+encounter reason. It did not claim completion or silently reset the experiment.
+Both CLI exports above succeeded and their 1350x1350 PNGs were visually inspected.
+Normal App exports `output/playback-preparation.png`,
+`output/calculation-progress.png`, `output/recorded-playback.png`, and
+`output/natural-recorded-halt.png` (1776x1104), plus
+`output/calculation-review.png` (960x600), were visually inspected for controls,
+source association, physical clocks, interval readout and incomplete status.
+These remain ignored local artifacts. Agg event checks and image review do not
+establish native desktop input or multiwindow behavior.
