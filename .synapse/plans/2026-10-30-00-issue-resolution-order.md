@@ -49,12 +49,14 @@ Keep NumPy, Matplotlib, Pillow, pytest, PyQt6, Python 3.10+, the 2D model, and t
 ## Judgment tasks and owner decisions
 
 1. **Collision response:** the user tentatively selected inelastic merging and asked about realism. Plan 8 targets perfectly inelastic merging as a deliberately simplified option. It must not be described as a general realistic model of astronomical impacts. Its first judgment task settles supported body pairs, remnant properties, and particle behavior before collision implementation.
-2. **Authoring semantics:** plan 2 proposes distinct instance IDs (including repeated catalog choices), explicit reference selection, and preparation-only edit/remove. Its first judgment task settles the remaining product questions, including what save/restart means after live insertion. Do not hide those choices inside a mechanical task.
+2. **Authoring semantics:** distinct instance IDs (including repeated catalog choices), explicit reference selection, and preparation-only edit/remove are the execution defaults. The user selected saving the original setup plus offering the current state as a separately named new setup. Restart uses the selected starting setup; live insertion does not silently rewrite it. Capturing current state creates a new initial epoch, preserving the source time as provenance. Do not mix evolved population coordinates with regenerated particles in that captured setup.
 3. **Recording policy:** plan 6 proposes user-entered duration and integer output stride, in-memory results, and forward recorded playback. These are a minimal proposal for the issue's open sampling/inspection choices; settle them before building UI. Scrubbing, reverse integration, persisted recordings, and preference saving are not presumed requirements.
 
 Judgment tasks run inline. Mechanical tasks may be delegated only with the settled interfaces, the prerequisite diff, and their exact verification command. A passing structural check cannot settle a product or physics-model decision.
 
 Plan 1 can start immediately. Later plans begin with the listed judgment work where their source issue leaves behavior unresolved; their downstream mechanical tasks start only after that contract is recorded. These are decision-bearing implementation plans, not a claim that every product choice has already been approved. This planning delivery itself only adds documents; it does not start implementation, publish plans, or change GitHub issue state.
+
+Execution authorization, 2026-10-30: the user requested a PR for these plans followed by one agent per plan, launched sequentially, with every implementation PR stacked on the preceding branch. This overrides the earlier allocation of judgment tasks solely to the primary session; each plan agent owns its bounded implementation and reports genuine unresolved product choices. The collision-pair question has been reopened at the user's request; disregard the earlier answer until the new reply arrives.
 
 ## Verification and closure
 
