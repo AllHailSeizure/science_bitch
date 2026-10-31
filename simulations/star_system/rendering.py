@@ -9,7 +9,9 @@ from matplotlib.patches import Circle
 from matplotlib.transforms import Bbox
 
 from .core import SOLAR_RADIUS_AU
-from .data import STARS, PLANETS, blackbody_rgb, star_size
+from .data import STARS, PLANETS, CATALOG, AU_KM, blackbody_rgb, star_size
+from .model import BodySpec
+from .initialization import PreparedSystem
 
 BACKGROUND = '#070d18'
 PANEL = '#101b2b'
@@ -113,10 +115,37 @@ class CanvasPainter:
 
 
 def coordinates(r):
-    """Star-relative radial asinh mapping; direction is preserved."""
+    """View-origin-relative radial asinh mapping; direction is preserved."""
     r = np.asarray(r)
     radius = np.linalg.norm(r, axis=-1)
     return r * (np.arcsinh(radius / .05) / np.maximum(radius, 1e-30))[..., None]
+
+
+def inverse_coordinates(q):
+    """Physical offset in AU from compressed display coordinates."""
+    q = np.asarray(q, dtype=float)
+    radius = np.linalg.norm(q, axis=-1)
+    return q * (.05*np.sinh(radius)/np.maximum(radius, 1e-30))[..., None]
+
+
+def dominant_star(prepared, index):
+    """Illustrative bolometric flux; missing radius/temperature uses solar luminosity."""
+    candidates = [i for i, spec in enumerate(prepared.body_specs) if spec.kind == 'star' and i != index]
+    if not candidates:
+        return None
+    def flux(i):
+        spec = prepared.body_specs[i]
+        luminosity = ((spec.radius/SOLAR_RADIUS_AU)**2*(spec.temperature/5772)**4
+                      if spec.radius is not None and spec.temperature is not None else 1.)
+        distance2 = np.sum((prepared.system.r[i]-prepared.system.r[index])**2)
+        return luminosity/max(distance2, 1e-30)
+    return max(candidates, key=flux)
+
+
+def body_size(spec):
+    if spec.kind == 'star':
+        return 12 + 16*np.log10(1 + 8*(spec.radius or SOLAR_RADIUS_AU)/SOLAR_RADIUS_AU)
+    return 4 + 3*np.log10(1 + (spec.radius or 1000/AU_KM)*AU_KM/1000)
 
 
 @lru_cache(maxsize=1)
@@ -133,7 +162,9 @@ def _sphere():
 def _surface(planet):
     """Subtle stylized markings, not maps of observed surfaces."""
     x, y, z, _ = _sphere()
-    color = np.broadcast_to(to_rgb(PLANETS[planet].color), (*x.shape, 3)).copy()
+    spec = planet if isinstance(planet, BodySpec) else CATALOG[planet]
+    color = np.broadcast_to(to_rgb(spec.color or '#a9b8cb'), (*x.shape, 3)).copy()
+    planet = spec.catalog_key
     if planet in ('jupiter', 'saturn'):
         bands = .86 + .12 * np.sin(28*y + .7*np.sin(7*x))
         color *= bands[..., None]
@@ -168,7 +199,8 @@ def star_sprite(star):
     axis = np.linspace(-1., 1., 160)
     x, y = np.meshgrid(axis, axis)
     radius = np.hypot(x, y)
-    color = np.asarray(blackbody_rgb(STARS[star].temperature))
+    spec = star if isinstance(star, BodySpec) else CATALOG[star]
+    color = np.asarray(blackbody_rgb(spec.temperature) if spec.temperature is not None else to_rgb(spec.color or '#fff0d9'))
     rgba = np.zeros((*x.shape, 4))
     rgba[..., :3] = color
     rgba[..., 3] = .38*np.exp(-4.5*radius) * np.clip((1-radius)*8, 0, 1)
@@ -185,11 +217,14 @@ def planet_size(planet):
 
 
 class Scene:
-    """Create artists once and update their data without resetting the camera."""
+    """Stable-ID artists and world-frame history; updates retain the camera."""
 
-    def __init__(self, ax, system, star, planets, trails=None):
-        self.ax, self.star, self.planets = ax, star, list(planets)
+    def __init__(self, ax, prepared, history=(), legacy=False):
+        self.ax, self.prepared, self.legacy = ax, prepared, legacy
         self.selected = None
+        self.origin_id = next((key for key, spec in zip(prepared.body_ids, prepared.body_specs)
+                               if spec.kind == 'star'), prepared.body_ids[0])
+        self.artists_by_id, self.labels_by_id, self.trails_by_id = {}, {}, {}
         ax.clear()
         ax.set_facecolor(BACKGROUND)
         ax.set_aspect('auto')
@@ -199,46 +234,43 @@ class Scene:
             spine.set_visible(False)
         self._background()
         self._guides()
-        self.trails = []
-        for planet in planets:
-            line = LineCollection([], linewidths=1.05, zorder=2)
-            ax.add_collection(line)
-            self.trails.append(line)
-        sun = STARS[star]
-        image = OffsetImage(star_sprite(star), zoom=star_size(sun)/(160*.34), origin='lower')
-        self.star_artist = AnnotationBbox(image, (0, 0), frameon=False, pad=0, zorder=5)
-        ax.add_artist(self.star_artist)
-        self.bodies, self.labels = [], []
-        for planet in planets:
-            image = OffsetImage(planet_sprite(planet, (1., 0.)), zoom=planet_size(planet)/80, origin='lower')
-            body = AnnotationBbox(image, (0, 0), frameon=False, pad=0, zorder=6)
-            ax.add_artist(body)
-            self.bodies.append(body)
-            label = ax.annotate(PLANETS[planet].name, (0, 0), xytext=(16, 10),
-                                textcoords='offset points', fontsize=9, color=MUTED,
-                                annotation_clip=True, zorder=8)
-            self.labels.append(label)
         self.highlight = ax.scatter([], [], s=900, facecolors='none', edgecolors=ACCENT,
                                     linewidths=.8, alpha=.65, zorder=4)
-        self.particles = ax.scatter([], [], s=4, color='#d8dfb3', alpha=.8,
-                                    linewidths=0, zorder=3)
-        self.heading = ax.text(.025, .97, sun.name, transform=ax.transAxes,
-                               color=TEXT, fontsize=15, va='top', zorder=10)
-        ax.text(.025, .925, f'{sun.temperature:,.0f} K   /   {sun.mass:g} solar masses',
-                transform=ax.transAxes, color=MUTED, fontsize=8, va='top', zorder=10)
-        self.clock = ax.text(.975, .965, '', transform=ax.transAxes, ha='right', va='top',
-                             color=TEXT, fontsize=11, fontfamily='monospace', zorder=10)
-        ax.text(.025, .025, 'COMPRESSED DISTANCES  /  BODY SIZES EXAGGERATED',
+        self.particles = ax.scatter([], [], s=4, color='#d8dfb3', alpha=.8, linewidths=0, zorder=3)
+        self.heading = ax.text(.025, .97, '', transform=ax.transAxes, color=TEXT, fontsize=15, va='top', zorder=10)
+        self.clock = ax.text(.975, .965, '', transform=ax.transAxes, ha='right', va='top', color=TEXT,
+                             fontsize=11, fontfamily='monospace', zorder=10)
+        ax.text(.025, .025, 'COMPRESSED DISTANCES / BODY SIZES EXAGGERATED / ILLUSTRATIVE LIGHTING',
                 transform=ax.transAxes, color=MUTED, fontsize=7, zorder=10)
-        self.update(system, trails)
+        self.update(prepared, history)
         self.fit_view()
+
+    def _ensure_artists(self):
+        for key, spec in zip(self.prepared.body_ids, self.prepared.body_specs):
+            if spec.kind == 'particle' or key in self.artists_by_id:
+                continue
+            stellar = spec.kind == 'star'
+            image = OffsetImage(star_sprite(spec) if stellar else planet_sprite(spec, (1, 0)),
+                                zoom=body_size(spec)/(160*.34 if stellar else 80), origin='lower')
+            body = AnnotationBbox(image, (0, 0), frameon=False, pad=0, zorder=5 if stellar else 6)
+            self.ax.add_artist(body)
+            self.artists_by_id[key] = body
+            self.labels_by_id[key] = self.ax.annotate(spec.name, (0, 0), xytext=(16, 10), textcoords='offset points',
+                                                    fontsize=9, color=MUTED, annotation_clip=True, zorder=8)
+            if key != self.origin_id:
+                line = LineCollection([], linewidths=1.05, zorder=2)
+                self.ax.add_collection(line)
+                self.trails_by_id[key] = line
+        stars = [self.artists_by_id[k] for k, spec in zip(self.prepared.body_ids, self.prepared.body_specs) if spec.kind == 'star']
+        self.star_artist = stars[0] if stars else None  # legacy adapter
+        self.bodies = [self.artists_by_id[k] for k, spec in zip(self.prepared.body_ids, self.prepared.body_specs)
+                       if spec.kind not in ('star', 'particle')]
+        self.labels = list(self.labels_by_id.values())
+        self.trails = list(self.trails_by_id.values())
 
     @property
     def moving_artists(self):
-        # Guide text can overlap trails. Paint it in the same z-order as a full
-        # axes draw, rather than baking it below every moving artist.
-        return [*self.trails, *self.ax.texts, self.particles, self.highlight,
-                self.star_artist, *self.bodies]
+        return [*self.trails, *self.ax.texts, self.particles, self.highlight, *self.artists_by_id.values()]
 
     def _background(self):
         rng = np.random.default_rng(24)
@@ -250,8 +282,6 @@ class Scene:
 
     def _guides(self):
         for radius in (.05, .1, .5, 1, 5, 10, 30, 80):
-            if radius <= STARS[self.star].radius*SOLAR_RADIUS_AU:
-                continue
             rr = np.arcsinh(radius/.05)
             self.ax.add_patch(Circle((0, 0), rr, fill=False, edgecolor='#223247',
                                      linewidth=.6, linestyle=(0, (2, 5)), zorder=1))
@@ -259,42 +289,62 @@ class Scene:
                          color='#6b839e', ha='center', va='center', clip_on=True,
                          bbox=dict(facecolor=BACKGROUND, edgecolor='none', pad=2), zorder=3)
 
-    def update(self, system, trails=None):
-        relative = system.r - system.r[0]
-        self.positions = coordinates(relative)
-        self.particles.set_offsets(self.positions[1+len(self.planets):])
+    def update(self, prepared, history=()):
+        if not isinstance(prepared, PreparedSystem):
+            from dataclasses import replace
+            prepared = replace(self.prepared, system=prepared)
+        self.prepared = prepared
+        self._ensure_artists()
+        system = prepared.system
+        origin_index = prepared.body_ids.index(self.origin_id)
+        self.origin = system.r[origin_index].copy()
+        self.positions = coordinates(system.r-self.origin)
+        particle_indices = [i for i, s in enumerate(prepared.body_specs) if s.kind == 'particle']
+        self.particles.set_offsets(self.positions[particle_indices])
         self.clock.set_text(f'{system.time:,.3f} yr')
-        for i, (planet, body, label) in enumerate(zip(self.planets, self.bodies, self.labels), 1):
-            body.xy = self.positions[i]
-            body.xybox = self.positions[i]
-            body.offsetbox.set_data(planet_sprite(planet, -relative[i]))
-            label.xy = self.positions[i]
-        history = np.asarray(trails) if trails is not None and len(trails) else None
-        for i, (planet, line) in enumerate(zip(self.planets, self.trails), 1):
-            if history is None or len(history) < 2:
+        self.heading.set_text(prepared.body_specs[origin_index].name)
+        for i, (key, spec) in enumerate(zip(prepared.body_ids, prepared.body_specs)):
+            if key not in self.artists_by_id:
+                continue
+            body = self.artists_by_id[key]
+            body.xy = body.xybox = self.positions[i]
+            light = dominant_star(prepared, i)
+            if spec.kind != 'star':
+                direction = system.r[light]-system.r[i] if light is not None else (1, 0)
+                body.offsetbox.set_data(planet_sprite(spec, direction))
+            self.labels_by_id[key].xy = self.positions[i]
+        for key, line in self.trails_by_id.items():
+            points = []
+            for frame in history if history is not None else ():
+                if hasattr(frame, 'body_ids'):
+                    if key not in frame.body_ids or self.origin_id not in frame.body_ids:
+                        continue
+                    points.append(frame.r[frame.body_ids.index(key)] - frame.r[frame.body_ids.index(self.origin_id)])
+                else:  # legacy relative-array history
+                    points.append(frame[prepared.body_ids.index(key)])
+            if len(points) < 2:
                 line.set_segments([])
                 continue
-            # Keep the full integration history; only bound the number of
-            # vertices sent to the display. Always retain both endpoints.
-            indices = np.linspace(0, len(history)-1,
-                                  min(len(history), MAX_TRAIL_VERTICES), dtype=int)
-            trail = coordinates(history[indices, i, :])
+            indices = np.linspace(0, len(points)-1, min(len(points), MAX_TRAIL_VERTICES), dtype=int)
+            trail = coordinates(np.asarray(points)[indices])
             segments = np.stack((trail[:-1], trail[1:]), axis=1)
-            colors = np.tile((*to_rgb(PLANETS[planet].color), 1.), (len(segments), 1))
+            spec = prepared.body_specs[prepared.body_ids.index(key)]
+            colors = np.tile((*to_rgb(spec.color or '#b7c9df'), 1.), (len(segments), 1))
             colors[:, 3] = np.linspace(.015, .65, len(segments))
             line.set_segments(segments)
             line.set_color(colors)
         self.select(self.selected)
 
-    def select(self, index):
-        self.selected = index
+    def select(self, body_id):
+        if isinstance(body_id, (int, np.integer)):
+            body_id = self.prepared.body_ids[body_id]
+        self.selected = body_id
+        index = self.prepared.body_ids.index(body_id) if body_id in self.prepared.body_ids else None
         self.highlight.set_offsets(np.empty((0, 2)) if index is None else self.positions[[index]])
         if index is not None:
-            diameter = (star_size(STARS[self.star]) if index == 0 else
-                        planet_size(self.planets[index-1]) if index <= len(self.planets) else 3)
-            self.highlight.set_sizes([(diameter+12)**2])
-        for i, label in enumerate(self.labels, 1):
-            label.set_color(TEXT if i == index else MUTED)
+            self.highlight.set_sizes([(body_size(self.prepared.body_specs[index])+12)**2])
+        for key, label in self.labels_by_id.items():
+            label.set_color(TEXT if key == body_id else MUTED)
 
     def fit_view(self):
         extent = max(2., np.max(np.linalg.norm(self.positions, axis=1))*1.25)
@@ -304,7 +354,18 @@ class Scene:
         self.ax.set_ylim(-half_width*ratio, half_width*ratio)
 
 
-def draw(ax, system, star, planets, trails=None):
-    """Shared still/live appearance. Return the scene for subsequent frame updates."""
+def draw_system(ax, prepared, history=()):
     ax.figure.set_facecolor(BACKGROUND)
-    return Scene(ax, system, star, planets, trails)
+    return Scene(ax, prepared, history)
+
+
+def draw(ax, system, star, planets, trails=None):
+    """Legacy numeric/circular caller adapter; generic rendering has no row prefix rule."""
+    from .model import BodySpec
+    ax.figure.set_facecolor(BACKGROUND)
+    keys = (star, *planets)
+    count = len(system.masses)-len(keys)
+    particle = BodySpec('Test particle', 'particle', 0., None, color='#d8dfb3')
+    prepared = PreparedSystem(system, keys+tuple(f'population:{i}' for i in range(count)),
+                              tuple(CATALOG[k] for k in keys)+(particle,)*count)
+    return Scene(ax, prepared, trails, legacy=True)

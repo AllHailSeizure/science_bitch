@@ -5,7 +5,7 @@ import numpy as np
 from matplotlib.widgets import Button, RadioButtons, Slider
 
 from .data import STARS, PLANETS
-from .rendering import PANEL, TEXT, MUTED, ACCENT, planet_sprite, star_sprite
+from .rendering import PANEL, TEXT, MUTED, ACCENT, planet_sprite, star_sprite, dominant_star
 
 
 def button(fig, bounds, label):
@@ -41,6 +41,10 @@ class Sidebar:
         self.preview = fig.add_axes((.205, .20, .075, .12), zorder=12, facecolor=PANEL)
         self.preview.set_axis_off()
         self.preview_image = self.preview.imshow(star_sprite(app.star), origin='lower')
+        self.prepare = button(fig, (.02,.825,.13,.03), 'Prepare setup')
+        self.legacy = button(fig, (.16,.825,.13,.03), 'Prepare circular')
+        self.edit = button(fig, (.02,.37,.13,.027), 'Edit selected')
+        self.remove = button(fig, (.16,.37,.13,.027), 'Remove selected')
         self.add = button(fig, (.02, .77, .13, .037), 'Add a body')
         self.population = button(fig, (.16, .77, .13, .037), 'Population...')
         self.reset = button(fig, (.02, .72, .13, .037), 'Restart')
@@ -64,30 +68,49 @@ class Sidebar:
         self.catalog_add = button(fig, (.02, .31, .13, .035), 'Add planet')
         self.catalog_close = button(fig, (.16, .31, .13, .035), 'Close catalog')
         self.catalog_widgets = [self.star_picker, self.planet_picker, self.catalog_add, self.catalog_close]
-        self.widgets = [self.add, self.population, self.reset, self.pause, self.step, self.home, self.follow, self.speed]
+        self.widgets = [self.prepare, self.legacy, self.edit, self.remove, self.add, self.population, self.reset, self.pause, self.step, self.home, self.follow, self.speed]
         self.axes = [self.background, self.body_ax, self.preview, *(w.ax for w in self.widgets), *(w.ax for w in self.catalog_widgets)]
-        self.add.on_clicked(lambda event: self.set_catalog(True))
+        self.add.on_clicked(app.edit_body)
+        self.prepare.on_clicked(app.prepare_setup)
+        self.legacy.on_clicked(self.prepare_circular)
+        self.edit.on_clicked(lambda event: app.edit_body(body_id=app.selected_id))
+        self.remove.on_clicked(app.remove_body)
         self.catalog_close.on_clicked(lambda event: self.set_catalog(False))
         self.menu.on_clicked(app.toggle_sidebar)
         fig.canvas.mpl_connect('scroll_event', self.on_scroll)
         fig.canvas.mpl_connect('button_press_event', self.on_click)
         self.set_catalog(False)
 
+    def prepare_circular(self, event=None):
+        self.app.prepare_setup()
+        self.set_catalog(True)
+
     def set_catalog(self, visible):
         self.catalog_open = bool(visible)
         self._sync()
 
     def _sync(self):
+        authoring = self.app.body_editor is not None
+        editing = authoring or self.app.population_editor is not None
         self.background.set_visible(self.visible)
         for artist in (self.body_ax, self.preview, self.inspector):
-            artist.set_visible(self.visible and not self.catalog_open)
+            artist.set_visible(self.visible and not self.catalog_open and not authoring)
         for widget in self.widgets:
-            widget.ax.set_visible(self.visible)
-            widget.active = self.visible and self.app.population_editor is None
+            widget.ax.set_visible(self.visible and not authoring)
+            widget.active = self.visible and not editing
+            if widget in (self.edit,self.remove):
+                widget.active = widget.active and self.app.preparing
+                widget.ax.set_visible(self.visible and not self.catalog_open and not authoring)
+            if widget == self.legacy:
+                widget.active = widget.active and self.app._legacy_configuration
         for widget in self.catalog_widgets:
-            enabled = self.visible and self.catalog_open
+            enabled = self.visible and self.catalog_open and not authoring
             widget.ax.set_visible(enabled)
-            widget.active = enabled and self.app.population_editor is None
+            widget.active = enabled and not editing and self.app.preparing
+        if authoring:
+            for ax in self.app.body_editor.axes: ax.set_visible(self.visible)
+            for widget in self.app.body_editor.widgets:
+                widget.active = self.visible and (widget != self.app.body_editor.fields['dt'] or self.app.preparing)
         if hasattr(self.app, 'painter'):
             self.app.painter.invalidate()
             self.app.fig.canvas.draw_idle()
@@ -126,28 +149,32 @@ class Sidebar:
                               ha='right', color=MUTED, fontsize=7)
 
     def on_scroll(self, event):
-        if self.visible and not self.catalog_open and self.app.population_editor is None and event.inaxes == self.body_ax:
+        if self.visible and not self.catalog_open and self.app.population_editor is None and self.app.body_editor is None and event.inaxes == self.body_ax:
             self.offset = max(0, min(max(0, len(self.rows)-6), self.offset-int(event.step)))
             self._draw_rows()
             self.app.painter.invalidate()
             self.app.fig.canvas.draw_idle()
 
     def on_click(self, event):
-        if self.visible and not self.catalog_open and self.app.population_editor is None and event.inaxes == self.body_ax and event.button == 1 and event.ydata is not None:
+        if self.visible and not self.catalog_open and self.app.population_editor is None and self.app.body_editor is None and event.inaxes == self.body_ax and event.button == 1 and event.ydata is not None:
             row = int(np.floor((.92-event.ydata)/.15))
             index = self.offset + row
             if 0 <= row < 6 and 0 <= index < len(self.rows):
-                self.app.selected_index = self.rows[index][0]
+                key = self.rows[index][0]
+                if isinstance(key, int): self.app.selected_index = key
+                else: self.app.selected_id = key
                 self.app._refresh()
 
     def update(self, time, speed, selected_index):
         self.readout.set_text(f'{time:,.3f} yr   /   {speed:.3g} yr/sec')
         self.status.set_text(fill(self.status.get_text(), width=42))
-        if selected_index == 0:
-            image = star_sprite(self.app.star)
-        elif selected_index <= len(self.app.planets):
-            direction = self.app.system.r[0] - self.app.system.r[selected_index]
-            image = planet_sprite(self.app.planets[selected_index-1], direction)
+        spec = self.app.prepared.body_specs[selected_index]
+        if spec.kind == 'star':
+            image = star_sprite(spec)
+        elif spec.kind != 'particle':
+            light = dominant_star(self.app.prepared, selected_index)
+            direction = self.app.system.r[light]-self.app.system.r[selected_index] if light is not None else (1,0)
+            image = planet_sprite(spec, direction)
         else:
             image = None
         self.preview_image.set_visible(image is not None)

@@ -58,6 +58,9 @@ def test_scene_keeps_artists_and_camera_and_places_bodies_on_their_orbits():
     fig, ax = plt.subplots()
     try:
         scene = draw(ax, system, 'sun', ['earth', 'jupiter'])
+        from matplotlib.colors import to_rgba
+        from simulations.star_system.rendering import BACKGROUND
+        assert fig.get_facecolor() == to_rgba(BACKGROUND)
         artists = tuple(ax.get_children())
         ax.set_xlim(-5, 7)
         ax.set_ylim(-6, 6)
@@ -159,7 +162,7 @@ def test_drag_pans_without_selecting_a_body(app):
 
 def test_existing_add_distance_and_star_controls_still_rebuild(app):
     original_axes = len(app.fig.axes)
-    click(app.fig.canvas, app.sidebar.add.ax)
+    click(app.fig.canvas, app.sidebar.legacy.ax)
     app.planet_picker.set_active(list(PLANETS).index('mercury'))
     click(app.fig.canvas, app.add.ax)
     assert app.planets[-1] == 'mercury'
@@ -184,7 +187,7 @@ def test_all_planets_fit_in_control_panel(app):
         app.add_planet(None)
     app.fig.canvas.draw()
     assert len(app.sliders) == 10
-    click(app.fig.canvas, app.sidebar.add.ax)
+    click(app.fig.canvas, app.sidebar.legacy.ax)
     assert all(slider.ax.get_visible() for slider in app.sliders)
     assert len(app.scene.bodies) == 10
     click(app.fig.canvas, app.sidebar.catalog_close.ax)
@@ -355,9 +358,9 @@ def test_sidebar_blocks_scene_gestures(app):
     assert app.selected_index == 0
 
 
-def test_catalog_opens_only_from_add_body(app):
+def test_legacy_catalog_opens_from_explicit_circular_presets(app):
     assert not app.planet_picker.ax.get_visible()
-    click(app.fig.canvas, app.sidebar.add.ax)
+    click(app.fig.canvas, app.sidebar.legacy.ax)
     assert app.planet_picker.ax.get_visible()
     assert app.star_picker.ax.get_visible()
     assert app.speed.ax.get_visible()
