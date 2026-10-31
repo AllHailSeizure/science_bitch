@@ -141,7 +141,7 @@ def test_population_playback_restart_and_render(tmp_path, monkeypatch):
         assert len(app.scene.particles.get_offsets()) == 16
         app.selected_index = 3
         app.toggle_follow()
-        assert 'massless' in app.inspector.get_text()
+        assert 'Test particle' in app.inspector.get_text()
         app.restart()
         np.testing.assert_array_equal(app.system.r, initial)
         assert app.system.time == 0

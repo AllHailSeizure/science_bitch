@@ -4,11 +4,11 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import FancyBboxPatch
-from matplotlib.widgets import RadioButtons, Button, Slider
+from matplotlib.widgets import RadioButtons, Button, Slider, TextBox
 
 from .core import make_system, SOLAR_RADIUS_AU
 from .data import STARS, PLANETS
-from .populations import with_population
+from .populations import Population, with_population
 from .rendering import BACKGROUND, PANEL, TEXT, MUTED, ACCENT, CanvasPainter, draw
 
 FRAME_SECONDS = 1 / 60
@@ -30,12 +30,115 @@ def _button(fig, bounds, label):
     return button
 
 
+class PopulationEditor:
+    """Draft settings in a separate window; only Apply replaces initial state."""
+
+    def __init__(self, app):
+        self.app = app
+        self.was_paused = app.paused
+        self.finished = False
+        settings = app.population or Population()
+        self.fig = plt.figure(figsize=(6.4, 6.8), facecolor=PANEL)
+        self.fig.canvas.manager.set_window_title('Population settings')
+        self.fig.text(.08, .94, 'Population settings', fontsize=16, color=TEXT)
+        self.fig.text(.08, .89, f'Reference: {STARS[app.star].name} / circular prograde',
+                      fontsize=10, color=MUTED)
+        self.kind = RadioButtons(self.fig.add_axes((.08, .70, .35, .14)),
+                                 ['ring', 'disk', 'belt'], active=['ring', 'disk', 'belt'].index(settings.kind),
+                                 activecolor=ACCENT, useblit=False)
+        self.angles = RadioButtons(self.fig.add_axes((.57, .70, .35, .14)),
+                                   ['random', 'even'], active=['random', 'even'].index(settings.angles),
+                                   activecolor=ACCENT, useblit=False)
+        for picker in (self.kind, self.angles):
+            _style_axes(picker.ax)
+            picker.set_radio_props({'edgecolor': MUTED})
+            for label in picker.labels:
+                label.set_color(TEXT)
+        self.fields = {}
+        for key, label, value, y in (
+            ('count', 'Particles (1-2000)', settings.count, .61),
+            ('inner', 'Inner radius (AU)', settings.inner, .52),
+            ('outer', 'Outer radius (AU)', settings.outer, .43),
+            ('seed', 'Seed', settings.seed, .34),
+        ):
+            field = TextBox(self.fig.add_axes((.47, y, .42, .055)), label+'  ',
+                            initial=str(value), color='#1b3044', hovercolor='#294b60')
+            field.label.set_color(TEXT)
+            field.text_disp.set_color(TEXT)
+            self.fields[key] = field
+        self.error = self.fig.text(.08, .26, '', color='#efb17b', fontsize=9,
+                                  va='top', wrap=True)
+        self.apply = _button(self.fig, (.08, .13, .40, .055), 'Apply and restart')
+        self.remove = _button(self.fig, (.52, .13, .40, .055), 'Remove and restart')
+        self.remove.set_active(app.population is not None)
+        self.remove.label.set_color(TEXT if app.population is not None else MUTED)
+        self.cancel = _button(self.fig, (.62, .045, .30, .05), 'Cancel')
+        self.apply.on_clicked(self.apply_settings)
+        self.remove.on_clicked(lambda event: self.finish(None, apply=True))
+        self.cancel.on_clicked(lambda event: self.finish())
+        self.kind.on_clicked(self.kind_changed)
+        self.kind_changed(settings.kind)
+        self.fig.canvas.mpl_connect('close_event', lambda event: self.finish())
+        self.fig.canvas.mpl_connect('key_press_event', self.on_key)
+
+    def on_key(self, event):
+        if event.key == 'escape':
+            self.finish()
+
+    def kind_changed(self, kind):
+        # Rings have one radius; preserve the outer draft for disk/belt switches.
+        enabled = kind != 'ring'
+        self.fields['inner'].label.set_text('Inner radius (AU)  ' if enabled else 'Radius (AU)  ')
+        self.fields['outer'].set_active(enabled)
+        self.fields['outer'].text_disp.set_color(TEXT if enabled else MUTED)
+        self.fig.canvas.draw_idle()
+
+    def apply_settings(self, event=None):
+        try:
+            try:
+                count = int(self.fields['count'].text)
+                seed = int(self.fields['seed'].text)
+                inner = float(self.fields['inner'].text)
+                outer = inner if self.kind.value_selected == 'ring' else float(self.fields['outer'].text)
+            except ValueError:
+                raise ValueError('Count and seed must be integers; radii must be numbers.') from None
+            settings = Population(kind=self.kind.value_selected, count=count, seed=seed,
+                                  inner=inner, outer=outer, angles=self.angles.value_selected)
+            with_population(make_system(self.app.star, self.app.planets, self.app.distances),
+                            settings, STARS[self.app.star].radius*SOLAR_RADIUS_AU)
+        except ValueError as exc:
+            self.error.set_text(str(exc))
+            self.fig.canvas.draw_idle()
+            return
+        self.finish(settings, apply=True)
+
+    def finish(self, settings=None, apply=False):
+        if self.finished:
+            return
+        self.finished = True
+        self.app.population_editor = None
+        self.app._set_population_editing(False)
+        if apply:
+            self.app.population = settings
+            self.app.paused = True
+            self.app.following = False
+            self.app.selected_index = 0
+            self.app.restart()
+        else:
+            self.app.paused = self.was_paused
+            self.app.pending = 0.
+            self.app.last = time.monotonic()
+            self.app._refresh()
+        plt.close(self.fig)
+
+
 class App:
     def __init__(self, star='sun', planets=('earth', 'jupiter'), population=None):
         if population is not None and population.reference != 0:
             raise ValueError('The current observatory supports star-relative populations only.')
         self.star, self.planets = star, list(planets)
         self.population = population
+        self.population_editor = None
         self.distances = [PLANETS[p].distance for p in planets]
         self.paused = False
         self.following = False
@@ -67,6 +170,7 @@ class App:
                 label.set_color(TEXT)
                 label.set_fontsize(9)
         self.add = _button(self.fig, (.035, .567, .112, .033), 'Add planet')
+        self.population_button = _button(self.fig, (.035, .625, .112, .033), 'Population...')
         self.reset = _button(self.fig, (.162, .567, .112, .033), 'Restart')
         self.fig.text(.035, .508, 'ORBITAL DISTANCES', color=MUTED, fontsize=8, weight='bold')
         self.fig.text(.035, .485, 'Changes restart the system', color=MUTED, fontsize=8)
@@ -95,6 +199,7 @@ class App:
         self.step.on_clicked(self.step_once)
         self.home.on_clicked(self.fit_view)
         self.follow.on_clicked(self.toggle_follow)
+        self.population_button.on_clicked(self.edit_population)
         self.fig.canvas.mpl_connect('scroll_event', self.on_scroll)
         self.fig.canvas.mpl_connect('button_press_event', self.on_press)
         self.fig.canvas.mpl_connect('motion_notify_event', self.on_motion)
@@ -105,8 +210,31 @@ class App:
         self.restart()
         self.timer = self.fig.canvas.new_timer(interval=round(FRAME_SECONDS*1000))
         self.timer.add_callback(self._on_timer)
-        self.fig.canvas.mpl_connect('close_event', lambda event: self.timer.stop())
+        self.fig.canvas.mpl_connect('close_event', self.close)
         self.timer.start()
+
+    def edit_population(self, event=None):
+        if self.population_editor is not None:
+            return
+        self.population_editor = PopulationEditor(self)
+        self.paused = True
+        self.pending = 0.
+        self.last = time.monotonic()
+        self._set_population_editing(True)
+        self._refresh()
+        self.population_editor.fig.show()
+
+    def _set_population_editing(self, editing):
+        for widget in (self.star_picker, self.planet_picker, self.add, self.reset,
+                       self.pause, self.step, self.speed, self.population_button, *self.sliders):
+            widget.active = not editing
+
+    def close(self, event=None):
+        self.timer.stop()
+        if self.population_editor is not None:
+            self.population_editor.finished = True
+            plt.close(self.population_editor.fig)
+            self.population_editor = None
 
     def _on_timer(self):
         started = time.perf_counter()
@@ -198,7 +326,7 @@ class App:
         else:
             distance = np.linalg.norm(self.system.r[index]-self.system.r[0])
             speed = np.linalg.norm(self.system.v[index]-self.system.v[0])
-            details = (f'Particle {index-len(self.planets)} / massless\n'
+            details = (f'Test particle {index-len(self.planets)}\n'
                        f'{distance:.4g} AU from star\n{speed:.4g} AU / yr relative to star')
         self.inspector.set_text(details)
         if self.following:
@@ -221,6 +349,8 @@ class App:
         self.painter.paint()
 
     def toggle_pause(self, event=None):
+        if self.population_editor is not None:
+            return
         self.paused = not self.paused
         self.pending = 0.
         self.last = time.monotonic()
@@ -244,6 +374,8 @@ class App:
         return completed
 
     def step_once(self, event=None):
+        if self.population_editor is not None:
+            return
         self.paused = True
         self.pending = 0.
         self.last = time.monotonic()
