@@ -197,6 +197,8 @@ class Scene:
             self.labels.append(label)
         self.highlight = ax.scatter([], [], s=900, facecolors='none', edgecolors=ACCENT,
                                     linewidths=.8, alpha=.65, zorder=4)
+        self.particles = ax.scatter([], [], s=4, color='#d8dfb3', alpha=.8,
+                                    linewidths=0, zorder=3)
         self.heading = ax.text(.025, .97, sun.name, transform=ax.transAxes,
                                color=TEXT, fontsize=15, va='top', zorder=10)
         ax.text(.025, .925, f'{sun.temperature:,.0f} K   /   {sun.mass:g} solar masses',
@@ -210,7 +212,7 @@ class Scene:
 
     @property
     def moving_artists(self):
-        return [*self.trails, self.highlight, self.star_artist,
+        return [*self.trails, self.particles, self.highlight, self.star_artist,
                 *self.bodies, *self.labels, self.clock]
 
     def _background(self):
@@ -235,6 +237,7 @@ class Scene:
     def update(self, system, trails=None):
         relative = system.r - system.r[0]
         self.positions = coordinates(relative)
+        self.particles.set_offsets(self.positions[1+len(self.planets):])
         self.clock.set_text(f'{system.time:,.3f} yr')
         for i, (planet, body, label) in enumerate(zip(self.planets, self.bodies, self.labels), 1):
             body.xy = self.positions[i]
@@ -262,7 +265,8 @@ class Scene:
         self.selected = index
         self.highlight.set_offsets(np.empty((0, 2)) if index is None else self.positions[[index]])
         if index is not None:
-            diameter = star_size(STARS[self.star]) if index == 0 else planet_size(self.planets[index-1])
+            diameter = (star_size(STARS[self.star]) if index == 0 else
+                        planet_size(self.planets[index-1]) if index <= len(self.planets) else 3)
             self.highlight.set_sizes([(diameter+12)**2])
         for i, label in enumerate(self.labels, 1):
             label.set_color(TEXT if i == index else MUTED)

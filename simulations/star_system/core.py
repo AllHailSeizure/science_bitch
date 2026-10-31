@@ -1,4 +1,6 @@
-"""Full unsoftened Newtonian N-body gravity in AU, solar masses, Julian years.
+"""Unsoftened Newtonian gravity in AU, solar masses, Julian years.
+
+Positive masses mutually interact; zero-mass test particles only receive gravity.
 
 Fixed-step Yoshida fourth-order composition of velocity Verlet.
 Steps are selected at initialization, never varied along a trajectory, preserving
@@ -34,19 +36,21 @@ class System:
     time: float = 0.
 
     def accelerations(self):
-        delta = self.r[None, :, :] - self.r[:, None, :]
+        sources = np.flatnonzero(self.masses > 0)
+        delta = self.r[None, sources, :] - self.r[:, None, :]
         d2 = np.sum(delta**2, axis=-1)
-        np.fill_diagonal(d2, np.inf)
-        return G*np.sum(delta * (self.masses[None, :]/d2**1.5)[:, :, None], axis=1)
+        d2[sources, np.arange(len(sources))] = np.inf
+        return G*np.sum(delta * (self.masses[None, sources]/d2**1.5)[:, :, None], axis=1)
 
     def step(self, count=1):
         for _ in range(count):
             # Reject unresolved encounters before mutating this step. A variable
             # step would compromise the fixed-step symplectic guarantee.
-            delta = self.r[None,:,:]-self.r[:,None,:]
+            sources = np.flatnonzero(self.masses > 0)
+            delta = self.r[None,sources,:]-self.r[:,None,:]
             dist = np.linalg.norm(delta, axis=-1)
-            np.fill_diagonal(dist, np.inf)
-            dynamical = np.sqrt(dist**3/(G*(self.masses[:,None]+self.masses[None,:])))
+            dist[sources, np.arange(len(sources))] = np.inf
+            dynamical = np.sqrt(dist**3/(G*(self.masses[:,None]+self.masses[None,sources])))
             if np.min(dynamical) < 10*self.dt:
                 raise ValueError('Close encounter unresolved: reset with wider orbital spacing.')
             for w in (_YOSHIDA_W1, _YOSHIDA_W0, _YOSHIDA_W1):
@@ -60,7 +64,8 @@ class System:
         energy = .5*np.sum(self.masses[:,None]*self.v**2)
         for i in range(len(self.masses)):
             for j in range(i):
-                energy -= G*self.masses[i]*self.masses[j]/np.linalg.norm(self.r[i]-self.r[j])
+                if self.masses[i] > 0 and self.masses[j] > 0:
+                    energy -= G*self.masses[i]*self.masses[j]/np.linalg.norm(self.r[i]-self.r[j])
         momentum = np.sum(self.masses[:,None]*self.v, axis=0)
         angular = np.sum(self.masses*(self.r[:,0]*self.v[:,1]-self.r[:,1]*self.v[:,0]))
         return energy, momentum, angular
