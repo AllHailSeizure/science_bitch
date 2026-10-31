@@ -144,6 +144,37 @@ def test_click_inspects_body_and_follow_tracks_its_motion(app):
     assert not app.following
 
 
+def test_close_moon_body_list_selection_current_separation_pause_step_follow():
+    from simulations.star_system.data import CATALOG, AU_KM
+    from simulations.star_system.initialization import circular_relative_velocity, recommended_moon_step
+    from simulations.star_system.model import InitialBody, InitialSetup
+    r=(384400/AU_KM,0)
+    v=circular_relative_velocity(r,CATALOG['earth'].mass,CATALOG['moon'].mass)
+    setup=InitialSetup('Sun / Earth / Moon',(
+        InitialBody('sun',CATALOG['sun'],(0,0),(0,0)),
+        InitialBody('earth',CATALOG['earth'],(1,0),(0,6.28),'sun'),
+        InitialBody('moon',CATALOG['moon'],r,tuple(v),'earth')),
+        recommended_moon_step(r,CATALOG['earth'].mass,CATALOG['moon'].mass))
+    a=App(setup=setup); a.timer.stop(); a.paused=True; a.fig.canvas.draw()
+    try:
+        # Close compressed markers overlap; the ordinary list selects each ID.
+        pixels=a.ax.transData.transform(a.scene.positions)
+        assert np.linalg.norm(pixels[2]-pixels[1])<5
+        click(a.fig.canvas,a.sidebar.body_ax,(.3,.92-2*.15-.04))
+        assert a.selected_id=='moon' and 'Parent: Earth [earth]' in a.inspector.get_text()
+        assert '384,400' in a.inspector.get_text() and ' AU' in a.inspector.get_text()
+        a.system.r[2] += r
+        a._refresh()
+        assert '768,800' in a.inspector.get_text()
+        click(a.fig.canvas,a.follow.ax); a.step_once()
+        assert a.paused and a.following and a.system.time==pytest.approx(a.system.dt)
+        np.testing.assert_allclose((np.mean(a.ax.get_xlim()),np.mean(a.ax.get_ylim())),a.scene.positions[2])
+        click(a.fig.canvas,a.sidebar.body_ax,(.3,.92-.15-.04))
+        assert a.selected_id=='earth'
+    finally:
+        a.close(); plt.close(a.fig)
+
+
 def test_drag_pans_without_selecting_a_body(app):
     app.following = True
     app.fig.canvas.draw()
