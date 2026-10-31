@@ -204,26 +204,69 @@ Primary records checked on 2026-10-30:
 - [NASA Exoplanet Archive 51 Peg](https://exoplanetarchive.ipac.caltech.edu/overview/51%20Peg) and [HD 209458](https://exoplanetarchive.ipac.caltech.edu/overview/HD_209458): selected `ps` default solutions, including original publication references. The 2026-10-30 51 Peg b solution reports true mass (Cont et al. 2026), not RV minimum mass; its radius is unknown. HD 209458 b uses Stassun et al. 2017 mass/transit radius. No composite model-estimated radius is substituted.
 - [NASA planetary fact sheets](https://nssdc.gsfc.nasa.gov/planetary/factsheet/), [JPL planets](https://ssd.jpl.nasa.gov/planets/phys_par.html), [Anglada-Escude et al. 2016](https://arxiv.org/html/1609.03449v1), and [Moravveji et al. 2012](https://arxiv.org/html/1202.1836v1): retained rounded legacy definitions; the latter identifies Rigel's mass as an evolutionary estimate.
 
-## Reproducible population compatibility
+## Reproducible populations
 
-The existing **Population...** window still supports one star-relative
-ring/disk/belt in a legacy circular setup. Apply/remove explicitly restarts and
-pauses; cancel preserves evolved state and prior pause status. Generic setup
-population UI integration belongs to the next plan; the old window is disabled
-for a generically edited starting setup so it cannot discard custom bodies.
+**Population...** supports one ring/disk/belt in any selected initial setup,
+including custom bodies and multiple stars. Its reference-ID field and
+**Reference: next massive** button use the body editor's selection interaction.
+The selected massive body is the default for a new population; a selected
+particle requires an explicit reference. Reopening an applied population uses
+its applied reference and settings, independent of the current scene selection.
+The window labels the reference's name, stable instance ID, and initial frame.
+Choices come from the selected starting setup: an unsaved live insertion cannot
+become a population reference until it belongs to a starting setup.
+
+A reference needs positive known mass and a known physical radius in AU.
+Missing/deleted references, particles, unknown radii, and radii inside the
+reference surface fail recoverably. No replacement star is chosen silently.
+Reference IDs resolve to numeric rows only at initialization; reordering the
+initial bodies preserves generated states by ID. Particle IDs use
+`<population-id>:<ordinal>`. Reference position and velocity are added exactly
+once, so a ring around a second star inherits that star's initial world state.
+The reference does not bind particles to it during evolution.
+
+During preparation, **Apply** and **Remove** validate and update the starting
+setup while time stays zero and paused. During live evolution, the labels are
+**Apply and restart** and **Remove and restart**: they rebuild the selected
+initial setup, preserving its custom/multiple-star definitions and removing
+unsaved live insertions. Apply regenerates particles from the authored settings
+and seed, rather than appending them to evolved arrays. Cancel, Escape in either
+window, and closing the population window preserve evolved positions,
+velocities, time, and the previous pause state exactly. Invalid drafts stay open
+without changing the valid setup; conflicting controls are disabled.
+
+The draft discloses the fixed step it will record on Apply:
+`min(starting dt, inner reference orbital period / 600)`. This retains the
+generator's initial resolution choice for short reference-relative orbits.
+Normal evolution remains fixed-step, and the existing encounter/crossing guards
+can reject a candidate or halt later evolution. Remove retains the selected
+setup's fixed step. Direct `build_system(setup)` callers must supply a suitable
+explicit `setup.dt`; initialization does not silently shorten it.
 
 ```powershell
 python -m simulations.star_system --population belt --count 200 --inner 2 --outer 3.5 --seed 42
 python -m simulations.star_system --planet jupiter --population ring --inner 3.2 --count 64 --angles even --seed 7 --years 1 --output output/ring.png
 ```
 
-Ring uses one radius; disk samples annular area uniformly; belt samples radius
-uniformly. Random or evenly spaced angles use NumPy PCG64 and an explicit
-nonnegative seed. Counts are 1-2000, radii finite/outside the reference surface,
-and velocities are circular prograde guesses relative to the reference state.
+The CLI flags remain the original star-relative convenience path; general
+references are authored through the shared setup/UI, with `--load` deferred to
+the persistence plan. Ring uses one radius; disk samples annular area uniformly;
+belt samples radius uniformly. Random or evenly spaced angles use NumPy PCG64 and an explicit
+nonnegative seed. Counts are 1-2000, with at most 2000 total zero-mass particles
+including explicitly authored ones; radii are finite/outside the reference
+surface, and velocities are circular prograde guesses relative to the reference state.
 Restart reproduces the population. Individual particles can be inspected and
 followed; their own trails are omitted to bound display work. There is no
-physical clustering/accretion response or stability promise.
+physical clustering/accretion response or stability promise, especially for
+multiple-star systems. Test particles represent rocks whose gravitational
+influence is neglected: they feel every massive body but do not backreact or
+interact with one another. The model remains 2D with no physical collisions.
+
+Issue #6 remains open. Persistence must save/reload full settings, seed,
+population ID, and reference ID and verify regenerated initial particle states.
+Calculated playback must retain population identities, timestamps, complete or
+halted status, pause, and step. Neither save/reload nor recorded calculation is
+implemented by this population integration.
 
 ## Shared APIs for the following plans
 
@@ -232,6 +275,7 @@ physical clustering/accretion response or stability promise.
 - `history.py`: `StateFrame.capture(prepared)` copies time/dt/IDs/specs/masses/world r/v/events into read-only arrays. `App.history` retains 1500 frames; each displayed trail has at most 400 vertices. `App.trails` remains a relative-array compatibility adapter.
 - `rendering.py`: `draw_system(ax, prepared, history=()) -> Scene`; retained `draw(...)` accepts the old numeric/circular arguments. `Scene.artists_by_id`, `labels_by_id`, `trails_by_id`, `origin_id`, and `origin` support identity-based integration. `Scene.update(prepared, history)` appends new artists without resetting the camera.
 - `authoring.py`: `BodyEditor` and its `reference_state`, `vectors`, `draft_body`, `commit`, `finish` draft lifecycle. `App.edit_body`, `prepare_setup`, `selected_id`, `_install_prepared`, and `_sync_painter` provide the controller integration points. Register new widget axes with sidebar visibility and the painter's overlay axes.
+- `population_editor.py`: `PopulationEditor` validates a complete candidate `InitialSetup` before Apply/Remove, using the shared `authoring.reference_ids` choices. Its separate figure owns its widgets and close/Escape lifecycle; the main scene's overlay axes retain the existing painter contract.
 
 The body-authoring tests provide arbitrary/binary, reference-chain, populated
 insertion, live draft events, invalid/cancel, inverse mapping, velocity scaling,
@@ -247,21 +291,24 @@ Agg event tests exercise the real Matplotlib callback flow and normal exports;
 native desktop input, perceived smoothness, and native multiwindow behavior
 remain unverified.
 
-Final commands on the completed tree:
+Population integration commands:
 
 ```powershell
-C:\Python314\python.exe -m pytest -q --tb=short --basetemp output/pytest-authoring-final-15
-C:\Python314\python.exe -m simulations.star_system --star sun --planet earth --planet jupiter --years 1 --output output/issue-5-compatibility.png
+C:\Python314\python.exe -m pytest -q --tb=short --basetemp output/pytest-population-final-08
+C:\Python314\python.exe -m simulations.star_system --population ring --inner 3.2 --count 64 --angles even --seed 7 --years 1 --output output/issue-6-ring.png
 git diff --check
-git diff --check codex/issue-4-overlay...HEAD
+git diff --check codex/issue-5-authoring...HEAD
 ```
 
-The full suite passed **147 tests in 251.63 seconds**. Its 14 warnings are the
-expected Agg warning that the separate population window cannot be shown.
-The CLI command exited successfully and produced a visually inspected,
-nonempty 1350x1350 PNG (102,842 bytes). Normal App exports at
-`output/authoring-reviewed.png` (1480x919) and
-`output/catalog-unknown-reviewed.png` were visually inspected for the draft
-layout, physical units, velocity legend, and unknown-radius state. These
-artifacts remain in ignored `output/`. Focused event tests also checked cached
-versus full draws with the editor open. Whitespace validation passed.
+The full integration run passed **166 tests in 273.43 seconds**. Its 26 warnings
+are the expected Agg notices that the separate population window cannot be
+shown. A focused ring-control check also passed after the final radio styling
+correction, and a refreshed preview verified the selected highlight. Whitespace
+validation passed.
+
+The required CLI command exited successfully and produced a visually inspected
+1350x1350 PNG (106,275 bytes). Normal App/editor exports at
+`output/population-scene-reviewed.png` (1480x919) and
+`output/population-editor-reviewed.png` (740x850) were visually inspected for
+the custom binary setup, reference name/ID/frame, units, fixed-step disclosure,
+and restart controls. These artifacts remain in ignored `output/`.

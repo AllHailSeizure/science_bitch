@@ -3,13 +3,12 @@ import time
 
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.widgets import RadioButtons, Button, Slider, TextBox
+from matplotlib.widgets import Slider
 
-from .core import make_system, SOLAR_RADIUS_AU
+from .core import SOLAR_RADIUS_AU
 from .data import STARS, PLANETS, AU_KM
 from .initialization import build_system, legacy_setup
 from .history import StateFrame, MAX_HISTORY
-from .populations import Population, with_population
 from .rendering import BACKGROUND, PANEL, TEXT, MUTED, ACCENT, CanvasPainter, draw, draw_system
 from .sidebar import Sidebar
 
@@ -23,123 +22,12 @@ def _style_axes(ax):
         spine.set_visible(False)
 
 
-def _button(fig, bounds, label):
-    button = Button(fig.add_axes(bounds), label, color='#1b3044', hovercolor='#294b60', useblit=False)
-    button.label.set_color(TEXT)
-    button.label.set_fontsize(9)
-    for spine in button.ax.spines.values():
-        spine.set_edgecolor('#294055')
-    return button
-
-
-class PopulationEditor:
-    """Draft settings in a separate window; only Apply replaces initial state."""
-
-    def __init__(self, app):
-        self.app = app
-        self.was_paused = app.paused
-        self.finished = False
-        settings = app.population or Population()
-        self.fig = plt.figure(figsize=(6.4, 6.8), facecolor=PANEL)
-        self.fig.canvas.manager.set_window_title('Population settings')
-        self.fig.text(.08, .94, 'Population settings', fontsize=16, color=TEXT)
-        self.fig.text(.08, .89, f'Reference: {STARS[app.star].name} / circular prograde',
-                      fontsize=10, color=MUTED)
-        self.kind = RadioButtons(self.fig.add_axes((.08, .70, .35, .14)),
-                                 ['ring', 'disk', 'belt'], active=['ring', 'disk', 'belt'].index(settings.kind),
-                                 activecolor=ACCENT, useblit=False)
-        self.angles = RadioButtons(self.fig.add_axes((.57, .70, .35, .14)),
-                                   ['random', 'even'], active=['random', 'even'].index(settings.angles),
-                                   activecolor=ACCENT, useblit=False)
-        for picker in (self.kind, self.angles):
-            _style_axes(picker.ax)
-            picker.set_radio_props({'edgecolor': MUTED})
-            for label in picker.labels:
-                label.set_color(TEXT)
-        self.fields = {}
-        for key, label, value, y in (
-            ('count', 'Particles (1-2000)', settings.count, .61),
-            ('inner', 'Inner radius (AU)', settings.inner, .52),
-            ('outer', 'Outer radius (AU)', settings.outer, .43),
-            ('seed', 'Seed', settings.seed, .34),
-        ):
-            field = TextBox(self.fig.add_axes((.47, y, .42, .055)), label+'  ',
-                            initial=str(value), color='#1b3044', hovercolor='#294b60')
-            field.label.set_color(TEXT)
-            field.text_disp.set_color(TEXT)
-            self.fields[key] = field
-        self.error = self.fig.text(.08, .26, '', color='#efb17b', fontsize=9,
-                                  va='top', wrap=True)
-        self.apply = _button(self.fig, (.08, .13, .40, .055), 'Apply and restart')
-        self.remove = _button(self.fig, (.52, .13, .40, .055), 'Remove and restart')
-        self.remove.set_active(app.population is not None)
-        self.remove.label.set_color(TEXT if app.population is not None else MUTED)
-        self.cancel = _button(self.fig, (.62, .045, .30, .05), 'Cancel')
-        self.apply.on_clicked(self.apply_settings)
-        self.remove.on_clicked(lambda event: self.finish(None, apply=True))
-        self.cancel.on_clicked(lambda event: self.finish())
-        self.kind.on_clicked(self.kind_changed)
-        self.kind_changed(settings.kind)
-        self.fig.canvas.mpl_connect('close_event', lambda event: self.finish())
-        self.fig.canvas.mpl_connect('key_press_event', self.on_key)
-
-    def on_key(self, event):
-        if event.key == 'escape':
-            self.finish()
-
-    def kind_changed(self, kind):
-        # Rings have one radius; preserve the outer draft for disk/belt switches.
-        enabled = kind != 'ring'
-        self.fields['inner'].label.set_text('Inner radius (AU)  ' if enabled else 'Radius (AU)  ')
-        self.fields['outer'].set_active(enabled)
-        self.fields['outer'].text_disp.set_color(TEXT if enabled else MUTED)
-        self.fig.canvas.draw_idle()
-
-    def apply_settings(self, event=None):
-        try:
-            try:
-                count = int(self.fields['count'].text)
-                seed = int(self.fields['seed'].text)
-                inner = float(self.fields['inner'].text)
-                outer = inner if self.kind.value_selected == 'ring' else float(self.fields['outer'].text)
-            except ValueError:
-                raise ValueError('Count and seed must be integers; radii must be numbers.') from None
-            settings = Population(kind=self.kind.value_selected, count=count, seed=seed,
-                                  inner=inner, outer=outer, angles=self.angles.value_selected)
-            with_population(make_system(self.app.star, self.app.planets, self.app.distances),
-                            settings, STARS[self.app.star].radius*SOLAR_RADIUS_AU)
-        except ValueError as exc:
-            self.error.set_text(str(exc))
-            self.fig.canvas.draw_idle()
-            return
-        self.finish(settings, apply=True)
-
-    def finish(self, settings=None, apply=False):
-        if self.finished:
-            return
-        self.finished = True
-        self.app.population_editor = None
-        self.app._set_population_editing(False)
-        if apply:
-            self.app.population = settings
-            self.app.paused = True
-            self.app.following = False
-            self.app.selected_index = 0
-            self.app._restart_legacy()
-        else:
-            self.app.paused = self.was_paused
-            self.app.pending = 0.
-            self.app.last = time.monotonic()
-            self.app._refresh()
-        plt.close(self.fig)
-
-
 class App:
     def __init__(self, star='sun', planets=('earth', 'jupiter'), population=None, setup=None):
         if population is not None and population.reference != 0:
-            raise ValueError('The current observatory supports star-relative populations only.')
+            raise ValueError('The legacy population argument is star-relative; use InitialSetup for general references.')
         self.star, self.planets = star, list(planets)
-        self.population = population
+        self.population = setup.population.settings if setup is not None and setup.population is not None else population
         self.population_editor = None
         self.body_editor = None
         self.preparing = False
@@ -219,14 +107,12 @@ class App:
             self.painter.invalidate()
 
     def edit_population(self, event=None):
-        if not self._legacy_configuration:
-            self.status.set_text("General population authoring integrates in the next plan; starting setup preserved.")
-            self._refresh()
-            return
         if self.body_editor is not None or self.population_editor is not None:
             return
+        from .population_editor import PopulationEditor
         self.population_editor = PopulationEditor(self)
         self.paused = True
+        self._drag = None
         self.pending = 0.
         self.last = time.monotonic()
         self._set_population_editing(True)
@@ -243,9 +129,7 @@ class App:
         if self.body_editor is not None:
             self.body_editor.finish()
         if self.population_editor is not None:
-            self.population_editor.finished = True
-            plt.close(self.population_editor.fig)
-            self.population_editor = None
+            self.population_editor.finish(closing=True)
 
     def _on_timer(self):
         started = time.perf_counter()
@@ -360,7 +244,7 @@ class App:
         self._refresh()
 
     def remove_body(self, event=None):
-        if not self.preparing or self.body_editor is not None:
+        if not self.preparing or self.body_editor is not None or self.population_editor is not None:
             return
         if self.selected_id not in {b.id for b in self.initial_setup.bodies}:
             self.status.set_text('Generated particles are authored through population settings; starting setup preserved.')
@@ -384,7 +268,7 @@ class App:
         self.painter.set_artists(list(dict.fromkeys(artists)))
 
     def restart(self):
-        if self.body_editor is not None:
+        if self.body_editor is not None or self.population_editor is not None:
             return
         if self.initial_setup is None:
             self.initial_setup = legacy_setup(self.star, self.planets, self.distances, self.population)
@@ -392,6 +276,7 @@ class App:
 
     def _install_prepared(self, prepared, reset=False):
         self.prepared, self.system = prepared, prepared.system
+        self.population = self.initial_setup.population.settings if self.initial_setup.population is not None else None
         self.pending = 0.
         self.halted = False
         self._drag = None
@@ -503,6 +388,8 @@ class App:
         return toolbar is not None and bool(toolbar.mode)
 
     def on_scroll(self, event):
+        if self.population_editor is not None:
+            return
         if self.sidebar.contains_event(event) or event.inaxes != self.ax or event.xdata is None or self._toolbar_active():
             return
         scale = 1.2**(-np.clip(event.step, -5, 5))
@@ -516,6 +403,8 @@ class App:
         self.fig.canvas.draw_idle()
 
     def on_press(self, event):
+        if self.population_editor is not None:
+            return
         if self.body_editor is not None:
             try: self.body_editor.on_press(event)
             except ValueError as exc: self.body_editor.error.set_text(str(exc)); self.painter.paint()
@@ -524,6 +413,8 @@ class App:
             self._drag = (event.x, event.y, self.ax.get_xlim(), self.ax.get_ylim())
 
     def on_motion(self, event):
+        if self.population_editor is not None:
+            return
         if self.body_editor is not None:
             self.body_editor.on_motion(event)
             return
@@ -545,6 +436,8 @@ class App:
         self.fig.canvas.draw_idle()
 
     def on_release(self, event):
+        if self.population_editor is not None:
+            return
         if self.body_editor is not None:
             self.body_editor.dragging = False
             return
@@ -564,6 +457,7 @@ class App:
             if event.key == 'escape': self.body_editor.finish()
             return
         if self.population_editor is not None:
+            if event.key == 'escape': self.population_editor.finish()
             return
         if event.key == 'm':
             self.toggle_sidebar()

@@ -13,6 +13,13 @@ from .rendering import PANEL, TEXT, MUTED, ACCENT, coordinates, inverse_coordina
 
 VELOCITY_PIXELS_PER_AUYR = 12.
 
+
+def reference_ids(bodies, exclude=None, world=False):
+    """Stable choices shared by body placement and initial population drafts."""
+    keys = [key for key, spec in bodies if spec.mass is not None and spec.mass > 0 and key != exclude]
+    return keys + (['world'] if world else [])
+
+
 class BodyEditor:
     """Drafts never mutate the active trajectory before successful confirmation."""
     def __init__(self, app, body_id=None):
@@ -119,7 +126,7 @@ class BodyEditor:
 
     def cycle_reference(self,event=None):
         p=self.app.prepared
-        keys=[key for key,m in zip(p.body_ids,p.system.masses) if m > 0 and key != self.body_id]+['world']
+        keys=reference_ids(zip(p.body_ids,p.body_specs), exclude=self.body_id, world=True)
         current=self.fields['reference'].text.strip()
         self.fields['reference'].set_val(keys[(keys.index(current)+1)%len(keys)] if current in keys else keys[0])
         self.preview()
