@@ -246,13 +246,13 @@ def test_close_encounter_stays_halted_until_rebuilt(app):
 
 def test_running_frames_reuse_background_without_full_redraw(app, monkeypatch):
     """Ordinary motion must not rerender every static control and guide."""
+    app.toggle_pause()  # Measure steady live frames after the PREP -> LIVE redraw.
     full_draws = []
     original_draw = app.fig.canvas.draw
     def record_draw(*args, **kwargs):
         full_draws.append(True)
         return original_draw(*args, **kwargs)
     monkeypatch.setattr(app.fig.canvas, 'draw', record_draw)
-    app.paused = False
     for frame in range(3):
         app.last -= .02
         app.update(frame)

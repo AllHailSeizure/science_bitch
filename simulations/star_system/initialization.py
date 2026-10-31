@@ -86,6 +86,11 @@ def _validate_surfaces(r, specs):
 
 
 def build_system(setup):
+    if any(body.spec.kind == 'particle' and body.spec.mass != 0 for body in setup.bodies):
+        raise ValueError('Test particles must have mass zero.')
+    from .populations import MAX_PARTICLES
+    if sum(body.spec.kind == 'particle' for body in setup.bodies) > MAX_PARTICLES:
+        raise ValueError(f'At most {MAX_PARTICLES} test particles are supported.')
     bodies = {body.id: body for body in setup.bodies}
     if len(bodies) != len(setup.bodies):
         raise ValueError('Body IDs must be unique, including repeated catalog choices.')
