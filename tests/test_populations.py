@@ -194,7 +194,7 @@ def test_population_playback_restart_and_render(tmp_path, monkeypatch):
     app = App(population=Population(count=16))
     try:
         initial = app.system.r.copy()
-        app.toggle_pause()
+        assert app.preparing and app.paused
         app.update(None)
         np.testing.assert_array_equal(app.system.r, initial)
         app.step_once()

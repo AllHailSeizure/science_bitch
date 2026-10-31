@@ -11,6 +11,8 @@ from .initialization import build_system, legacy_setup
 from .history import StateFrame, MAX_HISTORY, relative_state
 from .rendering import BACKGROUND, PANEL, TEXT, MUTED, ACCENT, CanvasPainter, draw, draw_system
 from .sidebar import Sidebar
+from .experiments import ExperimentSession
+from .scenarios import get_scenario
 
 FRAME_SECONDS = 1 / 60
 PHYSICS_BUDGET_SECONDS = .006
@@ -30,11 +32,15 @@ class App:
         self.population = setup.population.settings if setup is not None and setup.population is not None else population
         self.population_editor = None
         self.body_editor = None
-        self.preparing = False
+        self.experiment_editor = None
+        self.preparing = True
         self._legacy_configuration = setup is None
-        self.initial_setup = setup
+        initial = setup if setup is not None else (get_scenario('sun-earth-jupiter')
+            if star == 'sun' and tuple(planets) == ('earth', 'jupiter') and population is None
+            else legacy_setup(star, planets, population=population))
+        self.session = ExperimentSession(initial)
         self.distances = [PLANETS[p].distance for p in planets]
-        self.paused = False
+        self.paused = True
         self.following = False
         self.selected_index = 0
         self._drag = None
@@ -82,6 +88,55 @@ class App:
             return f'{STARS[self.star].name} / {len(self.planets)} planets'
         return ' / '.join([STARS[self.star].name, *(PLANETS[p].name for p in self.planets)])
 
+    @property
+    def initial_setup(self):
+        return self.session.initial_setup
+
+    @initial_setup.setter
+    def initial_setup(self, setup):
+        self.session.update_draft(setup)
+        self.session.initial_setup = self.session.draft
+
+    @property
+    def prepared(self):
+        return self.session.prepared
+
+    @prepared.setter
+    def prepared(self, prepared):
+        self.session.prepared = prepared
+
+    def edit_experiment(self, event=None):
+        if self.body_editor is not None or self.population_editor is not None or self.experiment_editor is not None:
+            return
+        from .sidebar import ExperimentEditor
+        self.experiment_editor = ExperimentEditor(self)
+        self.paused = True
+        self.pending = 0.
+        self._drag = None
+        self.sidebar._sync()
+        self._refresh()
+        self.experiment_editor.fig.show()
+
+    def select_setup(self, setup):
+        prepared = self.session.select(setup)
+        self._legacy_configuration = False
+        self.preparing = self.paused = True
+        self.following = False
+        self.selected_index = 0
+        self._install_prepared(prepared, reset=True)
+
+    def load_setup(self, path):
+        from .persistence import load_setup
+        self.select_setup(load_setup(path))
+
+    def rename_setup(self, name):
+        from dataclasses import replace
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError('Experiment name must be nonempty.')
+        self.initial_setup = replace(self.initial_setup, name=name.strip())
+        self.prepared = replace(self.prepared, setup=self.initial_setup)
+        self.set_experiment_name(self.initial_setup.name)
+
     def set_experiment_name(self, name: str):
         self.experiment_name = str(name)
         self.sidebar.title.set_text(self.experiment_name)
@@ -107,7 +162,7 @@ class App:
             self.painter.invalidate()
 
     def edit_population(self, event=None):
-        if self.body_editor is not None or self.population_editor is not None:
+        if self.body_editor is not None or self.population_editor is not None or self.experiment_editor is not None:
             return
         from .population_editor import PopulationEditor
         self.population_editor = PopulationEditor(self)
@@ -130,6 +185,8 @@ class App:
             self.body_editor.finish()
         if self.population_editor is not None:
             self.population_editor.finish(closing=True)
+        if self.experiment_editor is not None:
+            self.experiment_editor.finish()
 
     def _on_timer(self):
         started = time.perf_counter()
@@ -213,17 +270,18 @@ class App:
         self.selected_index = self.prepared.body_ids.index(value)
 
     def prepare_setup(self, event=None):
-        if self.body_editor is not None or self.population_editor is not None:
+        if self.body_editor is not None or self.population_editor is not None or self.experiment_editor is not None:
             return
         self.preparing = True
         self.paused = True
         self.following = False
+        self.session.begin_draft()
         self.restart()
-        self.status.set_text('PREPARATION: editing starting setup. Resume begins live evolution.')
+        self.status.set_text('PREPARATION: editing starting setup. Run live begins evolution.')
         self._refresh()
 
     def edit_body(self, event=None, body_id=None):
-        if self.body_editor is not None or self.population_editor is not None:
+        if self.body_editor is not None or self.population_editor is not None or self.experiment_editor is not None:
             return
         if body_id is not None and not self.preparing:
             self.status.set_text('Edit/remove applies to preparation. Choose Prepare setup first.')
@@ -244,7 +302,7 @@ class App:
         self._refresh()
 
     def remove_body(self, event=None):
-        if not self.preparing or self.body_editor is not None or self.population_editor is not None:
+        if not self.preparing or self.body_editor is not None or self.population_editor is not None or self.experiment_editor is not None:
             return
         if self.selected_id not in {b.id for b in self.initial_setup.bodies}:
             self.status.set_text('Generated particles are authored through population settings; starting setup preserved.')
@@ -268,13 +326,14 @@ class App:
         self.painter.set_artists(list(dict.fromkeys(artists)))
 
     def restart(self):
-        if self.body_editor is not None or self.population_editor is not None:
+        if self.body_editor is not None or self.population_editor is not None or self.experiment_editor is not None:
             return
-        if self.initial_setup is None:
-            self.initial_setup = legacy_setup(self.star, self.planets, self.distances, self.population)
-        self._install_prepared(build_system(self.initial_setup), reset=True)
+        self._install_prepared(self.session.restart(), reset=True)
 
     def _install_prepared(self, prepared, reset=False):
+        from dataclasses import replace
+        if reset:
+            prepared = replace(prepared, setup=self.initial_setup)
         self.prepared, self.system = prepared, prepared.system
         self.population = self.initial_setup.population.settings if self.initial_setup.population is not None else None
         self.pending = 0.
@@ -294,6 +353,8 @@ class App:
             self.scene.update(prepared, self.history)
         self.selected_index = min(self.selected_index, len(self.system.masses)-1)
         self._sync_painter()
+        self.set_experiment_name(self.initial_setup.name)
+        self.sidebar._sync()
         self._refresh()
 
     def _refresh(self):
@@ -333,7 +394,7 @@ class App:
             if new_y != ylim: self.ax.set_ylim(new_y)
         self.mode.set_text('HALTED' if self.halted else 'DRAFT' if self.body_editor else 'PREP' if self.preparing else 'PAUSED' if self.paused else 'LIVE')
         self.mode.set_color('#efb17b' if self.halted else MUTED if self.paused else ACCENT)
-        for label, text in ((self.pause.label, 'Resume' if self.paused else 'Pause'),
+        for label, text in ((self.pause.label, ('Run live' if self.preparing else 'Resume') if self.paused else 'Pause'),
                             (self.follow.label, 'Unfollow' if self.following else 'Follow body')):
             if label.get_text() != text:
                 label.set_text(text)
@@ -341,7 +402,7 @@ class App:
         self.painter.paint()
 
     def toggle_pause(self, event=None):
-        if self.population_editor is not None or self.body_editor is not None:
+        if self.population_editor is not None or self.body_editor is not None or self.experiment_editor is not None:
             return
         self.paused = not self.paused
         if not self.paused:
@@ -372,7 +433,7 @@ class App:
         return completed
 
     def step_once(self, event=None):
-        if self.population_editor is not None or self.body_editor is not None:
+        if self.population_editor is not None or self.body_editor is not None or self.experiment_editor is not None:
             return
         self.paused = True
         self.pending = 0.
@@ -396,7 +457,7 @@ class App:
         return toolbar is not None and bool(toolbar.mode)
 
     def on_scroll(self, event):
-        if self.population_editor is not None:
+        if self.population_editor is not None or self.experiment_editor is not None:
             return
         if self.sidebar.contains_event(event) or event.inaxes != self.ax or event.xdata is None or self._toolbar_active():
             return
@@ -411,7 +472,7 @@ class App:
         self.fig.canvas.draw_idle()
 
     def on_press(self, event):
-        if self.population_editor is not None:
+        if self.population_editor is not None or self.experiment_editor is not None:
             return
         if self.body_editor is not None:
             try: self.body_editor.on_press(event)
@@ -421,7 +482,7 @@ class App:
             self._drag = (event.x, event.y, self.ax.get_xlim(), self.ax.get_ylim())
 
     def on_motion(self, event):
-        if self.population_editor is not None:
+        if self.population_editor is not None or self.experiment_editor is not None:
             return
         if self.body_editor is not None:
             self.body_editor.on_motion(event)
@@ -444,7 +505,7 @@ class App:
         self.fig.canvas.draw_idle()
 
     def on_release(self, event):
-        if self.population_editor is not None:
+        if self.population_editor is not None or self.experiment_editor is not None:
             return
         if self.body_editor is not None:
             self.body_editor.dragging = False
@@ -461,6 +522,9 @@ class App:
                 self._refresh()
 
     def on_key(self, event):
+        if self.experiment_editor is not None:
+            if event.key == 'escape': self.experiment_editor.finish()
+            return
         if self.body_editor is not None:
             if event.key == 'escape': self.body_editor.finish()
             return

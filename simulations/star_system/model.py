@@ -6,6 +6,20 @@ import numpy as np
 if TYPE_CHECKING:
     from .populations import Population
 
+def freeze_metadata(value):
+    """Defensive immutable copy of JSON provenance (never executable content)."""
+    if isinstance(value, Mapping):
+        if any(not isinstance(key, str) for key in value):
+            raise ValueError('Provenance keys must be strings.')
+        return MappingProxyType({key: freeze_metadata(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(freeze_metadata(item) for item in value)
+    if value is None or type(value) in (str, bool, int):
+        return value
+    if type(value) is float and np.isfinite(value):
+        return value
+    raise ValueError('Provenance must contain finite JSON values.')
+
 @dataclass(frozen=True)
 class PropertySource:
     url: str
@@ -83,6 +97,7 @@ class InitialSetup:
     preset_id: str | None = None
     population: PopulationSpec | None = None
     collision_mode: str = 'none'
+    provenance: Mapping[str, object] = field(default_factory=dict, compare=False, hash=False)
 
     def __post_init__(self):
         object.__setattr__(self, 'bodies', tuple(self.bodies))
@@ -92,3 +107,6 @@ class InitialSetup:
             raise ValueError('Fixed dt must be finite and positive (years).')
         if self.collision_mode != 'none':
             raise ValueError('Only collision mode none is currently supported.')
+        if not isinstance(self.provenance, Mapping):
+            raise ValueError('Setup provenance must be an object.')
+        object.__setattr__(self, 'provenance', freeze_metadata(self.provenance))
