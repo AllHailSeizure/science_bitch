@@ -7,12 +7,14 @@ from matplotlib.widgets import Slider
 
 from .core import SOLAR_RADIUS_AU
 from .data import STARS, PLANETS, AU_KM
-from .initialization import build_system, legacy_setup
+from .initialization import build_system, legacy_setup, PreparedSystem
 from .history import StateFrame, MAX_HISTORY, relative_state
 from .rendering import BACKGROUND, PANEL, TEXT, MUTED, ACCENT, CanvasPainter, draw, draw_system
 from .sidebar import Sidebar
 from .experiments import ExperimentSession
 from .scenarios import get_scenario
+from .recording import Calculation, CalculationRequest
+from .playback import Playback
 
 FRAME_SECONDS = 1 / 60
 PHYSICS_BUDGET_SECONDS = .006
@@ -33,6 +35,10 @@ class App:
         self.population_editor = None
         self.body_editor = None
         self.experiment_editor = None
+        self.calculation_editor = None
+        self.calculation = None
+        self.playback = None
+        self._selected_id = None
         self.preparing = True
         self._legacy_configuration = setup is None
         initial = setup if setup is not None else (get_scenario('sun-earth-jupiter')
@@ -106,11 +112,13 @@ class App:
         self.session.prepared = prepared
 
     def edit_experiment(self, event=None):
-        if self.body_editor is not None or self.population_editor is not None or self.experiment_editor is not None:
+        if self.body_editor is not None or self.population_editor is not None or self.experiment_editor is not None or self.calculation_editor is not None:
             return
         from .sidebar import ExperimentEditor
         self.experiment_editor = ExperimentEditor(self)
         self.paused = True
+        if self.playback is not None:
+            self.playback.pause()
         self.pending = 0.
         self._drag = None
         self.sidebar._sync()
@@ -118,6 +126,10 @@ class App:
         self.experiment_editor.fig.show()
 
     def select_setup(self, setup):
+        if self.calculation is not None and not self.calculation.done:
+            self.cancel_calculation()
+        self.playback = None
+        self._selected_id = None
         prepared = self.session.select(setup)
         self._legacy_configuration = False
         self.preparing = self.paused = True
@@ -129,15 +141,31 @@ class App:
         from .persistence import load_setup
         self.select_setup(load_setup(path))
 
+    def save_current_setup(self, path, name):
+        if self.playback is None:
+            return self.session.save_current(path, name)
+        from .experiments import capture_current_setup
+        from .persistence import save_setup
+        source = self.playback.recording.source_setup
+        if source is None:
+            raise ValueError('This recording has no source setup definition for capture provenance.')
+        captured = capture_current_setup(self.prepared, source, name)
+        save_setup(captured, path)
+        return captured
+
     def rename_setup(self, name):
         from dataclasses import replace
         if not isinstance(name, str) or not name.strip():
             raise ValueError('Experiment name must be nonempty.')
+        if self.playback is not None:
+            self._enter_preparation()
         self.initial_setup = replace(self.initial_setup, name=name.strip())
         self.prepared = replace(self.prepared, setup=self.initial_setup)
         self.set_experiment_name(self.initial_setup.name)
 
     def set_experiment_name(self, name: str):
+        if self.experiment_name == str(name):
+            return
         self.experiment_name = str(name)
         self.sidebar.title.set_text(self.experiment_name)
         if hasattr(self, 'painter'):
@@ -162,8 +190,12 @@ class App:
             self.painter.invalidate()
 
     def edit_population(self, event=None):
-        if self.body_editor is not None or self.population_editor is not None or self.experiment_editor is not None:
+        if self.body_editor is not None or self.population_editor is not None or self.experiment_editor is not None or self.calculation_editor is not None:
             return
+        if self.mode_name == "CALCULATING":
+            return
+        if self.playback is not None:
+            self._enter_preparation()
         from .population_editor import PopulationEditor
         self.population_editor = PopulationEditor(self)
         self.paused = True
@@ -187,6 +219,8 @@ class App:
             self.population_editor.finish(closing=True)
         if self.experiment_editor is not None:
             self.experiment_editor.finish()
+        if self.calculation_editor is not None:
+            self.calculation_editor.finish()
 
     def _on_timer(self):
         started = time.perf_counter()
@@ -263,17 +297,136 @@ class App:
 
     @property
     def selected_id(self):
+        if self._selected_id is not None and self._selected_id not in self.prepared.body_ids:
+            return self._selected_id
         return self.prepared.body_ids[self.selected_index]
 
     @selected_id.setter
     def selected_id(self, value):
-        self.selected_index = self.prepared.body_ids.index(value)
+        self._selected_id = value
+        if value in self.prepared.body_ids:
+            self.selected_index = self.prepared.body_ids.index(value)
+
+    @property
+    def mode_name(self):
+        return ('CALCULATING' if self.calculation is not None and not self.calculation.done else
+                'RECORDED' if self.playback is not None else 'PREP' if self.preparing else 'LIVE')
+
+    def _enter_preparation(self):
+        if self.calculation is not None and not self.calculation.done:
+            self.cancel_calculation()
+        self.playback = None
+        self.preparing = self.paused = True
+        self._selected_id = None
+        self._install_prepared(self.session.restart(), reset=True)
+
+    def edit_calculation(self, event=None):
+        if self.calculation is not None and not self.calculation.done:
+            self.cancel_calculation()
+            return
+        if any((self.body_editor, self.population_editor, self.experiment_editor, self.calculation_editor)):
+            return
+        from .sidebar import CalculationEditor
+        self.calculation_editor = CalculationEditor(self)
+        self.paused = True
+        if self.playback is not None:
+            self.playback.pause()
+        self.sidebar._sync()
+        self._refresh()
+        self.calculation_editor.fig.show()
+
+    def start_calculation(self, request):
+        calculation = Calculation(self.initial_setup, request)  # preflight before replacing the displayed state
+        if self.calculation is not None and not self.calculation.done:
+            self.cancel_calculation()
+        self.playback = None
+        self.calculation = calculation
+        self.preparing, self.paused = False, True
+        self._selected_id = None
+        self._install_prepared(calculation.prepared, reset=True)
+        self._calculation_status()
+        self.sidebar._sync()
+        self._refresh()
+
+    def _calculation_status(self):
+        calc = self.calculation
+        self.status.set_text(f'{calc.completed_steps:,}/{calc.total_steps:,} steps ({calc.progress:.1%})\nCancel calculation available.')
+        self.scene.result_info.set_text(f'CALCULATING / {calc.source_name}\n'
+            f'{calc.completed_steps:,}/{calc.total_steps:,} steps ({calc.progress:.1%}) / '
+            f'{calc.prepared.system.time:.8g} of {calc.resolved_end_time:.8g} yr\n'
+            f'Requested {calc.request.duration_years:.8g} yr / stride {calc.request.sample_stride} / '
+            f'budget {calc.request.max_bytes/1048576:g} MiB\nUse Cancel calculation to retain partial output.')
+
+    def _finish_calculation(self):
+        result = self.calculation.result
+        self.session.retain_recording(result)
+        self.show_recording(result)
+
+    def cancel_calculation(self, event=None):
+        if self.calculation is not None and not self.calculation.done:
+            self.calculation.cancel()
+            self._finish_calculation()
+
+    def show_recording(self, result=None):
+        if self.calculation is not None and not self.calculation.done:
+            return
+        if result is None:
+            if not self.session.recordings:
+                return
+            # Repeated clicks cycle all retained results, including older sources.
+            current = next((i for i, run in enumerate(self.session.recordings)
+                            if self.playback is not None and run is self.playback.recording), len(self.session.recordings))
+            result = self.session.recordings[(current-1) % len(self.session.recordings)]
+        self.playback = Playback(result)
+        self.preparing, self.paused = False, True
+        self._selected_id = None
+        self._display_recorded_frame(reset=True)
+
+    def _display_recorded_frame(self, reset=False):
+        from .core import System
+        frame = self.playback.current_frame
+        selected = self.selected_id if not reset else None
+        membership_changed = frame.body_ids != self.prepared.body_ids
+        prepared = PreparedSystem(System(frame.masses, frame.r, frame.v, frame.dt, frame.time),
+            frame.body_ids, frame.body_specs, events=frame.events, reference_ids=frame.reference_ids)
+        self.prepared, self.system = prepared, prepared.system
+        self.history = list(self.playback.recording.frames[max(0, self.playback.index-MAX_HISTORY+1):self.playback.index+1])
+        if reset:
+            self.scene = draw_system(self.ax, prepared, self.history)
+            self.selected_index = 0
+            self.following = False
+        elif selected is not None:
+            self.selected_id = selected
+        self.halted = self.playback.recording.status == 'halted'
+        self.paused = not self.playback.playing
+        run = self.playback.recording
+        if reset or membership_changed:
+            self.scene.update(prepared, self.history)
+            self._sync_painter()
+        if reset:
+            self.set_experiment_name(run.source_name)
+            self.sidebar._sync()
+        self.status.set_text(f'{run.status.upper()}: {run.reason or "Calculation finished."}')
+        from textwrap import fill
+        self.scene.result_info.set_text(f'RECORDED / {run.status.upper()} / sample {self.playback.index+1:,}/{len(run.frames):,}\n'
+            f'Source: {run.source_name} [{run.setup_digest[:12]}]\n'
+            f'Requested {run.requested_end_time:.8g} yr / resolved {run.resolved_end_time:.8g} yr / '
+            f'actual {run.actual_end_time:.8g} yr\n'+fill(run.reason or 'Calculation finished.', 78))
+        self._refresh()
+
+    def run_live(self, event=None):
+        if any((self.body_editor, self.population_editor, self.experiment_editor, self.calculation_editor)):
+            return
+        self._enter_preparation()
+        self.preparing, self.paused = False, False
+        self.last = time.monotonic()
+        self.sidebar._sync()
+        self._refresh()
 
     def prepare_setup(self, event=None):
-        if self.body_editor is not None or self.population_editor is not None or self.experiment_editor is not None:
+        if self.body_editor is not None or self.population_editor is not None or self.experiment_editor is not None or self.calculation_editor is not None:
             return
-        self.preparing = True
-        self.paused = True
+        self._enter_preparation()
         self.following = False
         self.session.begin_draft()
         self.restart()
@@ -281,8 +434,12 @@ class App:
         self._refresh()
 
     def edit_body(self, event=None, body_id=None):
-        if self.body_editor is not None or self.population_editor is not None or self.experiment_editor is not None:
+        if self.body_editor is not None or self.population_editor is not None or self.experiment_editor is not None or self.calculation_editor is not None:
             return
+        if self.mode_name == "CALCULATING":
+            return
+        if self.playback is not None:
+            self._enter_preparation()
         if body_id is not None and not self.preparing:
             self.status.set_text('Edit/remove applies to preparation. Choose Prepare setup first.')
             self._refresh()
@@ -302,7 +459,7 @@ class App:
         self._refresh()
 
     def remove_body(self, event=None):
-        if not self.preparing or self.body_editor is not None or self.population_editor is not None or self.experiment_editor is not None:
+        if not self.preparing or self.body_editor is not None or self.population_editor is not None or self.experiment_editor is not None or self.calculation_editor is not None:
             return
         if self.selected_id not in {b.id for b in self.initial_setup.bodies}:
             self.status.set_text('Generated particles are authored through population settings; starting setup preserved.')
@@ -326,7 +483,12 @@ class App:
         self.painter.set_artists(list(dict.fromkeys(artists)))
 
     def restart(self):
-        if self.body_editor is not None or self.population_editor is not None or self.experiment_editor is not None:
+        if self.body_editor is not None or self.population_editor is not None or self.experiment_editor is not None or self.calculation_editor is not None:
+            return
+        if self.mode_name == 'CALCULATING':
+            return
+        if self.playback is not None:
+            self.show_recording(self.playback.recording)
             return
         self._install_prepared(self.session.restart(), reset=True)
 
@@ -341,7 +503,8 @@ class App:
         self._drag = None
         self.last = time.monotonic()
         if reset:
-            self.history, self.trails = [], []
+            self._selected_id = None
+            self.history, self.trails = [StateFrame.capture(prepared)], []
             self.status.set_text('')
             self.scene = draw_system(self.ax, prepared)
             self._viewport_size = (self.fig.bbox.width, self.fig.bbox.height)
@@ -361,30 +524,38 @@ class App:
         self.scene.update(self.prepared, self.history)
         self.scene.select(self.selected_id)
         index = self.selected_index
-        body = self.prepared.body_specs[index]
-        mass = 'unknown' if body.mass is None else f'{body.mass:.6g}'
-        radius = 'unknown' if body.radius is None else f'{body.radius*AU_KM:,.5g} km'
-        if body.kind == 'particle':
-            distance = np.linalg.norm(self.system.r[index]-self.scene.origin)
-            speed = np.linalg.norm(self.system.v[index]-self.system.v[self.prepared.body_ids.index(self.scene.origin_id)])
-            details = f'Test particle {self.selected_id}\n{distance:.4g} AU from view origin\n{speed:.4g} AU / yr relative to view origin'
+        missing = self.selected_id not in self.prepared.body_ids
+        if missing:
+            details = f"{self.selected_id}: missing / removed\nSee recorded events; no replacement assigned."
+            if self.prepared.events:
+                details += "\n" + str(self.prepared.events[-1].message)
         else:
-            details = f'{body.name}\n{mass} solar masses / radius {radius}'
-            if body.temperature is not None:
-                details += f'\n{body.temperature:,.0f} K'
-            details += f'\nID: {self.selected_id}\n{body.provenance}'
-            if body.kind == 'moon':
-                relative = relative_state(StateFrame.capture(self.prepared), self.selected_id)
-                if relative is None:
-                    details += '\nParent: no initial association'
-                elif relative.missing:
-                    details += f'\nParent {relative.reference_id}: missing / removed\nSee state events; no replacement assigned.'
-                else:
-                    details += f'\nParent: {relative.reference_name} [{relative.reference_id}]\nCurrent separation: {relative.separation*AU_KM:,.7g} km\n{relative.separation:.8g} AU'
+            body = self.prepared.body_specs[index]
+            mass = f'{self.system.masses[index]:.6g}'
+            radius = 'unknown' if body.radius is None else f'{body.radius*AU_KM:,.5g} km'
+            if body.kind == 'particle':
+                distance = np.linalg.norm(self.system.r[index]-self.scene.origin)
+                speed = np.linalg.norm(self.system.v[index]-self.system.v[self.prepared.body_ids.index(self.scene.origin_id)])
+                details = f'Test particle {self.selected_id}\n{distance:.4g} AU from view origin\n{speed:.4g} AU / yr relative to view origin'
+            else:
+                details = f'{body.name}\n{mass} solar masses / radius {radius}'
+                if body.temperature is not None:
+                    details += f'\n{body.temperature:,.0f} K'
+                details += f'\nID: {self.selected_id}\n{body.provenance}'
+                if body.kind == 'moon':
+                    relative = relative_state(StateFrame.capture(self.prepared), self.selected_id)
+                    if relative is None:
+                        details += '\nParent: no initial association'
+                    elif relative.missing:
+                        details += f'\nParent {relative.reference_id}: missing / removed\nSee state events; no replacement assigned.'
+                    else:
+                        details += f'\nParent: {relative.reference_name} [{relative.reference_id}]\nCurrent separation: {relative.separation*AU_KM:,.7g} km\n{relative.separation:.8g} AU'
+            r, v = self.system.r[index], self.system.v[index]
+            details += f'\nWorld r = ({r[0]:.5g}, {r[1]:.5g}) AU\nWorld v = ({v[0]:.5g}, {v[1]:.5g}) AU/yr'
         self.inspector.set_text(details)
         self.sidebar.set_bodies([(key, f'{spec.name} [{key[:8]}]') for key,spec in zip(self.prepared.body_ids,self.prepared.body_specs)], self.selected_id)
-        self.sidebar.update(self.system.time, self.speed.val, index)
-        if self.following and self.body_editor is None:
+        self.sidebar.update(self.system.time, self.speed.val, None if missing else index)
+        if self.following and not missing and self.body_editor is None:
             center = self.scene.positions[index]
             xlim, ylim = self.ax.get_xlim(), self.ax.get_ylim()
             half_width, half_height = np.diff(xlim)[0]/2, np.diff(ylim)[0]/2
@@ -392,9 +563,12 @@ class App:
             new_y = (center[1]-half_height, center[1]+half_height)
             if new_x != xlim: self.ax.set_xlim(new_x)
             if new_y != ylim: self.ax.set_ylim(new_y)
-        self.mode.set_text('HALTED' if self.halted else 'DRAFT' if self.body_editor else 'PREP' if self.preparing else 'PAUSED' if self.paused else 'LIVE')
+        self.mode.set_text('HALTED' if self.halted and self.playback is None else self.mode_name)
         self.mode.set_color('#efb17b' if self.halted else MUTED if self.paused else ACCENT)
-        for label, text in ((self.pause.label, ('Run live' if self.preparing else 'Resume') if self.paused else 'Pause'),
+        for label, text in ((self.pause.label, ('Play' if self.playback is not None else 'Run live' if self.preparing else 'Resume') if self.paused else 'Pause'),
+                            (self.step.label, 'Next sample' if self.playback is not None else 'Step'),
+                            (self.sidebar.calculate.label, 'Cancel calculation' if self.mode_name == 'CALCULATING' else 'Calculate...'),
+                            (self.sidebar.results.label, f'Results ({len(self.session.recordings)})'),
                             (self.follow.label, 'Unfollow' if self.following else 'Follow body')):
             if label.get_text() != text:
                 label.set_text(text)
@@ -402,7 +576,14 @@ class App:
         self.painter.paint()
 
     def toggle_pause(self, event=None):
-        if self.population_editor is not None or self.body_editor is not None or self.experiment_editor is not None:
+        if self.population_editor is not None or self.body_editor is not None or self.experiment_editor is not None or self.calculation_editor is not None:
+            return
+        if self.mode_name == "CALCULATING":
+            return
+        if self.playback is not None:
+            if self.playback.playing: self.playback.pause()
+            else: self.playback.play()
+            self._display_recorded_frame()
             return
         self.paused = not self.paused
         if not self.paused:
@@ -413,6 +594,8 @@ class App:
         self._refresh()
 
     def _advance(self, count, budget_seconds=None):
+        if self.playback is not None or self.mode_name == 'CALCULATING':
+            return 0
         deadline = None if budget_seconds is None else time.perf_counter()+budget_seconds
         completed = 0
         for _ in range(count):
@@ -433,7 +616,13 @@ class App:
         return completed
 
     def step_once(self, event=None):
-        if self.population_editor is not None or self.body_editor is not None or self.experiment_editor is not None:
+        if self.population_editor is not None or self.body_editor is not None or self.experiment_editor is not None or self.calculation_editor is not None:
+            return
+        if self.mode_name == "CALCULATING":
+            return
+        if self.playback is not None:
+            self.playback.next_sample()
+            self._display_recorded_frame()
             return
         self.paused = True
         self.pending = 0.
@@ -457,7 +646,7 @@ class App:
         return toolbar is not None and bool(toolbar.mode)
 
     def on_scroll(self, event):
-        if self.population_editor is not None or self.experiment_editor is not None:
+        if self.population_editor is not None or self.experiment_editor is not None or self.calculation_editor is not None:
             return
         if self.sidebar.contains_event(event) or event.inaxes != self.ax or event.xdata is None or self._toolbar_active():
             return
@@ -472,7 +661,7 @@ class App:
         self.fig.canvas.draw_idle()
 
     def on_press(self, event):
-        if self.population_editor is not None or self.experiment_editor is not None:
+        if self.population_editor is not None or self.experiment_editor is not None or self.calculation_editor is not None:
             return
         if self.body_editor is not None:
             try: self.body_editor.on_press(event)
@@ -482,7 +671,7 @@ class App:
             self._drag = (event.x, event.y, self.ax.get_xlim(), self.ax.get_ylim())
 
     def on_motion(self, event):
-        if self.population_editor is not None or self.experiment_editor is not None:
+        if self.population_editor is not None or self.experiment_editor is not None or self.calculation_editor is not None:
             return
         if self.body_editor is not None:
             self.body_editor.on_motion(event)
@@ -505,7 +694,7 @@ class App:
         self.fig.canvas.draw_idle()
 
     def on_release(self, event):
-        if self.population_editor is not None or self.experiment_editor is not None:
+        if self.population_editor is not None or self.experiment_editor is not None or self.calculation_editor is not None:
             return
         if self.body_editor is not None:
             self.body_editor.dragging = False
@@ -518,10 +707,13 @@ class App:
             distances = np.linalg.norm(pixels - (event.x, event.y), axis=1)
             index = int(np.argmin(distances))
             if distances[index] <= 22:
-                self.selected_index = index
+                self.selected_id = self.prepared.body_ids[index]
                 self._refresh()
 
     def on_key(self, event):
+        if self.calculation_editor is not None:
+            if event.key == 'escape': self.calculation_editor.finish()
+            return
         if self.experiment_editor is not None:
             if event.key == 'escape': self.experiment_editor.finish()
             return
@@ -544,6 +736,21 @@ class App:
         now = time.monotonic()
         elapsed = min(now-self.last, .1)
         self.last = now
+        if self.mode_name == "CALCULATING":
+            if any((self.body_editor, self.population_editor, self.experiment_editor, self.calculation_editor)):
+                return ()
+            self.calculation.advance(150, budget_seconds=PHYSICS_BUDGET_SECONDS)
+            if self.calculation.done:
+                self._finish_calculation()
+            else:
+                self._calculation_status()
+                self._refresh()
+            return ()
+        if self.playback is not None:
+            if self.playback.playing:
+                self.playback.advance(elapsed, self.speed.val)
+                self._display_recorded_frame()
+            return ()
         if not self.halted and not self.paused:
             self.pending += elapsed*self.speed.val
             steps = min(150, int(self.pending/self.system.dt))

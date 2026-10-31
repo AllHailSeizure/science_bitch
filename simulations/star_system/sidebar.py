@@ -29,10 +29,10 @@ class Sidebar:
         for spine in self.background.spines.values():
             spine.set_visible(False)
         self.title = self.background.text(.06, .965, '', color=TEXT, fontsize=13, va='top', wrap=True)
-        self.readout = self.background.text(.06, .91, '', color=MUTED, fontsize=9, va='top')
+        self.readout = self.background.text(.06, .925, '', color=MUTED, fontsize=9, va='top')
         self.inspector = self.background.text(.06, .33, '', color=TEXT, fontsize=9, va='top')
         self.status = self.background.text(.06, .055, '', color='#efb17b', fontsize=8, va='top', wrap=True)
-        self.mode = self.background.text(.94, .91, '', color=ACCENT, fontsize=9, ha='right', va='top')
+        self.mode = self.background.text(.94, .925, '', color=ACCENT, fontsize=9, ha='right', va='top')
         self.body_ax = fig.add_axes((.02, .40, .27, .19), zorder=12, facecolor='#17283a')
         self.body_ax.set_xticks([])
         self.body_ax.set_yticks([])
@@ -43,6 +43,12 @@ class Sidebar:
         self.preview_image = self.preview.imshow(star_sprite(app.star), origin='lower')
         self.prepare = button(fig, (.02,.825,.13,.03), 'Prepare setup')
         self.legacy = button(fig, (.16,.825,.13,.03), 'Prepare circular')
+        self.calculate = button(fig, (.02,.865,.13,.03), 'Calculate...')
+        self.results = button(fig, (.16,.865,.13,.03), 'Results (0)')
+        self.run_live = button(fig, (.02,.09,.27,.03), 'Run live from starting setup')
+        self.calculate.on_clicked(app.edit_calculation)
+        self.results.on_clicked(lambda event: app.show_recording())
+        self.run_live.on_clicked(app.run_live)
         self.edit = button(fig, (.02,.37,.13,.027), 'Edit selected')
         self.remove = button(fig, (.16,.37,.13,.027), 'Remove selected')
         self.add = button(fig, (.02, .77, .13, .037), 'Add a body')
@@ -70,7 +76,7 @@ class Sidebar:
         self.catalog_add = button(fig, (.02, .31, .13, .035), 'Add planet')
         self.catalog_close = button(fig, (.16, .31, .13, .035), 'Close catalog')
         self.catalog_widgets = [self.star_picker, self.planet_picker, self.catalog_add, self.catalog_close]
-        self.widgets = [self.prepare, self.legacy, self.edit, self.remove, self.add, self.population, self.reset, self.pause, self.step, self.home, self.follow, self.speed, self.experiment]
+        self.widgets = [self.calculate, self.results, self.run_live, self.prepare, self.legacy, self.edit, self.remove, self.add, self.population, self.reset, self.pause, self.step, self.home, self.follow, self.speed, self.experiment]
         self.axes = [self.background, self.body_ax, self.preview, *(w.ax for w in self.widgets), *(w.ax for w in self.catalog_widgets)]
         self.add.on_clicked(app.edit_body)
         self.prepare.on_clicked(app.prepare_setup)
@@ -93,13 +99,18 @@ class Sidebar:
 
     def _sync(self):
         authoring = self.app.body_editor is not None
-        editing = authoring or self.app.population_editor is not None or self.app.experiment_editor is not None
+        editing = authoring or self.app.population_editor is not None or self.app.experiment_editor is not None or self.app.calculation_editor is not None
+        calculating = self.app.mode_name == 'CALCULATING'
         self.background.set_visible(self.visible)
         for artist in (self.body_ax, self.preview, self.inspector):
             artist.set_visible(self.visible and not self.catalog_open and not authoring)
         for widget in self.widgets:
             widget.ax.set_visible(self.visible and not authoring)
             widget.active = self.visible and not editing
+            if calculating and widget not in (self.calculate, self.home, self.follow):
+                widget.active = False
+            if widget == self.results:
+                widget.active = widget.active and bool(self.app.session.recordings)
             if widget in (self.edit,self.remove):
                 widget.active = widget.active and self.app.preparing
                 widget.ax.set_visible(self.visible and not self.catalog_open and not authoring)
@@ -108,7 +119,7 @@ class Sidebar:
         for widget in self.catalog_widgets:
             enabled = self.visible and self.catalog_open and not authoring
             widget.ax.set_visible(enabled)
-            widget.active = enabled and not editing and self.app.preparing
+            widget.active = enabled and not editing and self.app.preparing and not calculating
         if authoring:
             for ax in self.app.body_editor.axes: ax.set_visible(self.visible)
             for widget in self.app.body_editor.widgets:
@@ -151,14 +162,14 @@ class Sidebar:
                               ha='right', color=MUTED, fontsize=7)
 
     def on_scroll(self, event):
-        if self.visible and not self.catalog_open and self.app.population_editor is None and self.app.body_editor is None and self.app.experiment_editor is None and event.inaxes == self.body_ax:
+        if self.visible and not self.catalog_open and self.app.population_editor is None and self.app.body_editor is None and self.app.experiment_editor is None and self.app.calculation_editor is None and event.inaxes == self.body_ax:
             self.offset = max(0, min(max(0, len(self.rows)-6), self.offset-int(event.step)))
             self._draw_rows()
             self.app.painter.invalidate()
             self.app.fig.canvas.draw_idle()
 
     def on_click(self, event):
-        if self.visible and not self.catalog_open and self.app.population_editor is None and self.app.body_editor is None and self.app.experiment_editor is None and event.inaxes == self.body_ax and event.button == 1 and event.ydata is not None:
+        if self.visible and not self.catalog_open and self.app.population_editor is None and self.app.body_editor is None and self.app.experiment_editor is None and self.app.calculation_editor is None and event.inaxes == self.body_ax and event.button == 1 and event.ydata is not None:
             row = int(np.floor((.92-event.ydata)/.15))
             index = self.offset + row
             if 0 <= row < 6 and 0 <= index < len(self.rows):
@@ -168,8 +179,14 @@ class Sidebar:
                 self.app._refresh()
 
     def update(self, time, speed, selected_index):
-        self.readout.set_text(f'{time:,.3f} yr   /   {speed:.3g} yr/sec')
+        history = self.app.history
+        span = (f'Trail {history[0].time:.5g}–{history[-1].time:.5g} yr '
+                f'({history[-1].time-history[0].time:.5g} yr)') if history else 'Trail: no samples'
+        self.readout.set_text(f'{time:,.3f} yr / {speed:.3g} yr/sec\n{span}')
         self.status.set_text(fill(self.status.get_text(), width=42))
+        if selected_index is None:
+            self.preview_image.set_visible(False)
+            return
         spec = self.app.prepared.body_specs[selected_index]
         if spec.kind == 'star':
             image = star_sprite(spec)
@@ -191,12 +208,15 @@ class ExperimentEditor:
         import matplotlib.pyplot as plt
         from .scenarios import COMPATIBILITY, DESCRIPTIONS
         self.app, self.was_paused, self.finished = app, app.paused, False
+        self.was_playing = app.playback is not None and app.playback.playing
         self.fig = plt.figure(figsize=(8.5, 8.5), facecolor=PANEL)
         self.fig.canvas.manager.set_window_title('Experiment / preparation and saves')
         self.fig.text(.07, .95, 'Experiment / preparation and saves', color=TEXT, fontsize=16)
         origin = app.initial_setup.preset_id or app.initial_setup.provenance.get('origin_preset')
         self.origin = self.fig.text(.07, .905, ('Preset: ' if app.initial_setup.preset_id else 'Custom copy / origin: ')
                                    + str(origin or 'free preparation'), color=MUTED, fontsize=10)
+        displayed_source = app.playback.recording.source_name if app.playback is not None else app.initial_setup.name
+        self.fig.text(.07, .865, f'Starting setup: {app.initial_setup.name}\nCurrent-state capture source: {displayed_source}', color=MUTED, fontsize=9)
         self.widgets, self.fields = [], {}
         for key, label, value, y in [('name', 'Experiment name', app.initial_setup.name, .81),
                                     ('path', 'JSON path', 'output/experiment.json', .64),
@@ -256,7 +276,7 @@ class ExperimentEditor:
             path, initial = Path(self.fields['capture_path'].text), Path(self.fields['path'].text)
             if path.resolve() == initial.resolve() or (path.exists() and initial.exists() and path.samefile(initial)):
                 raise ValueError('Choose a capture path different from the initial setup path.')
-            captured = self.app.session.save_current(path, self.fields['capture_name'].text)
+            captured = self.app.save_current_setup(path, self.fields['capture_name'].text)
             self.error.set_text(fill(captured.provenance['capture_note']+f' Fixed dt = {captured.dt:.9g} yr.', 105))
         # Capture's detailed step/epoch disclosure must remain visible.
         try:
@@ -291,8 +311,86 @@ class ExperimentEditor:
         for widget in self.widgets: widget.disconnect_events()
         for connection in self.connections: self.fig.canvas.mpl_disconnect(connection)
         self.app.experiment_editor = None
-        self.app.paused = self.was_paused
+        self.app.paused = True if self.app.preparing else self.was_paused
+        if self.app.playback is not None and self.was_playing:
+            self.app.playback.play()
         self.app.pending, self.app.last = 0., time.monotonic()
+        self.app.sidebar._sync()
+        self.app._refresh()
+        plt.close(self.fig)
+
+
+class CalculationEditor:
+    """Review the resolved fixed-step request and conservative budget before start."""
+    def __init__(self, app):
+        import matplotlib.pyplot as plt
+        self.app, self.finished = app, False
+        self.fig = plt.figure(figsize=(8, 5), facecolor=PANEL)
+        self.fig.canvas.manager.set_window_title('Calculate experiment')
+        self.fig.text(.07, .92, 'Calculate '+app.initial_setup.name, color=TEXT, fontsize=15)
+        self.fig.text(.07, .84, 'Output stride only samples output; physics dt stays fixed.\nResults stay in memory. Existing results remain available through Results.', color=MUTED, fontsize=10)
+        self.widgets, self.fields = [], {}
+        for key, label, value, y in [('duration', 'Duration (yr)', '1', .69),
+                                    ('stride', 'Output stride', '10', .58),
+                                    ('budget', 'Budget (MiB)', '256', .47)]:
+            box = TextBox(self.fig.add_axes((.32, y, .58, .065)), label+'  ', initial=value,
+                          color='#1b3044', hovercolor='#294b60')
+            box.label.set_color(TEXT); box.text_disp.set_color(TEXT)
+            self.fields[key] = box; self.widgets.append(box)
+            box.on_text_change(lambda text: self.resolve())
+        self.summary = self.fig.text(.07, .39, '', color=TEXT, fontsize=10, va='top')
+        self.error = self.fig.text(.07, .20, '', color='#efb17b', fontsize=9, va='top')
+        self.start = button(self.fig, (.07, .07, .56, .065), 'Start calculation')
+        self.cancel = button(self.fig, (.67, .07, .23, .065), 'Close')
+        self.start.on_clicked(self.begin); self.cancel.on_clicked(lambda event: self.finish())
+        self.widgets += [self.start, self.cancel]
+        self.connections = [self.fig.canvas.mpl_connect('close_event', lambda event: self.finish()),
+                            self.fig.canvas.mpl_connect('key_press_event', self.on_key)]
+        self.resolve()
+
+    def request(self):
+        from .recording import CalculationRequest
+        try:
+            return CalculationRequest(float(self.fields['duration'].text), int(self.fields['stride'].text),
+                                      int(self.fields['budget'].text)*1048576)
+        except (ValueError, OverflowError):
+            raise ValueError('Use a finite positive duration and positive integer stride / budget MiB.') from None
+
+    def resolve(self):
+        if not hasattr(self, 'summary'):
+            return
+        from .recording import Calculation
+        try:
+            calc = Calculation(self.app.initial_setup, self.request())
+        except (ValueError, OverflowError) as exc:
+            self.summary.set_text(''); self.error.set_text(fill(str(exc), 100)); self.start.active = False
+        else:
+            self.summary.set_text(f'Requested {calc.request.duration_years:.9g} yr → {calc.total_steps:,} whole steps\n'
+                                  f'Fixed dt {calc.prepared.system.dt:.9g} yr; resolved end {calc.resolved_end_time:.9g} yr\n'
+                                  f'Conservative storage estimate {calc.estimated_bytes/1048576:.2f} MiB / budget {calc.request.max_bytes/1048576:g} MiB')
+            self.error.set_text(''); self.start.active = True
+        self.fig.canvas.draw_idle()
+
+    def begin(self, event=None):
+        try:
+            request = self.request()
+            from .recording import Calculation
+            Calculation(self.app.initial_setup, request)
+        except (ValueError, OverflowError) as exc:
+            self.error.set_text(fill(str(exc), 100)); self.fig.canvas.draw_idle(); return
+        self.finish()
+        self.app.start_calculation(request)
+
+    def on_key(self, event):
+        if event.key == 'escape': self.finish()
+
+    def finish(self):
+        if self.finished: return
+        import matplotlib.pyplot as plt
+        self.finished = True
+        for widget in self.widgets: widget.disconnect_events()
+        for connection in self.connections: self.fig.canvas.mpl_disconnect(connection)
+        self.app.calculation_editor = None
         self.app.sidebar._sync()
         self.app._refresh()
         plt.close(self.fig)
