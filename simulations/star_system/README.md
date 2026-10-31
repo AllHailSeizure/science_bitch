@@ -12,14 +12,20 @@ pytest -q
 pytest -s tests/test_star_system.py
 ```
 
-The GUI is a live Matplotlib observatory with dark control panels, illuminated planet disks, glowing stars, fading trails, and a body inspector.
+The GUI is a live Matplotlib observatory with a full-window overhead scene,
+illuminated planet disks, glowing stars, fading trails, and an overlay sidebar.
+Click **Menu [M]** or press `m` to hide/show the sidebar. It covers or reveals
+the existing scene without moving the camera, resizing its viewport, or
+rebuilding the simulation. The Menu button remains available while it is hidden.
 PyQt6 provides a backend when Python lacks Tk. A desktop display is required
 for the GUI; the output command forces Agg and needs no display. Stars are
 `proxima`, `sun`, `sirius`, `rigel`; planet keys are their lowercase names.
 Eight planets, Pluto, and Ceres are available. The Moon is omitted because its
 usual orbital distance is geocentric, unlike this heliocentric catalog.
 
-Pick a star, pick a planet, then click **Add planet**. Each body can be added
+Open **Add a body** to show the star/planet catalog and distance sliders.
+Pick a star, pick a planet, then click **Add planet**; **Close catalog** returns
+to the present-body list and inspector. Each body can be added
 once; selecting an existing body is a no-op. Distance sliders are logarithmic,
 labeled in AU, and start at catalog distances. They span 0.005–80 AU, with the
 lower limit raised above the selected star's surface. Switching to a giant
@@ -36,27 +42,46 @@ resolved halt with a message; reset or adjust distances to resume.
 
 | Control | Action |
 | --- | --- |
+| Menu [M], or `m` | Show/hide the overlay without changing state or camera |
 | Pause / Resume, or Space | Stop or resume evolution without rebuilding the system |
 | Step, or `.` | Pause and advance one fixed physics timestep |
 | Mouse wheel over the view | Zoom around the cursor |
 | Left drag over the view | Pan; this also stops following a body |
 | Click a star or planet | Select it and show its details in the inspector |
+| Click a present-body row | Select that body, including an individual test particle |
+| Mouse wheel over the body list | Scroll its six visible rows without zooming the scene |
 | Follow body / Unfollow | Keep the selected body centered at the current zoom |
 | Fit view, Home, or `0` | Stop following and frame the current system |
 | Restart | Clear time and trails, keeping selected bodies, distances, and pause state |
+
+The sidebar reports elapsed simulated years and requested years per second.
+Its body list keeps the same font size as bodies are added; playback and
+Population controls stay above it. The inspector includes a larger surface
+preview of the selected star or planet. Pointer events over the sidebar cannot
+pan, zoom, or select the scene beneath it. Hidden widgets are inactive, and
+main-window shortcuts are disabled while the population settings editor is open.
 
 The speed slider requests simulated years per second. Zoom is still on the
 compressed radial scale, not a linear AU scale. Shaded disks retain a readable
 screen size while zooming. Adding a body or changing a star/distance rebuilds
 the initial system as before. This update changes presentation and controls;
-moons, swarm particles, and scenario saving remain part of the
+moons, general body authoring, and scenario saving remain part of the
 [Evolving star-system sandbox milestone](https://github.com/AllHailSeizure/science_bitch/milestone/1).
 
 The desktop timer targets 60 updates per second and accounts for time spent in
 the callback. Actual frame rate depends on the system, viewport, and backend.
-On backends that support blitting, static controls and guides are cached while
-moving bodies, trails, and readouts are repainted. Camera changes, resizing,
-and edited controls refresh that cache. Other backends use normal full redraws.
+On backends that support blitting, static scene pixels are cached while moving
+bodies, trails, and text are repainted. The overlay is painted last so moving
+bodies stay behind it. Camera changes, resizing, and edited controls refresh
+that cache. Other backends use normal full redraws. Resizing preserves the
+camera center and world units per pixel while adjusting limits to the canvas
+aspect ratio; Fit view frames all current bodies in wide or tall windows.
+
+The heading initially describes the selected setup. `App.set_experiment_name(name)`
+sets an explicit heading for later named-experiment/persistence integration.
+`Sidebar.set_visible(visible)` and `Sidebar.contains_event(event)` own overlay
+visibility/event isolation. `Sidebar.set_bodies(rows, selected_id)` accepts
+`(id, label)` rows; the current controller adapts integer body indices.
 
 ## Reproducible populations (Issue #6 Foundation)
 
@@ -190,8 +215,10 @@ mapping. Trails retain at most 1500 integration samples and draw at most 400
 vertices each, including their first and latest samples. This display sampling
 does not change integration or the retained history. **Marker sizes are
 not to scale**: star diameter in points is `12 + 16 log10(1 + 8 R/Rsun)`;
-planet diameter is `14 + 7 log10(1 + R/km / 1000)`. These monotonic compression
-rules make small planets visible and giants visibly larger than dwarfs.
+planet diameter is `4 + 3 log10(1 + R/km / 1000)`. These monotonic compression
+rules keep planets compact: Jupiter's marker is less than half the Sun's
+diameter. The inspector preview exposes surface detail independently of the
+overview marker size.
 Planet shading faces the star in the orbital plane, with a small ambient term to keep the night hemisphere visible. Surface markings are stylized procedural illustrations, not geographic maps. Stellar halos, decorative background stars, and shading do not affect the physics. Camera limits persist between frames; **Fit view** recenters and frames the current system. Stellar colors approximate the Planckian locus using
 [Tanner Helland's temperature-to-RGB fit](https://tannerhelland.com/2012/09/18/convert-temperature-rgb-algorithm-code.html).
 A 3050 K dwarf appears warm orange-red, not saturated red; hotter stars appear
@@ -254,13 +281,43 @@ radii and temperatures, strictly increasing blue/red color ratio with stellar
 temperature, and increasing star marker diameter with physical radius. Invalid
 orbits, duplicate bodies, and nonfinite distances are rejected.
 
-The suite includes 45 physics/catalog checks and 21 display/control checks.
+The suite includes physics/catalog, population, and display/control checks.
 The display checks use Agg and Matplotlib mouse/key events to verify lighting
 direction, sprite positions, fading trails, retained artists/camera, pause and
 single-step, time advancement, zoom, pan, selection/follow, rebuilding controls,
-ten-body layout, and close-encounter halting. Rendering checks also cover cached
+ten-body layout, 40-row scrolling, overlay isolation, hidden-widget inactivity,
+wide/tall viewport coverage, and close-encounter halting. Rendering checks cover cached
 frames, bounded display trails, actual step accounting under a work budget,
 resize/full-redraw equivalence, exports, and the non-blitting fallback.
 Run `python -m pytest -q`.
 Still exports use the same renderer as the live window. These headless checks
 do not establish native desktop input behavior on every GUI backend.
+
+### Full-window overlay verification (2026-10-30)
+
+Checked on Windows with `C:\Python314\python.exe`:
+
+```powershell
+C:\Python314\python.exe -m pytest -q --tb=short --basetemp output/pytest-overlay-integration-04
+C:\Python314\python.exe -m simulations.star_system --star sun --planet jupiter --years 1 --output output/issue-4-sun-jupiter.png
+C:\Python314\python.exe -m simulations.star_system --population belt --count 200 --seed 42 --output output/issue-4-population.png
+git diff --check
+```
+
+The suite passed **118 tests** in 97.92 seconds. Its 14 warnings report that
+Agg cannot show the separate population window. The writable `--basetemp`
+avoids this environment's inaccessible default Windows pytest temp directory.
+Both CLI commands exited successfully and produced nonempty 1350×1350 PNGs
+(103,013 and 111,494 bytes respectively), checked with Pillow and visually
+inspected. Whitespace validation passed.
+
+The normal `App.fig.savefig` path also produced visually inspected previews
+at `output/overlay-reviewed.png` (selected Jupiter surface detail) and
+`output/catalog-reviewed.png` (all ten planets and their distance controls).
+These generated files stay in ignored `output/`. Automated events verified
+unchanged physical state/camera transforms through actual Menu button toggles,
+keyboard access, wide/tall resize scale, overlay event isolation, body-list
+scrolling, and population-editor lifecycle. Pixel comparisons matched cached,
+full, and nonblitting draws with the sidebar open/closed and a moving star
+behind the overlay. Native desktop input, perceived smoothness, and native
+multiwindow behavior were **not exercised** in this verification run.

@@ -2,16 +2,16 @@
 from io import BytesIO
 
 import matplotlib.pyplot as plt
-from matplotlib.backend_bases import KeyEvent, MouseEvent
+from matplotlib.backend_bases import KeyEvent, MouseEvent, ResizeEvent
 import numpy as np
 import pytest
 from PIL import Image
 
 from simulations.star_system.core import make_system, SOLAR_RADIUS_AU
-from simulations.star_system.data import STARS, PLANETS
+from simulations.star_system.data import STARS, PLANETS, star_size
 from simulations.star_system.plotting import App
 from simulations.star_system.rendering import (
-    MAX_TRAIL_VERTICES, coordinates, draw, planet_sprite, star_sprite,
+    MAX_TRAIL_VERTICES, coordinates, draw, planet_sprite, star_sprite, planet_size,
 )
 
 
@@ -22,6 +22,7 @@ def app():
     instance.fig.canvas.draw()
     instance.timer.stop()
     yield instance
+    instance.close()
     plt.close(instance.fig)
 
 
@@ -158,6 +159,7 @@ def test_drag_pans_without_selecting_a_body(app):
 
 def test_existing_add_distance_and_star_controls_still_rebuild(app):
     original_axes = len(app.fig.axes)
+    click(app.fig.canvas, app.sidebar.add.ax)
     app.planet_picker.set_active(list(PLANETS).index('mercury'))
     click(app.fig.canvas, app.add.ax)
     assert app.planets[-1] == 'mercury'
@@ -182,9 +184,17 @@ def test_all_planets_fit_in_control_panel(app):
         app.add_planet(None)
     app.fig.canvas.draw()
     assert len(app.sliders) == 10
-    for slider in app.sliders:
-        assert .245 < slider.ax.get_position().y0 < .48
+    click(app.fig.canvas, app.sidebar.add.ax)
+    assert all(slider.ax.get_visible() for slider in app.sliders)
     assert len(app.scene.bodies) == 10
+    click(app.fig.canvas, app.sidebar.catalog_close.ax)
+    pixel = app.sidebar.body_ax.transAxes.transform((.5, .5))
+    event = MouseEvent('scroll_event', app.fig.canvas, *pixel, button='down', step=-10)
+    app.fig.canvas.callbacks.process('scroll_event', event)
+    click(app.fig.canvas, app.sidebar.body_ax, (.5, .14))
+    assert app.selected_index == 10
+    assert app.inspector.get_text().startswith('Ceres\n')
+    assert app.population_button.active
 
 
 def test_close_encounter_stays_halted_until_rebuilt(app):
@@ -244,17 +254,28 @@ def test_budgeted_frames_account_for_only_completed_physics_steps(app, monkeypat
     assert app.pending == pytest.approx(1.-2*app.system.dt)
 
 
-def test_partial_redraw_matches_full_redraw_after_motion_and_resize(app):
+@pytest.mark.parametrize('sidebar_visible', [True, False])
+def test_partial_redraw_matches_full_redraw_after_motion_and_resize(app, sidebar_visible):
+    app.sidebar.set_visible(sidebar_visible)
+    # Put the moving star and its selection ring behind the sidebar itself.
+    app.ax.set_xlim(-2, 10)
+    app.ax.set_ylim(-4, 4)
+    app.fig.canvas.draw()
     app._advance(25)
     app._refresh()
     incremental = np.asarray(app.fig.canvas.buffer_rgba()).copy()
     app.fig.canvas.draw()
     np.testing.assert_array_equal(incremental, np.asarray(app.fig.canvas.buffer_rgba()))
     app.fig.set_size_inches(12, 8)
+    app.fig.canvas.callbacks.process('resize_event', ResizeEvent('resize_event', app.fig.canvas))
     app.fig.canvas.draw()
     app._advance(10)
     app._refresh()
     incremental = np.asarray(app.fig.canvas.buffer_rgba()).copy()
+    app.fig.canvas.draw()
+    np.testing.assert_array_equal(incremental, np.asarray(app.fig.canvas.buffer_rgba()))
+    app.painter.use_blit = False
+    app.painter.set_artists(app.painter.artists)
     app.fig.canvas.draw()
     np.testing.assert_array_equal(incremental, np.asarray(app.fig.canvas.buffer_rgba()))
 
@@ -268,7 +289,7 @@ def test_export_keeps_inspector_text_and_recovers_live_cache(app):
     output.seek(0)
     saved = np.asarray(Image.open(output).convert('RGBA'))
     height, width = live.shape[:2]
-    inspector = np.s_[int(height*.81):int(height*.9), int(width*.03):int(width*.28)]
+    inspector = np.s_[int(height*.67):int(height*.8), int(width*.02):int(width*.29)]
     np.testing.assert_array_equal(live[inspector], saved[inspector])
     app.step_once()
     assert app.painter.background is not None
@@ -287,3 +308,127 @@ def test_backends_without_blitting_still_draw(app, monkeypatch):
     app.step_once()
     assert full_draws
     assert app.system.time == pytest.approx(app.system.dt)
+
+
+def test_sidebar_toggle_keeps_scene_transform(app):
+    app._advance(3)
+    app._refresh()
+    positions_before = app.system.r.copy()
+    velocities_before = app.system.v.copy()
+    elapsed = app.system.time
+    limits = app.ax.get_xlim(), app.ax.get_ylim()
+    positions = app.ax.transData.transform(app.scene.positions).copy()
+    click(app.fig.canvas, app.sidebar.menu.ax)
+    assert not app.sidebar.visible
+    click(app.fig.canvas, app.sidebar.menu.ax)
+    assert app.sidebar.visible
+    assert (app.ax.get_xlim(), app.ax.get_ylim()) == limits
+    np.testing.assert_allclose(app.ax.transData.transform(app.scene.positions), positions)
+    np.testing.assert_array_equal(app.system.r, positions_before)
+    np.testing.assert_array_equal(app.system.v, velocities_before)
+    assert app.system.time == elapsed
+
+
+@pytest.mark.parametrize('size', [(12, 8), (8, 12)])
+def test_scene_fills_wide_and_tall_canvas(app, size):
+    center = np.mean(app.ax.get_xlim()), np.mean(app.ax.get_ylim())
+    scale = np.diff(app.ax.get_xlim())[0]/app.ax.bbox.width
+    app.fig.set_size_inches(*size)
+    app.fig.canvas.callbacks.process('resize_event', ResizeEvent('resize_event', app.fig.canvas))
+    app.fig.canvas.draw()
+    np.testing.assert_allclose(app.ax.bbox.bounds, app.fig.bbox.bounds)
+    assert np.diff(app.ax.get_xlim())[0]/app.ax.bbox.width == pytest.approx(np.diff(app.ax.get_ylim())[0]/app.ax.bbox.height)
+    assert np.diff(app.ax.get_xlim())[0]/app.ax.bbox.width == pytest.approx(scale)
+    np.testing.assert_allclose((np.mean(app.ax.get_xlim()), np.mean(app.ax.get_ylim())), center)
+    app.fit_view()
+    pixels = app.ax.transData.transform(app.scene.positions)
+    assert all(app.ax.bbox.contains(*point) for point in pixels)
+
+
+def test_sidebar_blocks_scene_gestures(app):
+    limits = app.ax.get_xlim(), app.ax.get_ylim()
+    pos = app.fig.transFigure.transform((.01, .35))
+    canvas = app.fig.canvas
+    for name in ('button_press_event', 'button_release_event', 'scroll_event'):
+        canvas.callbacks.process(name, MouseEvent(name, canvas, *pos, button='up' if name == 'scroll_event' else 1, step=1))
+    assert (app.ax.get_xlim(), app.ax.get_ylim()) == limits
+    assert app.selected_index == 0
+
+
+def test_catalog_opens_only_from_add_body(app):
+    assert not app.planet_picker.ax.get_visible()
+    click(app.fig.canvas, app.sidebar.add.ax)
+    assert app.planet_picker.ax.get_visible()
+    assert app.star_picker.ax.get_visible()
+    assert app.speed.ax.get_visible()
+    assert app.speed.ax.get_position().y0 > app.planet_picker.ax.get_position().y1
+    click(app.fig.canvas, app.sidebar.catalog_close.ax)
+    assert not app.planet_picker.ax.get_visible()
+
+
+def test_menu_keyboard_and_hidden_widgets(app):
+    canvas = app.fig.canvas
+    canvas.callbacks.process('key_press_event', KeyEvent('key_press_event', canvas, key='m'))
+    assert not app.sidebar.visible
+    assert app.sidebar.menu.ax.get_visible()
+    assert not app.pause.active
+    assert not app.planet_picker.active
+    assert not any(slider.active for slider in app.sliders)
+    elapsed = app.system.time
+    click(canvas, app.step.ax)
+    click(canvas, app.reset.ax)
+    assert app.system.time == elapsed
+    canvas.callbacks.process('key_press_event', KeyEvent('key_press_event', canvas, key='m'))
+    assert app.sidebar.visible
+    assert app.pause.active
+    assert not app.planet_picker.active
+
+
+def test_drag_into_sidebar_stops_scene_gesture(app):
+    canvas = app.fig.canvas
+    start = app.fig.transFigure.transform((.5, .5))
+    end = app.fig.transFigure.transform((.01, .5))
+    limits = app.ax.get_xlim(), app.ax.get_ylim()
+    for name, pixel in [('button_press_event', start), ('motion_notify_event', end), ('button_release_event', end)]:
+        canvas.callbacks.process(name, MouseEvent(name, canvas, *pixel, button=1))
+    assert (app.ax.get_xlim(), app.ax.get_ylim()) == limits
+    assert app._drag is None
+
+
+def test_sidebar_shows_elapsed_time_and_requested_speed(app):
+    app.speed.set_val(2)
+    app.step_once()
+    assert f'{app.system.time:,.3f} yr' in app.sidebar.readout.get_text()
+    assert '2 yr/sec' in app.sidebar.readout.get_text()
+    app.set_experiment_name('Example')
+    assert app.sidebar.title.get_text() == 'Example'
+
+
+def test_body_list_scroll_keeps_controls_reachable(app):
+    sidebar = app.sidebar
+    sidebar.set_bodies([(i, f'Body {i}') for i in range(40)], 0)
+    pixel = sidebar.body_ax.transAxes.transform((.5, .5))
+    for _ in range(34):
+        event = MouseEvent('scroll_event', app.fig.canvas, *pixel, button='down', step=-1)
+        app.fig.canvas.callbacks.process('scroll_event', event)
+    assert sidebar.offset == 34
+    assert any(t.get_text() == 'Body 39' for t in sidebar.body_ax.texts)
+    assert app.population_button.ax.get_visible()
+
+
+def test_jupiter_marker_is_smaller_than_sun():
+    assert planet_size('jupiter') < .5*star_size(STARS['sun'])
+    keys = sorted(PLANETS, key=lambda key: PLANETS[key].radius)
+    assert all(planet_size(a) <= planet_size(b) for a, b in zip(keys, keys[1:]))
+
+
+def test_selected_planet_preview_retains_surface_detail(app):
+    app.selected_index = 2
+    app._refresh()
+    expected = planet_sprite('jupiter', app.system.r[0]-app.system.r[2])
+    np.testing.assert_array_equal(app.sidebar.preview_image.get_array(), expected)
+    renderer = app.fig.canvas.get_renderer()
+    preview = app.sidebar.preview_image.get_window_extent(renderer)
+    marker = app.scene.bodies[1].offsetbox.get_window_extent(renderer)
+    assert preview.width > 3*marker.width
+    assert app.sidebar.preview_image.get_visible()

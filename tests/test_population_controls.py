@@ -1,6 +1,6 @@
 """Draft editing must preserve evolved state until an explicit restart."""
 import matplotlib.pyplot as plt
-from matplotlib.backend_bases import CloseEvent, MouseEvent
+from matplotlib.backend_bases import CloseEvent, KeyEvent, MouseEvent
 import numpy as np
 import pytest
 
@@ -140,3 +140,26 @@ def test_ring_has_only_one_editable_radius(app):
     assert not editor.fields['outer'].active
     editor.kind.set_active(2)
     assert editor.fields['outer'].active
+
+
+def test_population_editor_preserves_sidebar_visibility_and_disables_catalog(app):
+    app.sidebar.set_catalog(True)
+    app.edit_population()
+    canvas = app.fig.canvas
+    editor = app.population_editor
+    assert not app.add.active
+    assert not app.star_picker.active
+    assert not any(slider.active for slider in app.sliders)
+    for key in ('m', '.', ' ', 'home'):
+        canvas.callbacks.process('key_press_event', KeyEvent('key_press_event', canvas, key=key))
+    assert app.sidebar.visible
+    assert app.system.time == 0
+    editor.finish()
+    assert app.add.active
+    assert all(slider.active for slider in app.sliders)
+    app.toggle_sidebar()
+    app.edit_population()
+    app.population_editor.finish()
+    assert not app.sidebar.visible
+    assert not app.pause.active
+    assert not app.add.active
