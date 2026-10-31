@@ -58,6 +58,10 @@ class Sidebar:
         self.step = button(fig, (.02, .67, .085, .037), 'Step')
         self.home = button(fig, (.112, .67, .085, .037), 'Fit view')
         self.follow = button(fig, (.204, .67, .086, .037), 'Follow')
+        self.inertial_view = button(fig, (.02, .595, .13, .023), 'World axes')
+        self.rotating_view = button(fig, (.16, .595, .13, .023), 'Rotating axes')
+        self.inertial_view.on_clicked(app.toggle_inertial_frame)
+        self.rotating_view.on_clicked(lambda event: app.set_frame_mode('rotating'))
         self.experiment = button(fig, (.02, .135, .27, .035), 'Experiment / Save / Load...')
         self.experiment.on_clicked(app.edit_experiment)
         self.speed = Slider(fig.add_axes((.09, .625, .15, .012), zorder=12), 'yr/sec', .001, 10., valinit=.5, valfmt='%.3g', color=ACCENT, track_color='#22374b')
@@ -76,7 +80,7 @@ class Sidebar:
         self.catalog_add = button(fig, (.02, .31, .13, .035), 'Add planet')
         self.catalog_close = button(fig, (.16, .31, .13, .035), 'Close catalog')
         self.catalog_widgets = [self.star_picker, self.planet_picker, self.catalog_add, self.catalog_close]
-        self.widgets = [self.calculate, self.results, self.run_live, self.prepare, self.legacy, self.edit, self.remove, self.add, self.population, self.reset, self.pause, self.step, self.home, self.follow, self.speed, self.experiment]
+        self.widgets = [self.calculate, self.results, self.run_live, self.prepare, self.legacy, self.edit, self.remove, self.add, self.population, self.reset, self.pause, self.step, self.home, self.follow, self.speed, self.experiment, self.inertial_view, self.rotating_view]
         self.axes = [self.background, self.body_ax, self.preview, *(w.ax for w in self.widgets), *(w.ax for w in self.catalog_widgets)]
         self.add.on_clicked(app.edit_body)
         self.prepare.on_clicked(app.prepare_setup)
@@ -111,6 +115,8 @@ class Sidebar:
                 widget.active = False
             if widget == self.results:
                 widget.active = widget.active and bool(self.app.session.recordings)
+            if widget == self.rotating_view and hasattr(self.app, 'scene'):
+                widget.active = widget.active and not self.app.scene.rotating_reason
             if widget in (self.edit,self.remove):
                 widget.active = widget.active and self.app.preparing
                 widget.ax.set_visible(self.visible and not self.catalog_open and not authoring)
@@ -180,9 +186,19 @@ class Sidebar:
 
     def update(self, time, speed, selected_index):
         history = self.app.history
-        span = (f'Trail {history[0].time:.5g}–{history[-1].time:.5g} yr '
-                f'({history[-1].time-history[0].time:.5g} yr)') if history else 'Trail: no samples'
+        scene = self.app.scene
+        if scene.selected_trail_times:
+            times = scene.selected_trail_times
+            span = f'Rock trail {times[0]:.5g}–{times[-1]:.5g} yr ({times[-1]-times[0]:.5g} yr)'
+        else:
+            span = (f'Trail {history[0].time:.5g}–{history[-1].time:.5g} yr '
+                    f'({history[-1].time-history[0].time:.5g} yr)') if history else 'Trail: no samples'
         self.readout.set_text(f'{time:,.3f} yr / {speed:.3g} yr/sec\n{span}')
+        self.inertial_view.label.set_text('Origin axes' if scene.frame_mode != 'sun-relative' else 'World axes')
+        self.rotating_view.active = self.visible and not any((self.app.body_editor, self.app.population_editor,
+            self.app.experiment_editor, self.app.calculation_editor)) and not scene.rotating_reason and self.app.mode_name != 'CALCULATING'
+        self.rotating_view.label.set_text('Rotating axes' if not scene.rotating_reason else 'Rotating unavailable')
+        self.rotating_view.label.set_fontsize(8 if scene.rotating_reason else 9)
         self.status.set_text(fill(self.status.get_text(), width=42))
         if selected_index is None:
             self.preview_image.set_visible(False)
@@ -206,7 +222,7 @@ class ExperimentEditor:
 
     def __init__(self, app):
         import matplotlib.pyplot as plt
-        from .scenarios import COMPATIBILITY, DESCRIPTIONS
+        from .scenarios import DESCRIPTIONS
         self.app, self.was_paused, self.finished = app, app.paused, False
         self.was_playing = app.playback is not None and app.playback.playing
         self.fig = plt.figure(figsize=(8.5, 8.5), facecolor=PANEL)
@@ -235,10 +251,16 @@ class ExperimentEditor:
         self._button((.07, .26, .85, .045), 'Save current state as new setup', self.save_current)
         self.fig.text(.07, .245, 'Capture writes a separate named epoch at time zero, including explicit particles.\n'
                       'The current experiment stays selected. Load the file to use the new epoch.', color=MUTED, fontsize=10, va='top')
-        self._button((.07, .155, .54, .045), 'Open Sun / Earth / Jupiter preset', self.preset)
-        self._button((.65, .155, .27, .045), 'Close', lambda event: self.finish())
-        self.fig.text(.07, .135, fill(DESCRIPTIONS[COMPATIBILITY], 104), color=MUTED, fontsize=8, va='top')
-        self.error = self.fig.text(.07, .065, '', color='#efb17b', fontsize=9, va='top')
+        self.preset_picker = RadioButtons(self.fig.add_axes((.07, .115, .54, .085)), list(DESCRIPTIONS), activecolor=ACCENT, useblit=False)
+        self.preset_picker.ax.set_facecolor(PANEL)
+        for label in self.preset_picker.labels:
+            label.set_color(TEXT); label.set_fontsize(9)
+        self.widgets.append(self.preset_picker)
+        self._button((.65, .16, .27, .04), 'Open preset', self.preset)
+        self._button((.65, .11, .27, .04), 'Close', lambda event: self.finish())
+        self._button((.07, .065, .54, .035), 'Prepare matched no-Jupiter control', self.control)
+        self.error = self.fig.text(.07, .045, fill(DESCRIPTIONS[self.preset_picker.value_selected], 105), color='#efb17b', fontsize=8, va='top')
+        self.preset_picker.on_clicked(lambda key: (self.error.set_text(fill(DESCRIPTIONS[key], 105)), self.fig.canvas.draw_idle()))
         self.connections = [self.fig.canvas.mpl_connect('close_event', lambda event: self.finish()),
                             self.fig.canvas.mpl_connect('key_press_event', self.on_key)]
 
@@ -295,8 +317,16 @@ class ExperimentEditor:
         self.finish()
 
     def preset(self, event=None):
-        from .scenarios import COMPATIBILITY, get_scenario
-        self.app.select_setup(get_scenario(COMPATIBILITY))
+        from .scenarios import get_scenario
+        self.app.select_setup(get_scenario(self.preset_picker.value_selected))
+        self.was_paused = True
+        self.finish()
+
+    def control(self, event=None):
+        try:
+            self.app.prepare_jupiter_control()
+        except ValueError as exc:
+            self.error.set_text(fill(str(exc), 105)); self.fig.canvas.draw_idle(); return
         self.was_paused = True
         self.finish()
 

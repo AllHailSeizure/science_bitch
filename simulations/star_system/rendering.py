@@ -12,6 +12,8 @@ from .core import SOLAR_RADIUS_AU
 from .data import STARS, PLANETS, CATALOG, AU_KM, blackbody_rgb, star_size
 from .model import BodySpec
 from .initialization import PreparedSystem
+from .history import StateFrame
+from .frames import frame_transform, reference_id, lagrange_guides, LABELS
 
 BACKGROUND = '#070d18'
 PANEL = '#101b2b'
@@ -219,8 +221,9 @@ def planet_size(planet):
 class Scene:
     """Stable-ID artists and world-frame history; updates retain the camera."""
 
-    def __init__(self, ax, prepared, history=(), legacy=False):
+    def __init__(self, ax, prepared, history=(), legacy=False, frame_mode='sun-relative'):
         self.ax, self.prepared, self.legacy = ax, prepared, legacy
+        self.frame_mode = frame_mode
         self.selected = None
         self.origin_id = next((key for key, spec in zip(prepared.body_ids, prepared.body_specs)
                                if spec.kind == 'star'), prepared.body_ids[0])
@@ -237,7 +240,18 @@ class Scene:
         self.highlight = ax.scatter([], [], s=900, facecolors='none', edgecolors=ACCENT,
                                     linewidths=.8, alpha=.65, zorder=4)
         self.particles = ax.scatter([], [], s=4, color='#d8dfb3', alpha=.8, linewidths=0, zorder=3)
-        self.heading = ax.text(.025, .97, '', transform=ax.transAxes, color=TEXT, fontsize=15, va='top', zorder=10)
+        self.selected_trail = LineCollection([], linewidths=1.25, zorder=2.5)
+        ax.add_collection(self.selected_trail)
+        self.selected_trail_times = ()
+        self.selected_trail_vertices = 0
+        self.reference_guides = ax.scatter([], [], s=90, marker='D', facecolors='none',
+                                           edgecolors='#c6a9ed', linewidths=1.1, zorder=4)
+        self.guide_labels = [ax.annotate(label, (0, 0), xytext=(8, 6), textcoords='offset points',
+                                        color='#c6a9ed', fontsize=9, zorder=7) for label in ('L4 guide', 'L5 guide')]
+        self.guide_note = ax.text(.025, .065, '', transform=ax.transAxes, color='#c6a9ed', fontsize=8, zorder=10)
+        self.guide_note.set_x(.335)
+        self.trail_info = ax.text(.335, .12, '', transform=ax.transAxes, color=ACCENT, fontsize=8, zorder=10)
+        self.heading = ax.text(.40, .97, '', transform=ax.transAxes, color=TEXT, fontsize=12, va='top', zorder=10)
         self.clock = ax.text(.975, .965, '', transform=ax.transAxes, ha='right', va='top', color=TEXT,
                              fontsize=11, fontfamily='monospace', zorder=10)
         self.result_info = ax.text(.975, .915, '', transform=ax.transAxes, ha='right', va='top', color=TEXT,
@@ -280,7 +294,20 @@ class Scene:
 
     @property
     def moving_artists(self):
-        return [*self.trails, *self.ax.texts, self.particles, self.highlight, *self.artists_by_id.values()]
+        return [*self.trails, self.selected_trail, *self.ax.texts, self.reference_guides,
+                self.particles, self.highlight, *self.artists_by_id.values()]
+
+    def set_frame_mode(self, mode):
+        # Validate before changing display state; no physical array is written.
+        frame_transform(self.frame, mode, self.origin_id)
+        self.frame_mode = mode
+        self.update(self.prepared, self.history)
+
+    def world_to_display(self, world):
+        return coordinates(self.transform.positions(world))
+
+    def display_to_world(self, displayed):
+        return self.transform.inverse_positions(inverse_coordinates(displayed))
 
     def _background(self):
         rng = np.random.default_rng(24)
@@ -304,18 +331,32 @@ class Scene:
             from dataclasses import replace
             prepared = replace(self.prepared, system=prepared)
         self.prepared = prepared
+        self.history = tuple(history) if history is not None else ()
         if self.origin_id not in prepared.body_ids:
             self.origin_id = next((key for key, spec in zip(prepared.body_ids, prepared.body_specs)
                                    if spec.kind == 'star'), prepared.body_ids[0])
         self._ensure_artists()
         system = prepared.system
+        self.frame = StateFrame.capture(prepared)
         origin_index = prepared.body_ids.index(self.origin_id)
         self.origin = system.r[origin_index].copy()
-        self.positions = coordinates(system.r-self.origin)
+        self.rotating_reason = ''
+        try:
+            frame_transform(self.frame, 'rotating')
+        except ValueError as exc:
+            self.rotating_reason = str(exc)
+            if self.frame_mode == 'rotating':
+                self.frame_mode = 'sun-relative'
+        self.transform = frame_transform(self.frame, self.frame_mode, self.origin_id)
+        self.positions = self.world_to_display(system.r)
         particle_indices = [i for i, s in enumerate(prepared.body_specs) if s.kind == 'particle']
         self.particles.set_offsets(self.positions[particle_indices])
         self.clock.set_text(f'{system.time:,.8g} yr')
-        self.heading.set_text(prepared.body_specs[origin_index].name)
+        label = LABELS[self.frame_mode]
+        if self.frame_mode == 'sun-relative':
+            label = prepared.body_specs[origin_index].name+'-relative / inertial axes'
+        self.heading.set_text(label)
+        self._update_reference_guides()
         for i, (key, spec) in enumerate(zip(prepared.body_ids, prepared.body_specs)):
             if spec.kind == 'particle' or key not in self.artists_by_id:
                 continue
@@ -328,32 +369,53 @@ class Scene:
                 body.offsetbox.set_data(star_sprite(spec))
             else:
                 direction = system.r[light]-system.r[i] if light is not None else (1, 0)
-                body.offsetbox.set_data(planet_sprite(spec, direction))
+                body.offsetbox.set_data(planet_sprite(spec, self.transform.vectors(direction)))
             self.labels_by_id[key].xy = self.positions[i]
         for key, line in self.trails_by_id.items():
             if key not in prepared.body_ids:
                 line.set_segments([])
                 continue
-            points = []
-            for frame in history if history is not None else ():
-                if hasattr(frame, 'body_ids'):
-                    if key not in frame.body_ids or self.origin_id not in frame.body_ids:
-                        continue
-                    points.append(frame.r[frame.body_ids.index(key)] - frame.r[frame.body_ids.index(self.origin_id)])
-                else:  # legacy relative-array history
-                    points.append(frame[prepared.body_ids.index(key)])
-            if len(points) < 2:
-                line.set_segments([])
-                continue
-            indices = np.linspace(0, len(points)-1, min(len(points), MAX_TRAIL_VERTICES), dtype=int)
-            trail = coordinates(np.asarray(points)[indices])
-            segments = np.stack((trail[:-1], trail[1:]), axis=1)
             spec = prepared.body_specs[prepared.body_ids.index(key)]
-            colors = np.tile((*to_rgb(spec.color or '#b7c9df'), 1.), (len(segments), 1))
-            colors[:, 3] = np.linspace(.015, .65, len(segments))
-            line.set_segments(segments)
-            line.set_color(colors)
+            self._set_trail(line, key, spec.color or '#b7c9df')
         self.select(self.selected)
+
+    def _update_reference_guides(self):
+        available = not self.rotating_reason
+        self.reference_guides.set_visible(available)
+        for label in self.guide_labels:
+            label.set_visible(available)
+        self.guide_note.set_text('L4/L5: ideal circular restricted-three-body reference geometry\n'
+                                 'Geometric guides; occupancy / stability / capture not detected.' if available else self.rotating_reason)
+        if available:
+            sun, jupiter = reference_id(self.frame, 'sun'), reference_id(self.frame, 'jupiter')
+            points = self.world_to_display(lagrange_guides(self.frame, sun, jupiter))
+            self.reference_guides.set_offsets(points)
+            for label, point in zip(self.guide_labels, points):
+                label.xy = point
+
+    def _set_trail(self, line, key, color):
+        points, times = [], []
+        for frame in self.history:
+            if hasattr(frame, 'body_ids'):
+                try:
+                    if key not in frame.body_ids:
+                        raise ValueError('Missing body')
+                    transform = frame_transform(frame, self.frame_mode, self.origin_id)
+                    points.append(transform.positions(frame.r[frame.body_ids.index(key)]))
+                    times.append(frame.time)
+                except ValueError:
+                    # Do not connect a trajectory across missing identities/references.
+                    points, times = [], []
+            else:  # legacy relative-array history
+                points.append(frame[self.prepared.body_ids.index(key)])
+        indices = np.linspace(0, len(points)-1, min(len(points), MAX_TRAIL_VERTICES), dtype=int)
+        trail = coordinates(np.asarray(points)[indices]) if len(points) else np.empty((0, 2))
+        segments = np.stack((trail[:-1], trail[1:]), axis=1) if len(trail) > 1 else []
+        colors = np.tile((*to_rgb(color), 1.), (len(segments), 1))
+        colors[:, 3] = np.linspace(.015, .8, len(segments))
+        line.set_segments(segments)
+        line.set_color(colors)
+        return tuple(times), len(trail)
 
     def select(self, body_id):
         if isinstance(body_id, (int, np.integer)):
@@ -365,6 +427,20 @@ class Scene:
             self.highlight.set_sizes([(body_size(self.prepared.body_specs[index])+12)**2])
         for key, label in self.labels_by_id.items():
             label.set_color(TEXT if key == body_id else MUTED)
+        particle = index is not None and self.prepared.body_specs[index].kind == 'particle'
+        self.selected_trail.set_visible(particle)
+        if particle:
+            self.selected_trail_times, self.selected_trail_vertices = self._set_trail(self.selected_trail, body_id, ACCENT)
+            times = self.selected_trail_times
+            self.trail_info.set_text((f'Selected {body_id}: {times[0]:.6g}–{times[-1]:.6g} yr / '
+                f'{times[-1]-times[0]:.6g} yr duration\n{len(times)} retained samples → '
+                f'{self.selected_trail_vertices} display vertices (max {MAX_TRAIL_VERTICES})'
+                + (' / earlier history truncated' if self.history and hasattr(self.history[0], 'time')
+                   and self.history[0].time > 0 else '')) if times else 'Selected trail: no retained samples')
+        else:
+            self.selected_trail.set_segments([])
+            self.selected_trail_times, self.selected_trail_vertices = (), 0
+            self.trail_info.set_text('')
 
     def fit_view(self):
         extent = max(2., np.max(np.linalg.norm(self.positions, axis=1))*1.25)
@@ -374,9 +450,9 @@ class Scene:
         self.ax.set_ylim(-half_width*ratio, half_width*ratio)
 
 
-def draw_system(ax, prepared, history=()):
+def draw_system(ax, prepared, history=(), frame_mode='sun-relative'):
     ax.figure.set_facecolor(BACKGROUND)
-    return Scene(ax, prepared, history)
+    return Scene(ax, prepared, history, frame_mode=frame_mode)
 
 
 def draw(ax, system, star, planets, trails=None):

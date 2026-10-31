@@ -491,6 +491,86 @@ with exact regenerated initial particle states checked in the same environment.
 Calculated playback must retain population identities, timestamps, complete or
 halted status, pause, and step; recorded calculation remains separate work.
 
+## Sun–Jupiter perturbation experiments
+
+Open **Experiment / Save / Load...**, select **sun-jupiter-ring**, then
+**Open preset**. The common setup contains the Sun, Jupiter, and 32 mass-zero
+test particles in a 3.2 AU ring with evenly spaced angles and seed 7. Its
+positions and circular initial velocity guesses use the existing population
+generator. Body/vector editors, population settings, initial saves, loading,
+live stepping, and calculation work through the same interfaces as custom
+systems. These initial conditions demonstrate perturbation; they do not promise
+Trojan occupancy or capture. Arbitrary capture attempts may escape or halt.
+
+For a matched comparison, save the initial setup and calculate it first. Then
+open the same experiment dialog and choose **Prepare matched no-Jupiter
+control**. Save this control to its own JSON path and calculate the same
+duration and output stride. The control stores its actual explicit initial
+bodies and physical vectors, with Jupiter removed and no regenerated ring or
+barycentric recentering. Its fixed dt is identical. Results retains both runs;
+click it to switch between them. The comparison matches particle IDs and shows
+the maximum **Sun-relative** displacement difference at a common recorded
+physical time, both run statuses/actual end times, and their common sampled
+interval. An edited initial vector/property invalidates the matched comparison.
+If either run halts, cancels, or ends at a different time, only common samples
+are compared and the unequal/incomplete completion is explicit. Unrelated
+moons retain their declared parent; remove or reauthor a Jupiter-relative moon
+before removing its required parent.
+
+The unchanged fixed fixture produces a maximum displacement difference of
+**0.0730167 AU after 600 steps / 5.724355585 years**, one initial ring period,
+with `dt = 0.009540592642 yr`. The separate existing mass-zero Jupiter-source
+control remains an independent numerical check above 0.01 AU. Forces come
+from the declared gravitational model; no attraction toward L4/L5, relocation,
+clustering, capture rule, or altered solver is added.
+
+**World axes**, ordinary origin-relative inertial axes (Sun-relative for this
+preset), and **Rotating axes** change display coordinates only. In the rotating
+view the current Sun is the origin and the current Sun–Jupiter direction is
+the positive horizontal axis. Every historic point uses its own sample's Sun,
+Jupiter, and angle, for both live trails and recorded playback. Radial distance
+compression is applied afterward. Missing/ambiguous or coincident references
+disable rotating axes with a reason, including the no-Jupiter control; no
+synthetic reference body is supplied. Inverse click placement undoes compression
+and then the selected spatial frame. Velocity fields always author physical
+reference-relative **inertial AU/yr** vectors; arrows rotate their orientation
+for display without subtracting an angular frame velocity.
+
+The hollow violet L4/L5 diamonds are at ±60° and the instantaneous Sun–Jupiter
+separation, following [NASA's equilateral reference geometry](https://science.nasa.gov/solar-system/resources/faq/what-are-lagrange-points/).
+They are labeled **ideal circular restricted-three-body reference geometry**,
+visually separate from particle markers. They do not detect occupied or stable
+regions. Eccentric/perturbed systems do not inherit a guaranteed stationary
+equilibrium, and proximity or a short trajectory does not establish permanent
+capture.
+
+Select a rock in the scene/body list to draw its trail alongside major-body
+trails; other rocks have no individual trails. Selection uses stable IDs,
+including after row reordering. The display keeps at most **400 vertices**
+from retained world snapshots, labels the actual timestamp interval/duration,
+sample/vertex counts and earlier-history truncation, and retains at most 1,500
+samples in the live/replay viewing window. Recording stride samples output
+without changing integration dt. The inspector reports actual rock–Jupiter
+separation and Jupiter-relative physical inertial velocity from the displayed
+sample, plus world vectors. Follow, live pause/step/restart, and recorded
+play/pause/next-sample use the same shared controls.
+
+For a reproducible saved export:
+
+```python
+from simulations.star_system.scenarios import get_scenario, make_jupiter_comparison
+from simulations.star_system.persistence import save_setup
+
+setup, control = make_jupiter_comparison(get_scenario('sun-jupiter-ring'))
+save_setup(setup, 'output/sun-jupiter-ring.json')
+save_setup(control, 'output/sun-jupiter-control.json')
+```
+
+```powershell
+C:\Python314\python.exe -m simulations.star_system --load output/sun-jupiter-ring.json --years 5.724355585 --sample-stride 4 --output output/jupiter-saved-cli.png
+C:\Python314\python.exe -m simulations.star_system --load output/sun-jupiter-control.json --years 5.724355585 --sample-stride 4 --output output/jupiter-control-cli.png
+```
+
 ## Shared APIs for the following plans
 
 - `model.py`: frozen `BodySpec`, `PropertySource`, `InitialBody`, `PopulationSpec`, and `InitialSetup`. Catalog keys identify definitions; body IDs identify instances. `PopulationSpec(id, reference_id, settings)` maps the stable reference to the legacy numeric index at initialization.
@@ -501,7 +581,8 @@ halted status, pause, and step; recorded calculation remains separate work.
 - `population_editor.py`: `PopulationEditor` validates a complete candidate `InitialSetup` before Apply/Remove, using the shared `authoring.reference_ids` choices. Its separate figure owns its widgets and close/Escape lifecycle; the main scene's overlay axes retain the existing painter contract.
 - `persistence.py`: `save_setup`, `load_setup`, `setup_digest`; strict schema/model/numerical/generator versions above. Setup identity includes all configured values and provenance.
 - `experiments.py`: `ExperimentSession(initial_setup)` owns `initial_setup`, `draft`, `prepared`; `begin_draft`, `update_draft`, `apply_draft`, `cancel_draft`, `select`, `restart`, `save_initial`, `save_current`, `load` provide explicit transitions. `capture_current_setup(prepared, initial_setup, name)` returns an independent validated initial epoch. `App.initial_setup`/`prepared` delegate to session ownership, and `_install_prepared` remains the scene-installation path.
-- `scenarios.py`: `get_scenario(key)` returns an independent immutable setup; `DESCRIPTIONS` holds preset descriptions. `sun-earth-jupiter` is the compatibility preset. Extend this shared registry for future scenarios.
+- `scenarios.py`: `get_scenario(key)` returns an independent immutable setup; `DESCRIPTIONS` holds preset descriptions. `sun-earth-jupiter` is the compatibility preset; `sun-jupiter-ring` is the checked perturbation fixture. `make_jupiter_comparison(setup)` resolves a matched explicit control, and `compare_recordings(first, second)` validates source vectors and reports Sun-relative differences only at common recorded times.
+- `frames.py`: pure `frame_transform`, `rotate_about_sun`, and `lagrange_guides` transform snapshot copies without a dynamics import. `Scene.world_to_display` and `display_to_world` compose the selected frame with compression/inversion; historical points use their own frame transform.
 
 The body-authoring tests provide arbitrary/binary, reference-chain, populated
 insertion, live draft events, invalid/cancel, inverse mapping, velocity scaling,
@@ -626,3 +707,37 @@ Normal App exports `output/playback-preparation.png`,
 source association, physical clocks, interval readout and incomplete status.
 These remain ignored local artifacts. Agg event checks and image review do not
 establish native desktop input or multiwindow behavior.
+
+Sun–Jupiter integration commands:
+
+```powershell
+C:\Python314\python.exe -m pytest -q --tb=short --basetemp output/pytest-jupiter-final-09
+C:\Python314\python.exe -m pytest -q tests/test_jupiter_experiments.py tests/test_reference_frames.py tests/test_recorded_playback.py::test_recorded_rotating_history_matches_live_samples --tb=short --basetemp output/pytest-jupiter-post-12
+C:\Python314\python.exe -m simulations.star_system --load output/sun-jupiter-ring.json --years 5.724355585 --sample-stride 4 --output output/jupiter-saved-cli.png
+C:\Python314\python.exe -m simulations.star_system --load output/sun-jupiter-control.json --years 5.724355585 --sample-stride 4 --output output/jupiter-control-cli.png
+C:\Python314\python.exe -m simulations.star_system --star sun --planet earth --planet jupiter --years 1 --output output/jupiter-legacy-cli.png
+git diff --check
+git diff --check codex/issue-8-playback...HEAD
+```
+
+The full integration run passed **287 tests in 400.24 seconds**, with 34 expected
+Agg window notices. Two additional regressions (natural halting in both matched
+runs and preserving/rejecting moon-parent controls), plus distinct particle-row
+assertions, were added while that run was in progress. The final focused run
+passed **18 tests in 18.32 seconds**, with one expected Agg notice. Production
+code did not change after the full run started. Tests cover equal resolved
+initial vectors, save/reload and a fresh-process saved-preset export, source
+association through the actual shared-dialog workflow, common-time incomplete
+results, historical rotating samples matching live samples, immutable view
+switches, inverse placement/physical velocity arrows, stable particle identity,
+400-vertex trails and rotating availability through sidebar/modal transitions.
+
+All three CLI exports above succeeded and their 1350x1350 PNGs were visually
+inspected. Normal App previews `output/jupiter-rotating-live.png`,
+`output/jupiter-ordinary-live.png`, `output/jupiter-rotating-authoring.png`,
+`output/jupiter-recorded-comparison.png`, and
+`output/jupiter-control-recorded.png` (1776x1104), plus
+`output/jupiter-experiment-picker.png` (1020x1020), were visually inspected for
+distinct particle IDs, physical vectors, actual trail intervals/sampling,
+matched source/time/status readouts, frame availability, and labeled geometric
+guides. These artifacts remain ignored. Native desktop interaction is unverified.

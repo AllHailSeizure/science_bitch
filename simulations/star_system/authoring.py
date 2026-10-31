@@ -9,7 +9,7 @@ from matplotlib.patches import FancyArrowPatch
 from .data import CATALOG, AU_KM
 from .model import BodySpec, InitialBody, PropertySource
 from .initialization import build_system, insert_body, circular_relative_velocity, recommended_moon_step
-from .rendering import PANEL, TEXT, MUTED, ACCENT, coordinates, inverse_coordinates
+from .rendering import PANEL, TEXT, MUTED, ACCENT
 
 VELOCITY_PIXELS_PER_AUYR = 12.
 
@@ -195,9 +195,10 @@ class BodyEditor:
         if self.finished or self._filling_spec: return
         try:
             r,v=self.vectors(); rr,vv,key=self.reference_state()
-            anchor=coordinates(r+rr-self.app.scene.origin)
+            anchor=self.app.scene.world_to_display(r+rr)
             pixel=self.app.ax.transData.transform(anchor)
-            tip=self.app.ax.transData.inverted().transform(pixel+v*VELOCITY_PIXELS_PER_AUYR)
+            displayed_v=self.app.scene.transform.vectors(v)
+            tip=self.app.ax.transData.inverted().transform(pixel+displayed_v*VELOCITY_PIXELS_PER_AUYR)
             self.marker.set_data([anchor[0]],[anchor[1]])
             self.arrow.set_positions(anchor,tip)
             self.anchor, self.velocity_tip=anchor,tip
@@ -213,6 +214,7 @@ class BodyEditor:
                     f'relative v = ({v[0]:.6g}, {v[1]:.6g}) AU/yr / speed {np.linalg.norm(v):.6g}\n'
                     f'system r = ({(r+rr)[0]:.6g}, {(r+rr)[1]:.6g}) AU\n'
                     f'system v = ({(v+vv)[0]:.6g}, {(v+vv)[1]:.6g}) AU/yr\n'
+                    f'Physical reference-relative inertial velocity; displayed axes only rotate.\n'
                     f'Click to place; drag velocity tip / linear {VELOCITY_PIXELS_PER_AUYR:g} px per AU/yr')
             if self.is_moon and self.fields['mass'].text.strip():
                 step=recommended_moon_step(r,self.app.system.masses[self.app.prepared.body_ids.index(key)],float(self.fields['mass'].text))
@@ -235,14 +237,15 @@ class BodyEditor:
         if np.linalg.norm(tip-(event.x,event.y)) < 15:
             self.dragging=True; return
         rr,_,_=self.reference_state()
-        world=inverse_coordinates((event.xdata,event.ydata))+self.app.scene.origin
+        world=self.app.scene.display_to_world((event.xdata,event.ydata))
         r=world-rr
         for key,value in zip(('x','y'),r): self.fields[key].set_val(f'{value:.16g}')
         self.preview()
 
     def on_motion(self,event):
         if not self.dragging or event.x is None: return
-        v=(np.array([event.x,event.y])-self.app.ax.transData.transform(self.anchor))/VELOCITY_PIXELS_PER_AUYR
+        displayed_v=(np.array([event.x,event.y])-self.app.ax.transData.transform(self.anchor))/VELOCITY_PIXELS_PER_AUYR
+        v=self.app.scene.transform.inverse_vectors(displayed_v)
         for key,value in zip(('vx','vy'),v): self.fields[key].set_val(f'{value:.16g}')
         self.preview()
 

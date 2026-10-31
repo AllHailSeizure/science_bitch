@@ -48,6 +48,7 @@ class App:
         self.distances = [PLANETS[p].distance for p in planets]
         self.paused = True
         self.following = False
+        self.frame_mode = 'sun-relative'
         self.selected_index = 0
         self._drag = None
         self.fig = plt.figure(figsize=(14.8, 9.2), facecolor=BACKGROUND)
@@ -167,7 +168,8 @@ class App:
         if self.experiment_name == str(name):
             return
         self.experiment_name = str(name)
-        self.sidebar.title.set_text(self.experiment_name)
+        from textwrap import fill
+        self.sidebar.title.set_text(fill(self.experiment_name, 40, max_lines=2, placeholder='…'))
         if hasattr(self, 'painter'):
             self.painter.invalidate()
             self.fig.canvas.draw_idle()
@@ -175,6 +177,28 @@ class App:
     def toggle_sidebar(self, event=None):
         self._drag = None
         self.sidebar.set_visible(not self.sidebar.visible)
+
+    def set_frame_mode(self, mode):
+        if any((self.body_editor, self.population_editor, self.experiment_editor, self.calculation_editor)):
+            return
+        try:
+            self.scene.set_frame_mode(mode)
+        except ValueError as exc:
+            self.status.set_text(str(exc))
+        else:
+            self.frame_mode = mode
+            self._drag = None
+        self._refresh()
+
+    def toggle_inertial_frame(self, event=None):
+        self.set_frame_mode('world' if self.scene.frame_mode == 'sun-relative' else 'sun-relative')
+
+    def prepare_jupiter_control(self):
+        from .scenarios import make_jupiter_comparison
+        _, control = make_jupiter_comparison(self.initial_setup)
+        self.select_setup(control)
+        self.status.set_text('No-Jupiter control: identical resolved Sun/rock vectors and fixed dt. Save this actual control; calculate the same duration / stride for matched samples.')
+        self._refresh()
 
     def _resize_view(self, event=None):
         xlim, ylim = self.ax.get_xlim(), self.ax.get_ylim()
@@ -392,7 +416,7 @@ class App:
         self.prepared, self.system = prepared, prepared.system
         self.history = list(self.playback.recording.frames[max(0, self.playback.index-MAX_HISTORY+1):self.playback.index+1])
         if reset:
-            self.scene = draw_system(self.ax, prepared, self.history)
+            self.scene = draw_system(self.ax, prepared, self.history, frame_mode=self.frame_mode)
             self.selected_index = 0
             self.following = False
         elif selected is not None:
@@ -412,6 +436,16 @@ class App:
             f'Source: {run.source_name} [{run.setup_digest[:12]}]\n'
             f'Requested {run.requested_end_time:.8g} yr / resolved {run.resolved_end_time:.8g} yr / '
             f'actual {run.actual_end_time:.8g} yr\n'+fill(run.reason or 'Calculation finished.', 78))
+        from .scenarios import compare_recordings
+        for other in reversed(self.session.recordings):
+            if other is run:
+                continue
+            try:
+                summary = compare_recordings(run, other)
+            except ValueError:
+                continue
+            self.scene.result_info.set_text(self.scene.result_info.get_text()+'\n'+fill(summary.description, 100))
+            break
         self._refresh()
 
     def run_live(self, event=None):
@@ -506,7 +540,7 @@ class App:
             self._selected_id = None
             self.history, self.trails = [StateFrame.capture(prepared)], []
             self.status.set_text('')
-            self.scene = draw_system(self.ax, prepared)
+            self.scene = draw_system(self.ax, prepared, frame_mode=self.frame_mode)
             self._viewport_size = (self.fig.bbox.width, self.fig.bbox.height)
             self.ax.callbacks.connect('xlim_changed', self.painter.invalidate)
             self.ax.callbacks.connect('ylim_changed', self.painter.invalidate)
@@ -522,6 +556,7 @@ class App:
 
     def _refresh(self):
         self.scene.update(self.prepared, self.history)
+        self.frame_mode = self.scene.frame_mode
         self.scene.select(self.selected_id)
         index = self.selected_index
         missing = self.selected_id not in self.prepared.body_ids
@@ -536,7 +571,17 @@ class App:
             if body.kind == 'particle':
                 distance = np.linalg.norm(self.system.r[index]-self.scene.origin)
                 speed = np.linalg.norm(self.system.v[index]-self.system.v[self.prepared.body_ids.index(self.scene.origin_id)])
-                details = f'Test particle {self.selected_id}\n{distance:.4g} AU from view origin\n{speed:.4g} AU / yr relative to view origin'
+                origin_name = self.prepared.body_specs[self.prepared.body_ids.index(self.scene.origin_id)].name
+                details = f'Test particle {self.selected_id}\n{distance:.4g} AU from {origin_name}\n{speed:.4g} AU / yr relative to {origin_name}'
+                from .frames import reference_id
+                try:
+                    jupiter = self.prepared.body_ids.index(reference_id(self.prepared, 'jupiter'))
+                except ValueError:
+                    details += '\nJupiter: absent / ambiguous'
+                else:
+                    separation = np.linalg.norm(self.system.r[index]-self.system.r[jupiter])
+                    relative_v = self.system.v[index]-self.system.v[jupiter]
+                    details += f'\nJupiter separation: {separation:.6g} AU\nJupiter-relative physical inertial v\n({relative_v[0]:.5g}, {relative_v[1]:.5g}) AU/yr'
             else:
                 details = f'{body.name}\n{mass} solar masses / radius {radius}'
                 if body.temperature is not None:
@@ -553,7 +598,8 @@ class App:
             r, v = self.system.r[index], self.system.v[index]
             details += f'\nWorld r = ({r[0]:.5g}, {r[1]:.5g}) AU\nWorld v = ({v[0]:.5g}, {v[1]:.5g}) AU/yr'
         self.inspector.set_text(details)
-        self.sidebar.set_bodies([(key, f'{spec.name} [{key[:8]}]') for key,spec in zip(self.prepared.body_ids,self.prepared.body_specs)], self.selected_id)
+        self.sidebar.set_bodies([(key, f'{spec.name} [{key if spec.kind == "particle" else key[:8]}]')
+                                for key,spec in zip(self.prepared.body_ids,self.prepared.body_specs)], self.selected_id)
         self.sidebar.update(self.system.time, self.speed.val, None if missing else index)
         if self.following and not missing and self.body_editor is None:
             center = self.scene.positions[index]
