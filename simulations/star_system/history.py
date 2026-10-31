@@ -15,8 +15,11 @@ class StateFrame:
     v: np.ndarray
     events: tuple = ()
     reference_ids: tuple[str | None, ...] = ()
+    event_phase: str | None = None
 
     def __post_init__(self):
+        if self.event_phase not in (None, 'pre', 'post'):
+            raise ValueError('Event frame phase must be pre, post, or absent.')
         for name in ('masses', 'r', 'v'):
             # Immutable bytes backing prevents callers re-enabling write flags.
             value = np.asarray(getattr(self, name), dtype=float)

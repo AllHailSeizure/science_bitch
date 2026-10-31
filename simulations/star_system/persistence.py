@@ -10,7 +10,7 @@ from collections.abc import Mapping
 
 import numpy as np
 
-from .model import BodySpec, InitialBody, InitialSetup, PopulationSpec, PropertySource
+from .model import BodySpec, InitialBody, InitialSetup, PopulationSpec, PropertySource, CollisionPolicy
 from .populations import Population
 from .initialization import build_system
 
@@ -49,12 +49,16 @@ def _document(setup):
         spec['sources'] = {key: _record(source) for key, source in body.spec.sources.items()}
         bodies.append({'id': body.id, 'spec': spec, 'r': list(body.r), 'v': list(body.v),
                        'reference_id': body.reference_id})
-    return {'schema_version': SCHEMA_VERSION, 'units': UNITS, 'source_version': SOURCE_VERSION,
-            'model_version': MODEL_VERSION, 'numerical_version': NUMERICAL_VERSION,
+    document = {'schema_version': SCHEMA_VERSION, 'units': UNITS, 'source_version': SOURCE_VERSION,
+            'model_version': MODEL_VERSION, 'numerical_version': (setup.collision_policy.numerical if setup.collision_mode == 'perfect_merge' else NUMERICAL_VERSION),
             'environment': {'numpy': np.__version__},
             'setup': {'name': setup.name, 'preset_id': setup.preset_id, 'dt': setup.dt,
                       'collision_mode': setup.collision_mode, 'bodies': bodies,
                       'population': _population(setup.population), 'provenance': _plain(setup.provenance)}}
+    # Preserve byte-for-byte canonical legacy mode-none documents/digests.
+    if setup.collision_mode != 'none' or setup.collision_policy != CollisionPolicy():
+        document['setup']['collision_policy'] = _record(setup.collision_policy)
+    return document
 
 
 def _object(value, keys, label):
@@ -147,14 +151,22 @@ def _decode(document):
     if type(document['schema_version']) is not int or document['schema_version'] != SCHEMA_VERSION:
         raise ValueError('Unsupported setup schema version; expected 1.')
     for key, expected in (('units', UNITS), ('source_version', SOURCE_VERSION),
-                          ('model_version', MODEL_VERSION), ('numerical_version', NUMERICAL_VERSION)):
+                          ('model_version', MODEL_VERSION)):
         if document[key] != expected:
             raise ValueError(f'Unsupported {key}.')
     _object(document['environment'], ('numpy',), 'Environment')
     _string(document['environment']['numpy'], 'NumPy version')
-    value = _object(document['setup'], ('name', 'preset_id', 'dt', 'collision_mode', 'bodies', 'population', 'provenance'), 'Setup')
+    keys = {'name', 'preset_id', 'dt', 'collision_mode', 'bodies', 'population', 'provenance'}
+    if type(document['setup']) is dict and 'collision_policy' in document['setup']:
+        keys.add('collision_policy')
+    value = _object(document['setup'], keys, 'Setup')
     _string(value['name'], 'Setup name'); _string(value['preset_id'], 'Preset ID', nullable=True)
     _string(value['collision_mode'], 'Collision mode')
+    if value['collision_mode'] == 'perfect_merge' and 'collision_policy' not in value:
+        raise ValueError('Physical collision mode requires an explicit versioned collision policy.')
+    policy = CollisionPolicy(**_object(value['collision_policy'], {field.name for field in fields(CollisionPolicy)}, 'Collision policy')) if 'collision_policy' in value else CollisionPolicy()
+    if document['numerical_version'] != (policy.numerical if value['collision_mode'] == 'perfect_merge' else NUMERICAL_VERSION):
+        raise ValueError('Unsupported numerical_version for selected collision mode.')
     _number(value['dt'], 'Fixed dt', positive=True)
     if type(value['bodies']) is not list or not value['bodies']:
         raise ValueError('Setup bodies must be a nonempty list.')
@@ -167,7 +179,7 @@ def _decode(document):
                                   _vector(body['r'], 'Position'), _vector(body['v'], 'Velocity'),
                                   _string(body['reference_id'], 'Body reference', nullable=True)))
     setup = InitialSetup(value['name'], tuple(bodies), value['dt'], value['preset_id'],
-                         _decode_population(value['population']), value['collision_mode'], value['provenance'])
+                         _decode_population(value['population']), value['collision_mode'], value['provenance'], policy)
     # Validate references, overlap, known masses and numerical resolution before install.
     build_system(setup)
     return setup
