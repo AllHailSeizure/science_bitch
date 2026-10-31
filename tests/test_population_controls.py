@@ -143,7 +143,7 @@ def test_ring_has_only_one_editable_radius(app):
 
 
 def test_population_editor_preserves_sidebar_visibility_and_disables_catalog(app):
-    app.sidebar.set_catalog(True)
+    app.sidebar.prepare_circular()
     app.edit_population()
     canvas = app.fig.canvas
     editor = app.population_editor

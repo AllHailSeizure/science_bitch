@@ -6,9 +6,11 @@ import matplotlib.pyplot as plt
 from matplotlib.widgets import RadioButtons, Button, Slider, TextBox
 
 from .core import make_system, SOLAR_RADIUS_AU
-from .data import STARS, PLANETS
+from .data import STARS, PLANETS, AU_KM
+from .initialization import build_system, legacy_setup
+from .history import StateFrame, MAX_HISTORY
 from .populations import Population, with_population
-from .rendering import BACKGROUND, PANEL, TEXT, MUTED, ACCENT, CanvasPainter, draw
+from .rendering import BACKGROUND, PANEL, TEXT, MUTED, ACCENT, CanvasPainter, draw, draw_system
 from .sidebar import Sidebar
 
 FRAME_SECONDS = 1 / 60
@@ -123,7 +125,7 @@ class PopulationEditor:
             self.app.paused = True
             self.app.following = False
             self.app.selected_index = 0
-            self.app.restart()
+            self.app._restart_legacy()
         else:
             self.app.paused = self.was_paused
             self.app.pending = 0.
@@ -133,12 +135,16 @@ class PopulationEditor:
 
 
 class App:
-    def __init__(self, star='sun', planets=('earth', 'jupiter'), population=None):
+    def __init__(self, star='sun', planets=('earth', 'jupiter'), population=None, setup=None):
         if population is not None and population.reference != 0:
             raise ValueError('The current observatory supports star-relative populations only.')
         self.star, self.planets = star, list(planets)
         self.population = population
         self.population_editor = None
+        self.body_editor = None
+        self.preparing = False
+        self._legacy_configuration = setup is None
+        self.initial_setup = setup
         self.distances = [PLANETS[p].distance for p in planets]
         self.paused = False
         self.following = False
@@ -158,7 +164,7 @@ class App:
         self.home, self.follow, self.speed = self.sidebar.home, self.sidebar.follow, self.sidebar.speed
         self.inspector, self.mode, self.status = self.sidebar.inspector, self.sidebar.mode, self.sidebar.status
         self.experiment_name = ''
-        self.set_experiment_name(self._setup_name())
+        self.set_experiment_name(setup.name if setup is not None else self._setup_name())
         self.sliders = []
         self.star_picker.on_clicked(self.change_star)
         self.add.on_clicked(self.add_planet)
@@ -213,7 +219,11 @@ class App:
             self.painter.invalidate()
 
     def edit_population(self, event=None):
-        if self.population_editor is not None:
+        if not self._legacy_configuration:
+            self.status.set_text("General population authoring integrates in the next plan; starting setup preserved.")
+            self._refresh()
+            return
+        if self.body_editor is not None or self.population_editor is not None:
             return
         self.population_editor = PopulationEditor(self)
         self.paused = True
@@ -226,10 +236,12 @@ class App:
     def _set_population_editing(self, editing):
         self.sidebar._sync()
         for widget in self.sliders:
-            widget.set_active(not editing and self.sidebar.visible and self.sidebar.catalog_open)
+            widget.set_active(not editing and self.sidebar.visible and self.sidebar.catalog_open and self.preparing)
 
     def close(self, event=None):
         self.timer.stop()
+        if self.body_editor is not None:
+            self.body_editor.finish()
         if self.population_editor is not None:
             self.population_editor.finished = True
             plt.close(self.population_editor.fig)
@@ -268,7 +280,7 @@ class App:
             slider.valtext.set_text(f'{a:.3g} AU')
             self.sliders.append(slider)
             slider.ax.set_visible(self.sidebar.visible and self.sidebar.catalog_open)
-            slider.set_active(self.sidebar.visible and self.sidebar.catalog_open and self.population_editor is None)
+            slider.set_active(self.sidebar.visible and self.sidebar.catalog_open and self.population_editor is None and self.body_editor is None and self.preparing)
             self.sidebar.catalog_widgets.append(slider)
             self.sidebar.axes.append(slider.ax)
         if hasattr(self, 'painter'):
@@ -287,7 +299,7 @@ class App:
         self.star = key
         self.set_experiment_name(self._setup_name())
         self.rebuild_sliders()
-        self.restart()
+        self._restart_legacy()
 
     def add_planet(self, event):
         p = self.planet_picker.value_selected
@@ -296,65 +308,137 @@ class App:
             self.distances.append(PLANETS[p].distance)
             self.set_experiment_name(self._setup_name())
             self.rebuild_sliders()
-            self.restart()
+            self._restart_legacy()
 
     def distance_changed(self, index, value):
         self.distances[index] = 10**value
         self.sliders[index].valtext.set_text(f'{10**value:.3g} AU')
+        self._restart_legacy()
+
+    def _restart_legacy(self):
+        self.initial_setup = legacy_setup(self.star, self.planets, self.distances, self.population)
+        self._legacy_configuration = True
         self.restart()
 
+    @property
+    def selected_id(self):
+        return self.prepared.body_ids[self.selected_index]
+
+    @selected_id.setter
+    def selected_id(self, value):
+        self.selected_index = self.prepared.body_ids.index(value)
+
+    def prepare_setup(self, event=None):
+        if self.body_editor is not None or self.population_editor is not None:
+            return
+        self.preparing = True
+        self.paused = True
+        self.following = False
+        self.restart()
+        self.status.set_text('PREPARATION: editing starting setup. Resume begins live evolution.')
+        self._refresh()
+
+    def edit_body(self, event=None, body_id=None):
+        if self.body_editor is not None or self.population_editor is not None:
+            return
+        if body_id is not None and not self.preparing:
+            self.status.set_text('Edit/remove applies to preparation. Choose Prepare setup first.')
+            self._refresh()
+            return
+        if body_id is not None and body_id not in {b.id for b in self.initial_setup.bodies}:
+            self.status.set_text('Generated particles are authored through population settings; starting setup preserved.')
+            self._refresh()
+            return
+        from .authoring import BodyEditor
+        self.body_editor = BodyEditor(self, body_id)
+        self.paused = True
+        self.pending = 0.
+        self._drag = None
+        self.sidebar.set_catalog(False)
+        self.sidebar._sync()
+        self._sync_painter()
+        self._refresh()
+
+    def remove_body(self, event=None):
+        if not self.preparing or self.body_editor is not None:
+            return
+        if self.selected_id not in {b.id for b in self.initial_setup.bodies}:
+            self.status.set_text('Generated particles are authored through population settings; starting setup preserved.')
+            self._refresh()
+            return
+        from dataclasses import replace
+        try:
+            setup = replace(self.initial_setup, bodies=tuple(b for b in self.initial_setup.bodies if b.id != self.selected_id))
+            prepared = build_system(setup)
+        except ValueError as exc:
+            self.status.set_text(str(exc)); self._refresh(); return
+        self.initial_setup = setup
+        self._legacy_configuration = False
+        self.selected_index = 0
+        self._install_prepared(prepared, reset=True)
+
+    def _sync_painter(self):
+        editor = self.body_editor
+        self.painter.overlay_axes = self.sidebar.axes + [self.sidebar.menu.ax] + (editor.axes if editor else [])
+        artists = self.scene.moving_artists + (editor.artists if editor else [])
+        self.painter.set_artists(list(dict.fromkeys(artists)))
+
     def restart(self):
-        self.system = make_system(self.star, self.planets, self.distances)
-        if self.population is not None:
-            self.system = with_population(self.system, self.population,
-                                          STARS[self.star].radius*SOLAR_RADIUS_AU)
-        self.trails = []
+        if self.body_editor is not None:
+            return
+        if self.initial_setup is None:
+            self.initial_setup = legacy_setup(self.star, self.planets, self.distances, self.population)
+        self._install_prepared(build_system(self.initial_setup), reset=True)
+
+    def _install_prepared(self, prepared, reset=False):
+        self.prepared, self.system = prepared, prepared.system
         self.pending = 0.
         self.halted = False
         self._drag = None
-        self.status.set_text('')
         self.last = time.monotonic()
-        self.scene = draw(self.ax, self.system, self.star, self.planets)
-        self._viewport_size = (self.fig.bbox.width, self.fig.bbox.height)
-        self.ax.callbacks.connect('xlim_changed', self.painter.invalidate)
-        self.ax.callbacks.connect('ylim_changed', self.painter.invalidate)
-        self.painter.set_artists(self.scene.moving_artists)
+        if reset:
+            self.history, self.trails = [], []
+            self.status.set_text('')
+            self.scene = draw_system(self.ax, prepared)
+            self._viewport_size = (self.fig.bbox.width, self.fig.bbox.height)
+            self.ax.callbacks.connect('xlim_changed', self.painter.invalidate)
+            self.ax.callbacks.connect('ylim_changed', self.painter.invalidate)
+        else:
+            self.history.append(StateFrame.capture(prepared))
+            self.history = self.history[-MAX_HISTORY:]
+            self.scene.update(prepared, self.history)
         self.selected_index = min(self.selected_index, len(self.system.masses)-1)
+        self._sync_painter()
         self._refresh()
 
     def _refresh(self):
-        self.scene.update(self.system, self.trails)
-        self.scene.select(self.selected_index)
+        self.scene.update(self.prepared, self.history)
+        self.scene.select(self.selected_id)
         index = self.selected_index
-        if index == 0:
-            body = STARS[self.star]
-            details = f'{body.name}\n{body.mass:g} solar masses\n{body.radius:g} solar radii   /   {body.temperature:,.0f} K'
-        elif index <= len(self.planets):
-            key = self.planets[index-1]
-            body = PLANETS[key]
-            distance = np.linalg.norm(self.system.r[index]-self.system.r[0])
-            details = f'{body.name}\n{body.radius:,.0f} km radius\n{distance:.4g} AU from star'
+        body = self.prepared.body_specs[index]
+        mass = 'unknown' if body.mass is None else f'{body.mass:.6g}'
+        radius = 'unknown' if body.radius is None else f'{body.radius*AU_KM:,.5g} km'
+        if body.kind == 'particle':
+            distance = np.linalg.norm(self.system.r[index]-self.scene.origin)
+            speed = np.linalg.norm(self.system.v[index]-self.system.v[self.prepared.body_ids.index(self.scene.origin_id)])
+            details = f'Test particle {self.selected_id}\n{distance:.4g} AU from view origin\n{speed:.4g} AU / yr relative to view origin'
         else:
-            distance = np.linalg.norm(self.system.r[index]-self.system.r[0])
-            speed = np.linalg.norm(self.system.v[index]-self.system.v[0])
-            details = (f'Test particle {index-len(self.planets)}\n'
-                       f'{distance:.4g} AU from star\n{speed:.4g} AU / yr relative to star')
+            details = f'{body.name}\n{mass} solar masses / radius {radius}'
+            if body.temperature is not None:
+                details += f'\n{body.temperature:,.0f} K'
+            details += f'\nID: {self.selected_id}\n{body.provenance}'
         self.inspector.set_text(details)
-        rows = [(0, STARS[self.star].name)] + [(i+1, PLANETS[p].name) for i, p in enumerate(self.planets)]
-        rows += [(i, f'Test particle {i-len(self.planets)}') for i in range(1+len(self.planets), len(self.system.masses))]
-        self.sidebar.set_bodies(rows, index)
+        self.sidebar.set_bodies([(key, f'{spec.name} [{key[:8]}]') for key,spec in zip(self.prepared.body_ids,self.prepared.body_specs)], self.selected_id)
         self.sidebar.update(self.system.time, self.speed.val, index)
-        if self.following:
+        if self.following and self.body_editor is None:
             center = self.scene.positions[index]
             xlim, ylim = self.ax.get_xlim(), self.ax.get_ylim()
             half_width, half_height = np.diff(xlim)[0]/2, np.diff(ylim)[0]/2
             new_x = (center[0]-half_width, center[0]+half_width)
             new_y = (center[1]-half_height, center[1]+half_height)
-            if new_x != xlim:
-                self.ax.set_xlim(new_x)
-            if new_y != ylim:
-                self.ax.set_ylim(new_y)
-        self.mode.set_text('HALTED' if self.halted else 'PAUSED' if self.paused else 'LIVE')
+            if new_x != xlim: self.ax.set_xlim(new_x)
+            if new_y != ylim: self.ax.set_ylim(new_y)
+        self.mode.set_text('HALTED' if self.halted else 'DRAFT' if self.body_editor else 'PREP' if self.preparing else 'PAUSED' if self.paused else 'LIVE')
         self.mode.set_color('#efb17b' if self.halted else MUTED if self.paused else ACCENT)
         for label, text in ((self.pause.label, 'Resume' if self.paused else 'Pause'),
                             (self.follow.label, 'Unfollow' if self.following else 'Follow body')):
@@ -364,9 +448,12 @@ class App:
         self.painter.paint()
 
     def toggle_pause(self, event=None):
-        if self.population_editor is not None:
+        if self.population_editor is not None or self.body_editor is not None:
             return
         self.paused = not self.paused
+        if not self.paused:
+            self.preparing = False
+        self.sidebar._sync()
         self.pending = 0.
         self.last = time.monotonic()
         self._refresh()
@@ -381,21 +468,25 @@ class App:
                 self.halted = True
                 self.status.set_text(str(exc))
                 break
+            self.preparing = False
             self.trails.append((self.system.r-self.system.r[0]).copy())
+            self.history.append(StateFrame.capture(self.prepared))
             completed += 1
             if deadline is not None and time.perf_counter() >= deadline:
                 break
-        self.trails = self.trails[-1500:]
+        self.trails = self.trails[-MAX_HISTORY:]
+        self.history = self.history[-MAX_HISTORY:]
         return completed
 
     def step_once(self, event=None):
-        if self.population_editor is not None:
+        if self.population_editor is not None or self.body_editor is not None:
             return
         self.paused = True
         self.pending = 0.
         self.last = time.monotonic()
         if not self.halted:
             self._advance(1)
+        self.sidebar._sync()
         self._refresh()
 
     def fit_view(self, event=None):
@@ -421,13 +512,21 @@ class App:
             return
         self.ax.set_xlim(event.xdata+(np.asarray(xlim)-event.xdata)*scale)
         self.ax.set_ylim(event.ydata+(np.asarray(ylim)-event.ydata)*scale)
+        if self.body_editor is not None: self.body_editor.preview()
         self.fig.canvas.draw_idle()
 
     def on_press(self, event):
+        if self.body_editor is not None:
+            try: self.body_editor.on_press(event)
+            except ValueError as exc: self.body_editor.error.set_text(str(exc)); self.painter.paint()
+            return
         if not self.sidebar.contains_event(event) and event.inaxes == self.ax and event.button == 1 and not self._toolbar_active():
             self._drag = (event.x, event.y, self.ax.get_xlim(), self.ax.get_ylim())
 
     def on_motion(self, event):
+        if self.body_editor is not None:
+            self.body_editor.on_motion(event)
+            return
         if self._drag is None:
             return
         if self.sidebar.contains_event(event):
@@ -446,6 +545,9 @@ class App:
         self.fig.canvas.draw_idle()
 
     def on_release(self, event):
+        if self.body_editor is not None:
+            self.body_editor.dragging = False
+            return
         drag, self._drag = self._drag, None
         if drag is None or self.sidebar.contains_event(event) or event.inaxes != self.ax:
             return
@@ -458,6 +560,9 @@ class App:
                 self._refresh()
 
     def on_key(self, event):
+        if self.body_editor is not None:
+            if event.key == 'escape': self.body_editor.finish()
+            return
         if self.population_editor is not None:
             return
         if event.key == 'm':
