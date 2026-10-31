@@ -29,6 +29,35 @@ def unexpected_step(*args, **kwargs):
     raise AssertionError('Recorded playback must not integrate')
 
 
+def test_recorded_rotating_history_matches_live_samples(monkeypatch):
+    setup = get_scenario('sun-jupiter-ring')
+    run = calculate(setup, steps=41, stride=1)
+    app = App(setup=setup); app.timer.stop()
+    try:
+        app.selected_id = 'population:7'
+        app._advance(41); app._refresh()
+        original_r, original_v, original_time = app.system.r.copy(), app.system.v.copy(), app.system.time
+        app.set_frame_mode('rotating')
+        live = np.asarray(app.scene.selected_trail.get_segments()).copy()
+        np.testing.assert_array_equal(app.system.r, original_r)
+        np.testing.assert_array_equal(app.system.v, original_v)
+        assert app.system.time == original_time
+        monkeypatch.setattr(System, 'step', unexpected_step)
+        app.session.retain_recording(run); app.show_recording(run)
+        app.selected_id = 'population:7'; app.following = True
+        app.playback.play(); app.playback.advance(100, 1); app._display_recorded_frame()
+        np.testing.assert_allclose(app.scene.selected_trail.get_segments(), live)
+        assert app.selected_id == 'population:7' and app.following
+        assert len(app.scene.selected_trail.get_segments()) == 41
+        for mode in ('world', 'sun-relative', 'rotating'):
+            app.set_frame_mode(mode)
+            np.testing.assert_array_equal(app.system.r, run.frames[-1].r)
+            np.testing.assert_array_equal(app.system.v, run.frames[-1].v)
+            assert app.system.time == run.frames[-1].time
+    finally:
+        app.close(); plt.close(app.fig)
+
+
 @pytest.fixture
 def app():
     app = App()
