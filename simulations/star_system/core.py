@@ -3,8 +3,8 @@
 Positive masses mutually interact; zero-mass test particles only receive gravity.
 
 Fixed-step Yoshida fourth-order composition of velocity Verlet.
-Steps are selected at initialization, never varied along a trajectory, preserving
-symplecticity. Close encounters halt instead of silently losing accuracy.
+Steps stay fixed within each uninterrupted segment; insertion can begin a new
+segment with a disclosed smaller step. Close encounters halt instead of silently losing accuracy.
 """
 from dataclasses import dataclass
 import numpy as np
@@ -42,22 +42,45 @@ class System:
         d2[sources, np.arange(len(sources))] = np.inf
         return G*np.sum(delta * (self.masses[None, sources]/d2**1.5)[:, :, None], axis=1)
 
+    def resolution_limit(self):
+        """Largest supported step from pair gravity and relative crossing time."""
+        if not np.isfinite(self.masses).all() or np.any(self.masses < 0) or not np.isfinite(self.r).all() or not np.isfinite(self.v).all():
+            raise ValueError('Nonfinite or negative numeric state; correct the starting vectors.')
+        if self.r.shape != (len(self.masses), 2) or self.v.shape != self.r.shape:
+            raise ValueError('Expected one 2D position and velocity per mass.')
+        sources = np.flatnonzero(self.masses > 0)
+        if not len(sources):
+            return np.inf
+        delta = self.r[None, sources, :] - self.r[:, None, :]
+        dist = np.linalg.norm(delta, axis=-1)
+        dist[sources, np.arange(len(sources))] = np.inf
+        speed = np.linalg.norm(self.v[None, sources, :] - self.v[:, None, :], axis=-1)
+        with np.errstate(divide='ignore', invalid='ignore', over='ignore'):
+            gravity = np.sqrt(dist**3/(G*(self.masses[:, None]+self.masses[None, sources])))
+            crossing = np.divide(dist, speed, out=np.full_like(dist, np.inf), where=speed > 0)
+        return float(min(np.min(gravity), np.min(crossing))/10)
+
+    def validate_step(self):
+        if not np.isfinite(self.dt) or self.dt <= 0 or not np.isfinite(self.time):
+            raise ValueError('Time and positive fixed dt must be finite.')
+        if self.dt > self.resolution_limit():
+            raise ValueError('Close encounter or fast crossing unresolved: use a smaller fixed dt or wider spacing; state preserved.')
+
     def step(self, count=1):
         for _ in range(count):
-            # Reject unresolved encounters before mutating this step. A variable
-            # step would compromise the fixed-step symplectic guarantee.
-            sources = np.flatnonzero(self.masses > 0)
-            delta = self.r[None,sources,:]-self.r[:,None,:]
-            dist = np.linalg.norm(delta, axis=-1)
-            dist[sources, np.arange(len(sources))] = np.inf
-            dynamical = np.sqrt(dist**3/(G*(self.masses[:,None]+self.masses[None,sources])))
-            if np.min(dynamical) < 10*self.dt:
-                raise ValueError('Close encounter unresolved: reset with wider orbital spacing.')
+            self.validate_step()
+            # Commit only a whole validated Yoshida step. An intermediate failure
+            # must not leave a partially kicked/drifted live or recorded state.
+            trial = System(self.masses, self.r.copy(), self.v.copy(), self.dt, self.time)
             for w in (_YOSHIDA_W1, _YOSHIDA_W0, _YOSHIDA_W1):
                 h = w*self.dt
-                self.v += .5*h*self.accelerations()
-                self.r += h*self.v
-                self.v += .5*h*self.accelerations()
+                trial.v += .5*h*trial.accelerations()
+                trial.r += h*trial.v
+                trial.validate_step()
+                trial.v += .5*h*trial.accelerations()
+                trial.validate_step()
+            self.r[:] = trial.r
+            self.v[:] = trial.v
             self.time += self.dt
 
     def invariants(self):

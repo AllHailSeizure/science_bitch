@@ -59,3 +59,18 @@ def blackbody_rgb(temperature):
 def star_size(star):
     """Marker diameter in points, compressed monotonically from physical radius."""
     return 12 + 16*np.log10(1 + 8*star.radius)
+
+
+def _load_catalog():
+    import json
+    from pathlib import Path
+    from .model import BodySpec, PropertySource
+    records = json.loads(Path(__file__).with_name('catalog-sources.json').read_text())['bodies']
+    result = {}
+    for key, record in records.items():
+        record['sources'] = {field: PropertySource(**value) for field, value in record['sources'].items()}
+        result[key] = BodySpec(**record)
+    return result
+
+# General definitions are separate from the legacy circular CLI selectors.
+CATALOG = _load_catalog()

@@ -1,0 +1,1040 @@
+{
+  "schema_version": 1,
+  "units": {
+    "mass": "solar masses",
+    "radius": "AU",
+    "temperature": "K"
+  },
+  "note": "Selected physical definitions only; no ephemerides. Uncertainties retain original units; null means unavailable. Display colors are illustrative.",
+  "bodies": {
+    "proxima": {
+      "name": "Proxima Centauri",
+      "kind": "star",
+      "mass": 0.12,
+      "radius": 0.0006557158837956642,
+      "temperature": 3050,
+      "color": null,
+      "catalog_key": "proxima",
+      "provenance": "catalog",
+      "sources": {
+        "mass": {
+          "url": "https://arxiv.org/html/1609.03449v1",
+          "version": "Anglada-Escude et al. 2016, arXiv v1, Table 1; retained values",
+          "retrieved": "2026-10-30",
+          "original_value": 0.12,
+          "original_units": "solar masses",
+          "conversion": "identity",
+          "uncertainty": 0.015,
+          "status": "rounded legacy measurement",
+          "note": "Published uncertainty range retained in original units; representative legacy parameters."
+        },
+        "radius": {
+          "url": "https://arxiv.org/html/1609.03449v1",
+          "version": "Anglada-Escude et al. 2016, arXiv v1, Table 1; retained values",
+          "retrieved": "2026-10-30",
+          "original_value": 0.141,
+          "original_units": "solar radii",
+          "conversion": "x 695700 / 149597870.7 AU",
+          "uncertainty": 0.021,
+          "status": "rounded legacy measurement",
+          "note": "Published uncertainty range retained in original units; representative legacy parameters."
+        },
+        "temperature": {
+          "url": "https://arxiv.org/html/1609.03449v1",
+          "version": "Anglada-Escude et al. 2016, arXiv v1, Table 1; retained values",
+          "retrieved": "2026-10-30",
+          "original_value": 3050,
+          "original_units": "K",
+          "conversion": "identity",
+          "uncertainty": 100,
+          "status": "rounded legacy measurement",
+          "note": "Published uncertainty range retained in original units; representative legacy parameters."
+        }
+      }
+    },
+    "sun": {
+      "name": "Sun",
+      "kind": "star",
+      "mass": 1.0,
+      "radius": 0.004650467260962158,
+      "temperature": 5772,
+      "color": null,
+      "catalog_key": "sun",
+      "provenance": "catalog",
+      "sources": {
+        "mass": {
+          "url": "https://nssdc.gsfc.nasa.gov/planetary/factsheet/sunfact.html",
+          "version": "legacy rounded catalog; retained for compatibility",
+          "retrieved": "2026-10-30",
+          "original_value": 1.0,
+          "original_units": "solar masses",
+          "conversion": "identity",
+          "uncertainty": null,
+          "status": "rounded legacy measurement",
+          "note": "Legacy rounding retained; source uncertainties not propagated."
+        },
+        "radius": {
+          "url": "https://nssdc.gsfc.nasa.gov/planetary/factsheet/sunfact.html",
+          "version": "legacy rounded catalog; retained for compatibility",
+          "retrieved": "2026-10-30",
+          "original_value": 1.0,
+          "original_units": "solar radii",
+          "conversion": "x 695700 / 149597870.7 AU",
+          "uncertainty": null,
+          "status": "rounded legacy measurement",
+          "note": "Legacy rounding retained; source uncertainties not propagated."
+        },
+        "temperature": {
+          "url": "https://nssdc.gsfc.nasa.gov/planetary/factsheet/sunfact.html",
+          "version": "legacy rounded catalog; retained for compatibility",
+          "retrieved": "2026-10-30",
+          "original_value": 5772,
+          "original_units": "K",
+          "conversion": "identity",
+          "uncertainty": null,
+          "status": "rounded legacy measurement",
+          "note": "Legacy rounding retained; source uncertainties not propagated."
+        }
+      }
+    },
+    "sirius": {
+      "name": "Sirius A",
+      "kind": "star",
+      "mass": 2.063,
+      "radius": 0.007972761072193524,
+      "temperature": 9845,
+      "color": null,
+      "catalog_key": "sirius",
+      "provenance": "catalog",
+      "sources": {
+        "mass": {
+          "url": "https://arxiv.org/html/1703.10625v1",
+          "version": "Bond et al. 2017, arXiv v1, sections VII and IX; retained values",
+          "retrieved": "2026-10-30",
+          "original_value": 2.063,
+          "original_units": "solar masses",
+          "conversion": "identity",
+          "uncertainty": 0.023,
+          "status": "rounded legacy measurement",
+          "note": "Adopted interferometric radius and temperature compilation adjusted to the paper parallax; other compilations differ by several percent."
+        },
+        "radius": {
+          "url": "https://arxiv.org/html/1703.10625v1",
+          "version": "Bond et al. 2017, arXiv v1, sections VII and IX; retained values",
+          "retrieved": "2026-10-30",
+          "original_value": 1.7144,
+          "original_units": "solar radii",
+          "conversion": "x 695700 / 149597870.7 AU",
+          "uncertainty": 0.009,
+          "status": "rounded legacy measurement",
+          "note": "Adopted interferometric radius and temperature compilation adjusted to the paper parallax; other compilations differ by several percent."
+        },
+        "temperature": {
+          "url": "https://arxiv.org/html/1703.10625v1",
+          "version": "Bond et al. 2017, arXiv v1, sections VII and IX; retained values",
+          "retrieved": "2026-10-30",
+          "original_value": 9845,
+          "original_units": "K",
+          "conversion": "identity",
+          "uncertainty": 64,
+          "status": "rounded legacy measurement",
+          "note": "Adopted interferometric radius and temperature compilation adjusted to the paper parallax; other compilations differ by several percent."
+        }
+      }
+    },
+    "rigel": {
+      "name": "Rigel",
+      "kind": "star",
+      "mass": 21.0,
+      "radius": 0.3669218668899143,
+      "temperature": 12100,
+      "color": null,
+      "catalog_key": "rigel",
+      "provenance": "catalog",
+      "sources": {
+        "mass": {
+          "url": "https://arxiv.org/html/1202.1836v1",
+          "version": "Moravveji et al. 2012, Table 1; literature parameters",
+          "retrieved": "2026-10-30",
+          "original_value": 21.0,
+          "original_units": "solar masses",
+          "conversion": "identity",
+          "uncertainty": 3,
+          "status": "evolutionary estimate",
+          "note": "Representative parameters, not precision ephemeris. Rigel mass is an evolutionary estimate, not a dynamical measurement."
+        },
+        "radius": {
+          "url": "https://arxiv.org/html/1202.1836v1",
+          "version": "Moravveji et al. 2012, Table 1; literature parameters",
+          "retrieved": "2026-10-30",
+          "original_value": 78.9,
+          "original_units": "solar radii",
+          "conversion": "x 695700 / 149597870.7 AU",
+          "uncertainty": 7.4,
+          "status": "interferometric radius and parallax",
+          "note": "Representative parameters, not precision ephemeris. Rigel mass is an evolutionary estimate, not a dynamical measurement."
+        },
+        "temperature": {
+          "url": "https://arxiv.org/html/1202.1836v1",
+          "version": "Moravveji et al. 2012, Table 1; literature parameters",
+          "retrieved": "2026-10-30",
+          "original_value": 12100,
+          "original_units": "K",
+          "conversion": "identity",
+          "uncertainty": 150,
+          "status": "spectroscopic model fit",
+          "note": "Representative parameters, not precision ephemeris. Rigel mass is an evolutionary estimate, not a dynamical measurement."
+        }
+      }
+    },
+    "mercury": {
+      "name": "Mercury",
+      "kind": "planet",
+      "mass": 1.6595674060961445e-07,
+      "radius": 1.6308387202198327e-05,
+      "temperature": null,
+      "color": "#b8aaa0",
+      "catalog_key": "mercury",
+      "provenance": "catalog",
+      "sources": {
+        "mass": {
+          "url": "https://nssdc.gsfc.nasa.gov/planetary/factsheet/",
+          "version": "legacy rounded catalog retained",
+          "retrieved": "2026-10-30",
+          "original_value": 0.33,
+          "original_units": "10^24 kg",
+          "conversion": "x 1e24 / 1.98847e30 solar masses",
+          "uncertainty": null,
+          "status": "rounded legacy measurement",
+          "note": ""
+        },
+        "radius": {
+          "url": "https://ssd.jpl.nasa.gov/planets/phys_par.html",
+          "version": "legacy mean radii retained",
+          "retrieved": "2026-10-30",
+          "original_value": 2439.7,
+          "original_units": "km",
+          "conversion": "/ 149597870.7 AU",
+          "uncertainty": null,
+          "status": "rounded legacy measurement",
+          "note": ""
+        }
+      }
+    },
+    "venus": {
+      "name": "Venus",
+      "kind": "planet",
+      "mass": 2.449119172026734e-06,
+      "radius": 4.045378434654418e-05,
+      "temperature": null,
+      "color": "#e9c78f",
+      "catalog_key": "venus",
+      "provenance": "catalog",
+      "sources": {
+        "mass": {
+          "url": "https://nssdc.gsfc.nasa.gov/planetary/factsheet/",
+          "version": "legacy rounded catalog retained",
+          "retrieved": "2026-10-30",
+          "original_value": 4.87,
+          "original_units": "10^24 kg",
+          "conversion": "x 1e24 / 1.98847e30 solar masses",
+          "uncertainty": null,
+          "status": "rounded legacy measurement",
+          "note": ""
+        },
+        "radius": {
+          "url": "https://ssd.jpl.nasa.gov/planets/phys_par.html",
+          "version": "legacy mean radii retained",
+          "retrieved": "2026-10-30",
+          "original_value": 6051.8,
+          "original_units": "km",
+          "conversion": "/ 149597870.7 AU",
+          "uncertainty": null,
+          "status": "rounded legacy measurement",
+          "note": ""
+        }
+      }
+    },
+    "earth": {
+      "name": "Earth",
+      "kind": "planet",
+      "mass": 3.002308307392115e-06,
+      "radius": 4.258750455597227e-05,
+      "temperature": null,
+      "color": "#51a9ef",
+      "catalog_key": "earth",
+      "provenance": "catalog",
+      "sources": {
+        "mass": {
+          "url": "https://nssdc.gsfc.nasa.gov/planetary/factsheet/",
+          "version": "legacy rounded catalog retained",
+          "retrieved": "2026-10-30",
+          "original_value": 5.97,
+          "original_units": "10^24 kg",
+          "conversion": "x 1e24 / 1.98847e30 solar masses",
+          "uncertainty": null,
+          "status": "rounded legacy measurement",
+          "note": ""
+        },
+        "radius": {
+          "url": "https://ssd.jpl.nasa.gov/planets/phys_par.html",
+          "version": "legacy mean radii retained",
+          "retrieved": "2026-10-30",
+          "original_value": 6371,
+          "original_units": "km",
+          "conversion": "/ 149597870.7 AU",
+          "uncertainty": null,
+          "status": "rounded legacy measurement",
+          "note": ""
+        }
+      }
+    },
+    "mars": {
+      "name": "Mars",
+      "kind": "planet",
+      "mass": 3.2286129536779537e-07,
+      "radius": 2.26574080509289e-05,
+      "temperature": null,
+      "color": "#e47750",
+      "catalog_key": "mars",
+      "provenance": "catalog",
+      "sources": {
+        "mass": {
+          "url": "https://nssdc.gsfc.nasa.gov/planetary/factsheet/",
+          "version": "legacy rounded catalog retained",
+          "retrieved": "2026-10-30",
+          "original_value": 0.642,
+          "original_units": "10^24 kg",
+          "conversion": "x 1e24 / 1.98847e30 solar masses",
+          "uncertainty": null,
+          "status": "rounded legacy measurement",
+          "note": ""
+        },
+        "radius": {
+          "url": "https://ssd.jpl.nasa.gov/planets/phys_par.html",
+          "version": "legacy mean radii retained",
+          "retrieved": "2026-10-30",
+          "original_value": 3389.5,
+          "original_units": "km",
+          "conversion": "/ 149597870.7 AU",
+          "uncertainty": null,
+          "status": "rounded legacy measurement",
+          "note": ""
+        }
+      }
+    },
+    "jupiter": {
+      "name": "Jupiter",
+      "kind": "planet",
+      "mass": 0.0009545027081122673,
+      "radius": 0.00046732617030490934,
+      "temperature": null,
+      "color": "#d5aa85",
+      "catalog_key": "jupiter",
+      "provenance": "catalog",
+      "sources": {
+        "mass": {
+          "url": "https://nssdc.gsfc.nasa.gov/planetary/factsheet/",
+          "version": "legacy rounded catalog retained",
+          "retrieved": "2026-10-30",
+          "original_value": 1898.0,
+          "original_units": "10^24 kg",
+          "conversion": "x 1e24 / 1.98847e30 solar masses",
+          "uncertainty": null,
+          "status": "rounded legacy measurement",
+          "note": ""
+        },
+        "radius": {
+          "url": "https://ssd.jpl.nasa.gov/planets/phys_par.html",
+          "version": "legacy mean radii retained",
+          "retrieved": "2026-10-30",
+          "original_value": 69911,
+          "original_units": "km",
+          "conversion": "/ 149597870.7 AU",
+          "uncertainty": null,
+          "status": "rounded legacy measurement",
+          "note": ""
+        }
+      }
+    },
+    "saturn": {
+      "name": "Saturn",
+      "kind": "planet",
+      "mass": 0.0002856467535341242,
+      "radius": 0.00038925687730393614,
+      "temperature": null,
+      "color": "#ead49a",
+      "catalog_key": "saturn",
+      "provenance": "catalog",
+      "sources": {
+        "mass": {
+          "url": "https://nssdc.gsfc.nasa.gov/planetary/factsheet/",
+          "version": "legacy rounded catalog retained",
+          "retrieved": "2026-10-30",
+          "original_value": 568.0,
+          "original_units": "10^24 kg",
+          "conversion": "x 1e24 / 1.98847e30 solar masses",
+          "uncertainty": null,
+          "status": "rounded legacy measurement",
+          "note": ""
+        },
+        "radius": {
+          "url": "https://ssd.jpl.nasa.gov/planets/phys_par.html",
+          "version": "legacy mean radii retained",
+          "retrieved": "2026-10-30",
+          "original_value": 58232,
+          "original_units": "km",
+          "conversion": "/ 149597870.7 AU",
+          "uncertainty": null,
+          "status": "rounded legacy measurement",
+          "note": ""
+        }
+      }
+    },
+    "uranus": {
+      "name": "Uranus",
+      "kind": "planet",
+      "mass": 4.365165177246828e-05,
+      "radius": 0.00016953449859497232,
+      "temperature": null,
+      "color": "#8bdbdf",
+      "catalog_key": "uranus",
+      "provenance": "catalog",
+      "sources": {
+        "mass": {
+          "url": "https://nssdc.gsfc.nasa.gov/planetary/factsheet/",
+          "version": "legacy rounded catalog retained",
+          "retrieved": "2026-10-30",
+          "original_value": 86.8,
+          "original_units": "10^24 kg",
+          "conversion": "x 1e24 / 1.98847e30 solar masses",
+          "uncertainty": null,
+          "status": "rounded legacy measurement",
+          "note": ""
+        },
+        "radius": {
+          "url": "https://ssd.jpl.nasa.gov/planets/phys_par.html",
+          "version": "legacy mean radii retained",
+          "retrieved": "2026-10-30",
+          "original_value": 25362,
+          "original_units": "km",
+          "conversion": "/ 149597870.7 AU",
+          "uncertainty": null,
+          "status": "rounded legacy measurement",
+          "note": ""
+        }
+      }
+    },
+    "neptune": {
+      "name": "Neptune",
+      "kind": "planet",
+      "mass": 5.129571982478991e-05,
+      "radius": 0.00016458790412449367,
+      "temperature": null,
+      "color": "#637aff",
+      "catalog_key": "neptune",
+      "provenance": "catalog",
+      "sources": {
+        "mass": {
+          "url": "https://nssdc.gsfc.nasa.gov/planetary/factsheet/",
+          "version": "legacy rounded catalog retained",
+          "retrieved": "2026-10-30",
+          "original_value": 101.99999999999999,
+          "original_units": "10^24 kg",
+          "conversion": "x 1e24 / 1.98847e30 solar masses",
+          "uncertainty": null,
+          "status": "rounded legacy measurement",
+          "note": ""
+        },
+        "radius": {
+          "url": "https://ssd.jpl.nasa.gov/planets/phys_par.html",
+          "version": "legacy mean radii retained",
+          "retrieved": "2026-10-30",
+          "original_value": 24622,
+          "original_units": "km",
+          "conversion": "/ 149597870.7 AU",
+          "uncertainty": null,
+          "status": "rounded legacy measurement",
+          "note": ""
+        }
+      }
+    },
+    "pluto": {
+      "name": "Pluto",
+      "kind": "planet",
+      "mass": 6.537689781590871e-09,
+      "radius": 7.943294877391593e-06,
+      "temperature": null,
+      "color": "#d3bbaa",
+      "catalog_key": "pluto",
+      "provenance": "catalog",
+      "sources": {
+        "mass": {
+          "url": "https://nssdc.gsfc.nasa.gov/planetary/factsheet/",
+          "version": "legacy rounded catalog retained",
+          "retrieved": "2026-10-30",
+          "original_value": 0.013,
+          "original_units": "10^24 kg",
+          "conversion": "x 1e24 / 1.98847e30 solar masses",
+          "uncertainty": null,
+          "status": "rounded legacy measurement",
+          "note": ""
+        },
+        "radius": {
+          "url": "https://ssd.jpl.nasa.gov/planets/phys_par.html",
+          "version": "legacy mean radii retained",
+          "retrieved": "2026-10-30",
+          "original_value": 1188.3,
+          "original_units": "km",
+          "conversion": "/ 149597870.7 AU",
+          "uncertainty": null,
+          "status": "rounded legacy measurement",
+          "note": ""
+        }
+      }
+    },
+    "ceres": {
+      "name": "Ceres",
+      "kind": "planet",
+      "mass": 4.717194627024798e-10,
+      "radius": 3.139750571329489e-06,
+      "temperature": null,
+      "color": "#aaa9a5",
+      "catalog_key": "ceres",
+      "provenance": "catalog",
+      "sources": {
+        "mass": {
+          "url": "https://ssd.jpl.nasa.gov/tools/sbdb_lookup.html#/?sstr=Ceres",
+          "version": "legacy rounded catalog retained",
+          "retrieved": "2026-10-30",
+          "original_value": 0.000938,
+          "original_units": "10^24 kg",
+          "conversion": "x 1e24 / 1.98847e30 solar masses",
+          "uncertainty": null,
+          "status": "rounded legacy measurement",
+          "note": ""
+        },
+        "radius": {
+          "url": "https://ssd.jpl.nasa.gov/tools/sbdb_lookup.html#/?sstr=Ceres",
+          "version": "legacy mean radii retained",
+          "retrieved": "2026-10-30",
+          "original_value": 469.7,
+          "original_units": "km",
+          "conversion": "/ 149597870.7 AU",
+          "uncertainty": null,
+          "status": "rounded legacy measurement",
+          "note": ""
+        }
+      }
+    },
+    "alpha_cen_a": {
+      "name": "Alpha Centauri A",
+      "kind": "star",
+      "mass": 1.1055,
+      "radius": 0.005689381647061105,
+      "temperature": 5795,
+      "color": null,
+      "catalog_key": "alpha_cen_a",
+      "provenance": "catalog",
+      "sources": {
+        "mass": {
+          "url": "https://arxiv.org/html/1610.06185v1",
+          "version": "Kervella et al. 2017, arXiv v1, Table 5",
+          "retrieved": "2026-10-30",
+          "original_value": 1.1055,
+          "original_units": "solar masses",
+          "conversion": "identity",
+          "uncertainty": 0.0039,
+          "status": "dynamical measurement; compiled K16a",
+          "note": ""
+        },
+        "radius": {
+          "url": "https://arxiv.org/html/1610.06185v1",
+          "version": "Kervella et al. 2017, arXiv v1, Table 5",
+          "retrieved": "2026-10-30",
+          "original_value": 1.2234,
+          "original_units": "solar radii",
+          "conversion": "x 695700 / 149597870.7 AU",
+          "uncertainty": 0.0053,
+          "status": "interferometric measurement",
+          "note": ""
+        },
+        "temperature": {
+          "url": "https://arxiv.org/html/1610.06185v1",
+          "version": "Kervella et al. 2017, arXiv v1, Table 5",
+          "retrieved": "2026-10-30",
+          "original_value": 5795,
+          "original_units": "K",
+          "conversion": "identity",
+          "uncertainty": 19,
+          "status": "derived from measured flux and angular radius",
+          "note": ""
+        }
+      }
+    },
+    "alpha_cen_b": {
+      "name": "Alpha Centauri B",
+      "kind": "star",
+      "mass": 0.9373,
+      "radius": 0.004014283339662535,
+      "temperature": 5231,
+      "color": null,
+      "catalog_key": "alpha_cen_b",
+      "provenance": "catalog",
+      "sources": {
+        "mass": {
+          "url": "https://arxiv.org/html/1610.06185v1",
+          "version": "Kervella et al. 2017, arXiv v1, Table 5",
+          "retrieved": "2026-10-30",
+          "original_value": 0.9373,
+          "original_units": "solar masses",
+          "conversion": "identity",
+          "uncertainty": 0.0033,
+          "status": "dynamical measurement; compiled K16a",
+          "note": ""
+        },
+        "radius": {
+          "url": "https://arxiv.org/html/1610.06185v1",
+          "version": "Kervella et al. 2017, arXiv v1, Table 5",
+          "retrieved": "2026-10-30",
+          "original_value": 0.8632,
+          "original_units": "solar radii",
+          "conversion": "x 695700 / 149597870.7 AU",
+          "uncertainty": 0.0037,
+          "status": "interferometric measurement",
+          "note": ""
+        },
+        "temperature": {
+          "url": "https://arxiv.org/html/1610.06185v1",
+          "version": "Kervella et al. 2017, arXiv v1, Table 5",
+          "retrieved": "2026-10-30",
+          "original_value": 5231,
+          "original_units": "K",
+          "conversion": "identity",
+          "uncertainty": 21,
+          "status": "derived from measured flux and angular radius",
+          "note": ""
+        }
+      }
+    },
+    "sirius_b": {
+      "name": "Sirius B",
+      "kind": "star",
+      "mass": 1.018,
+      "radius": 3.765948387927156e-05,
+      "temperature": 25369,
+      "color": null,
+      "catalog_key": "sirius_b",
+      "provenance": "catalog",
+      "sources": {
+        "mass": {
+          "url": "https://arxiv.org/html/1703.10625v1",
+          "version": "Bond et al. 2017, arXiv v1, sections VII-VIII",
+          "retrieved": "2026-10-30",
+          "original_value": 1.018,
+          "original_units": "solar masses",
+          "conversion": "identity",
+          "uncertainty": 0.011,
+          "status": "dynamical measurement",
+          "note": ""
+        },
+        "radius": {
+          "url": "https://arxiv.org/html/1703.10625v1",
+          "version": "Bond et al. 2017, arXiv v1, sections VII-VIII",
+          "retrieved": "2026-10-30",
+          "original_value": 0.008098,
+          "original_units": "solar radii",
+          "conversion": "x 695700 / 149597870.7 AU",
+          "uncertainty": 4.6e-05,
+          "status": "model-atmosphere fit",
+          "note": "Internal errors only; systematic errors larger."
+        },
+        "temperature": {
+          "url": "https://arxiv.org/html/1703.10625v1",
+          "version": "Bond et al. 2017, arXiv v1, sections VII-VIII",
+          "retrieved": "2026-10-30",
+          "original_value": 25369,
+          "original_units": "K",
+          "conversion": "identity",
+          "uncertainty": 46,
+          "status": "model-atmosphere fit",
+          "note": "Internal errors only; systematic errors larger."
+        }
+      }
+    },
+    "moon": {
+      "name": "Moon",
+      "kind": "moon",
+      "mass": 3.694191550042555e-08,
+      "radius": 1.1613801666229199e-05,
+      "temperature": null,
+      "color": "#b8b5a9",
+      "catalog_key": "moon",
+      "provenance": "catalog",
+      "sources": {
+        "mass": {
+          "url": "https://ssd.jpl.nasa.gov/sats/phys_par/sep.html",
+          "version": "DE440",
+          "retrieved": "2026-10-30",
+          "original_value": 4902.8,
+          "original_units": "km^3/s^2",
+          "conversion": "x 1e9 / (6.67430e-11 * 1.98847e30) solar masses",
+          "uncertainty": 0.001,
+          "status": "measurement",
+          "note": "GM uncertainty in original units; G conversion adds systematic mass uncertainty."
+        },
+        "radius": {
+          "url": "https://ssd.jpl.nasa.gov/sats/phys_par/sep.html",
+          "version": "DE440; mean radii reference [1]",
+          "retrieved": "2026-10-30",
+          "original_value": 1737.4,
+          "original_units": "km",
+          "conversion": "/ 149597870.7 AU",
+          "uncertainty": 0.1,
+          "status": "measurement",
+          "note": ""
+        }
+      }
+    },
+    "io": {
+      "name": "Io",
+      "kind": "moon",
+      "mass": 4.4907133409973686e-08,
+      "radius": 1.2175908597340752e-05,
+      "temperature": null,
+      "color": "#b8b5a9",
+      "catalog_key": "io",
+      "provenance": "catalog",
+      "sources": {
+        "mass": {
+          "url": "https://ssd.jpl.nasa.gov/sats/phys_par/sep.html",
+          "version": "JUP365",
+          "retrieved": "2026-10-30",
+          "original_value": 5959.91547,
+          "original_units": "km^3/s^2",
+          "conversion": "x 1e9 / (6.67430e-11 * 1.98847e30) solar masses",
+          "uncertainty": 0.00135,
+          "status": "measurement",
+          "note": "GM uncertainty in original units; G conversion adds systematic mass uncertainty."
+        },
+        "radius": {
+          "url": "https://ssd.jpl.nasa.gov/sats/phys_par/sep.html",
+          "version": "JUP365; mean radii reference [1]",
+          "retrieved": "2026-10-30",
+          "original_value": 1821.49,
+          "original_units": "km",
+          "conversion": "/ 149597870.7 AU",
+          "uncertainty": 0.5,
+          "status": "measurement",
+          "note": ""
+        }
+      }
+    },
+    "europa": {
+      "name": "Europa",
+      "kind": "moon",
+      "mass": 2.4131989836499643e-08,
+      "radius": 1.043330358043659e-05,
+      "temperature": null,
+      "color": "#b8b5a9",
+      "catalog_key": "europa",
+      "provenance": "catalog",
+      "sources": {
+        "mass": {
+          "url": "https://ssd.jpl.nasa.gov/sats/phys_par/sep.html",
+          "version": "JUP365",
+          "retrieved": "2026-10-30",
+          "original_value": 3202.7121,
+          "original_units": "km^3/s^2",
+          "conversion": "x 1e9 / (6.67430e-11 * 1.98847e30) solar masses",
+          "uncertainty": 0.00181,
+          "status": "measurement",
+          "note": "GM uncertainty in original units; G conversion adds systematic mass uncertainty."
+        },
+        "radius": {
+          "url": "https://ssd.jpl.nasa.gov/sats/phys_par/sep.html",
+          "version": "JUP365; mean radii reference [1]",
+          "retrieved": "2026-10-30",
+          "original_value": 1560.8,
+          "original_units": "km",
+          "conversion": "/ 149597870.7 AU",
+          "uncertainty": 0.3,
+          "status": "measurement",
+          "note": ""
+        }
+      }
+    },
+    "ganymede": {
+      "name": "Ganymede",
+      "kind": "moon",
+      "mass": 7.450344332480223e-08,
+      "radius": 1.7588485636112733e-05,
+      "temperature": null,
+      "color": "#b8b5a9",
+      "catalog_key": "ganymede",
+      "provenance": "catalog",
+      "sources": {
+        "mass": {
+          "url": "https://ssd.jpl.nasa.gov/sats/phys_par/sep.html",
+          "version": "JUP365",
+          "retrieved": "2026-10-30",
+          "original_value": 9887.83275,
+          "original_units": "km^3/s^2",
+          "conversion": "x 1e9 / (6.67430e-11 * 1.98847e30) solar masses",
+          "uncertainty": 0.00247,
+          "status": "measurement",
+          "note": "GM uncertainty in original units; G conversion adds systematic mass uncertainty."
+        },
+        "radius": {
+          "url": "https://ssd.jpl.nasa.gov/sats/phys_par/sep.html",
+          "version": "JUP365; mean radii reference [1]",
+          "retrieved": "2026-10-30",
+          "original_value": 2631.2,
+          "original_units": "km",
+          "conversion": "/ 149597870.7 AU",
+          "uncertainty": 1.7,
+          "status": "measurement",
+          "note": ""
+        }
+      }
+    },
+    "callisto": {
+      "name": "Callisto",
+      "kind": "moon",
+      "mass": 5.4094901019092725e-08,
+      "radius": 1.6111860340803636e-05,
+      "temperature": null,
+      "color": "#b8b5a9",
+      "catalog_key": "callisto",
+      "provenance": "catalog",
+      "sources": {
+        "mass": {
+          "url": "https://ssd.jpl.nasa.gov/sats/phys_par/sep.html",
+          "version": "JUP365",
+          "retrieved": "2026-10-30",
+          "original_value": 7179.2834,
+          "original_units": "km^3/s^2",
+          "conversion": "x 1e9 / (6.67430e-11 * 1.98847e30) solar masses",
+          "uncertainty": 0.00324,
+          "status": "measurement",
+          "note": "GM uncertainty in original units; G conversion adds systematic mass uncertainty."
+        },
+        "radius": {
+          "url": "https://ssd.jpl.nasa.gov/sats/phys_par/sep.html",
+          "version": "JUP365; mean radii reference [1]",
+          "retrieved": "2026-10-30",
+          "original_value": 2410.3,
+          "original_units": "km",
+          "conversion": "/ 149597870.7 AU",
+          "uncertainty": 1.5,
+          "status": "measurement",
+          "note": ""
+        }
+      }
+    },
+    "titan": {
+      "name": "Titan",
+      "kind": "moon",
+      "mass": 6.764901323721866e-08,
+      "radius": 1.7211207538931907e-05,
+      "temperature": null,
+      "color": "#b8b5a9",
+      "catalog_key": "titan",
+      "provenance": "catalog",
+      "sources": {
+        "mass": {
+          "url": "https://ssd.jpl.nasa.gov/sats/phys_par/sep.html",
+          "version": "SAT441",
+          "retrieved": "2026-10-30",
+          "original_value": 8978.1371,
+          "original_units": "km^3/s^2",
+          "conversion": "x 1e9 / (6.67430e-11 * 1.98847e30) solar masses",
+          "uncertainty": 0.00025,
+          "status": "measurement",
+          "note": "GM uncertainty in original units; G conversion adds systematic mass uncertainty."
+        },
+        "radius": {
+          "url": "https://ssd.jpl.nasa.gov/sats/phys_par/sep.html",
+          "version": "SAT441; mean radii reference [1]",
+          "retrieved": "2026-10-30",
+          "original_value": 2574.76,
+          "original_units": "km",
+          "conversion": "/ 149597870.7 AU",
+          "uncertainty": 0.02,
+          "status": "measurement",
+          "note": ""
+        }
+      }
+    },
+    "vesta": {
+      "name": "Vesta",
+      "kind": "asteroid",
+      "mass": 1.302648163196796e-10,
+      "radius": 1.7472508049541378e-06,
+      "temperature": null,
+      "color": "#aaa49b",
+      "catalog_key": "vesta",
+      "provenance": "catalog",
+      "sources": {
+        "mass": {
+          "url": "https://ssd-api.jpl.nasa.gov/sbdb.api?sstr=vesta&phys-par=1",
+          "version": "SBDB API 1.3; Park, R.S. et al. 2025, Nat Astron, DOI: 10.1038/s41550-025-02533-7",
+          "retrieved": "2026-10-30",
+          "original_value": 17.2882844,
+          "original_units": "km^3/s^2",
+          "conversion": "x 1e9 / (6.67430e-11 * 1.98847e30) solar masses; G uncertainty not propagated",
+          "uncertainty": "0.0000030",
+          "status": "measurement",
+          "note": ""
+        },
+        "radius": {
+          "url": "https://ssd-api.jpl.nasa.gov/sbdb.api?sstr=vesta&phys-par=1",
+          "version": "SBDB API 1.3; Park, R.S. et al. 2025, Nat Astron, DOI: 10.1038/s41550-025-02533-7",
+          "retrieved": "2026-10-30",
+          "original_value": 522.77,
+          "original_units": "km",
+          "conversion": "/ 2 / 149597870.7 AU; volume-equivalent sphere",
+          "uncertainty": "0.1",
+          "status": "measurement",
+          "note": ""
+        }
+      }
+    },
+    "eros": {
+      "name": "Eros",
+      "kind": "asteroid",
+      "mass": 3.3628083723260015e-15,
+      "radius": 5.628422356950032e-08,
+      "temperature": null,
+      "color": "#aaa49b",
+      "catalog_key": "eros",
+      "provenance": "catalog",
+      "sources": {
+        "mass": {
+          "url": "https://ssd-api.jpl.nasa.gov/sbdb.api?sstr=eros&phys-par=1",
+          "version": "SBDB API 1.3; Yeomans et al. (2000) Science v.289,pp.2085-2088",
+          "retrieved": "2026-10-30",
+          "original_value": 0.0004463,
+          "original_units": "km^3/s^2",
+          "conversion": "x 1e9 / (6.67430e-11 * 1.98847e30) solar masses; G uncertainty not propagated",
+          "uncertainty": "0.001e-04",
+          "status": "measurement",
+          "note": ""
+        },
+        "radius": {
+          "url": "https://ssd-api.jpl.nasa.gov/sbdb.api?sstr=eros&phys-par=1",
+          "version": "SBDB API 1.3; Yeomans et al. (2000) Science v.289,pp.2085-2088",
+          "retrieved": "2026-10-30",
+          "original_value": 16.84,
+          "original_units": "km",
+          "conversion": "/ 2 / 149597870.7 AU; volume-equivalent sphere",
+          "uncertainty": "0.06",
+          "status": "measurement",
+          "note": "sphere having the measured volume of 2503 +/- 25 km^3"
+        }
+      }
+    },
+    "bennu": {
+      "name": "Bennu",
+      "kind": "asteroid",
+      "mass": 3.684848322658096e-20,
+      "radius": 1.6191406927558629e-09,
+      "temperature": null,
+      "color": "#aaa49b",
+      "catalog_key": "bennu",
+      "provenance": "catalog",
+      "sources": {
+        "mass": {
+          "url": "https://ssd-api.jpl.nasa.gov/sbdb.api?sstr=bennu&phys-par=1",
+          "version": "SBDB API 1.3; Chesley, S.R., et al., J. Geophys. Res. (Planets) 125, e06363 (2020)",
+          "retrieved": "2026-10-30",
+          "original_value": 4.8904e-09,
+          "original_units": "km^3/s^2",
+          "conversion": "x 1e9 / (6.67430e-11 * 1.98847e30) solar masses; G uncertainty not propagated",
+          "uncertainty": "0.0009e-9",
+          "status": "measurement",
+          "note": ""
+        },
+        "radius": {
+          "url": "https://ssd-api.jpl.nasa.gov/sbdb.api?sstr=bennu&phys-par=1",
+          "version": "SBDB API 1.3; Daly, M.G., et al., Sci. Adv. 6, eabd3649 (2020)",
+          "retrieved": "2026-10-30",
+          "original_value": 0.48444,
+          "original_units": "km",
+          "conversion": "/ 2 / 149597870.7 AU; volume-equivalent sphere",
+          "uncertainty": "0.00030",
+          "status": "measurement",
+          "note": ""
+        }
+      }
+    },
+    "hd_209458_b": {
+      "name": "HD 209458 b",
+      "kind": "planet",
+      "mass": 0.0006968347020573607,
+      "radius": 0.0006642733585378499,
+      "temperature": null,
+      "color": "#d8b89d",
+      "catalog_key": "hd_209458_b",
+      "provenance": "catalog",
+      "sources": {
+        "mass": {
+          "url": "https://exoplanetarchive.ipac.caltech.edu/overview/HD_209458",
+          "version": "NASA Exoplanet Archive ps default_flag=1 snapshot 2026-10-30; Stassun et al. 2017",
+          "retrieved": "2026-10-30",
+          "original_value": 0.73,
+          "original_units": "Jupiter masses",
+          "conversion": "x 1.89813e27 / 1.98847e30 solar masses",
+          "uncertainty": "(-0.04, 0.04)",
+          "status": "measured/inferred true mass",
+          "note": "Archive pl_bmassprov=Mass"
+        },
+        "radius": {
+          "url": "https://exoplanetarchive.ipac.caltech.edu/overview/HD_209458",
+          "version": "NASA Exoplanet Archive ps default_flag=1 snapshot 2026-10-30; Stassun et al. 2017",
+          "retrieved": "2026-10-30",
+          "original_value": 1.39,
+          "original_units": "Jupiter radii",
+          "conversion": "x 71492 / 149597870.7 AU",
+          "uncertainty": "(-0.02, 0.02)",
+          "status": "transit measurement",
+          "note": "No model radius substituted."
+        }
+      }
+    },
+    "51_peg_b": {
+      "name": "51 Peg b",
+      "kind": "planet",
+      "mass": 0.0005822865318561507,
+      "radius": null,
+      "temperature": null,
+      "color": "#d8b89d",
+      "catalog_key": "51_peg_b",
+      "provenance": "catalog",
+      "sources": {
+        "mass": {
+          "url": "https://exoplanetarchive.ipac.caltech.edu/overview/51%20Peg",
+          "version": "NASA Exoplanet Archive ps default_flag=1 snapshot 2026-10-30; Cont et al. 2026",
+          "retrieved": "2026-10-30",
+          "original_value": 0.61,
+          "original_units": "Jupiter masses",
+          "conversion": "x 1.89813e27 / 1.98847e30 solar masses",
+          "uncertainty": "(-0.05, 0.06)",
+          "status": "measured/inferred true mass",
+          "note": "Archive pl_bmassprov=Mass"
+        },
+        "radius": {
+          "url": "https://exoplanetarchive.ipac.caltech.edu/overview/51%20Peg",
+          "version": "NASA Exoplanet Archive ps default_flag=1 snapshot 2026-10-30; Cont et al. 2026",
+          "retrieved": "2026-10-30",
+          "original_value": null,
+          "original_units": "Jupiter radii",
+          "conversion": "x 71492 / 149597870.7 AU",
+          "uncertainty": "(None, None)",
+          "status": "unknown",
+          "note": "No model radius substituted."
+        }
+      }
+    }
+  }
+}
