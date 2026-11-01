@@ -52,7 +52,7 @@ def with_population(system, settings, reference_radius=0.):
     The caller supplies the reference's physical radius in AU if known.
     """
     reference = settings.reference
-    if reference >= len(system.masses) or system.masses[reference] <= 0:
+    if reference >= len(system.masses) or not np.isfinite(system.masses[reference]) or system.masses[reference] <= 0:
         raise ValueError('Population reference must identify a massive body.')
     if not np.isfinite(reference_radius) or reference_radius < 0 or settings.inner <= reference_radius:
         raise ValueError('Population must start outside the reference surface (AU).')
