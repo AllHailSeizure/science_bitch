@@ -25,13 +25,28 @@ Details, presets, and the other command-line flags are in each simulation's READ
 
 - [Interactive star system](simulations/star_system/README.md) — tunable stars and planets with full N-body gravity
 
-## Tests
+## Development checks
+
+Install the development tools in your virtual environment:
 
 ```bash
-pytest
+python -m pip install -r requirements-dev.txt
 ```
 
-The tests are the physics checks; the tolerances asserted are listed in the [star system README](simulations/star_system/README.md).
+Run both checks from the repository root before opening a pull request:
+
+```bash
+python -m ruff check .
+python -m pytest -q
+```
+
+The test suite covers physics, population generation, controls, and rendering. Physics tolerances are listed in the [star system README](simulations/star_system/README.md). Tests select Matplotlib's Agg backend and need no display.
+
+[Ruff](https://docs.astral.sh/ruff/) checks application and test code using the rules in `ruff.toml`: Python errors, undefined/unused names, and ambiguous statements. Its version is pinned in `requirements-dev.txt` so local checks and CI use the same rules. To apply supported automatic fixes, run `python -m ruff check . --fix`, review the diff, and rerun both checks. Formatting is not enforced.
+
+The [CI workflow](.github/workflows/ci.yml) runs on every pull request (including PRs targeting another feature branch), pushes to `Master`, and manual dispatch. Lint runs as a separate job; any lint or test failure fails CI. The complete pytest suite runs on Linux with Python 3.10 and 3.14, plus Windows with Python 3.14. Python 3.10 is the documented minimum; the Windows job also checks the desktop development platform. GitHub installs these interpreters on its runners; you only need one supported Python locally.
+
+To enforce passing checks before merging, configure branch protection or a ruleset to require `Lint` and the three `Tests (...)` jobs after the workflow's first run.
 
 ## Adding a simulation
 

@@ -47,7 +47,8 @@ def main(argv=None):
             fig.savefig(args.output,dpi=150)
             plt.close(fig)
         else:
-            app = App(args.star,planets, population=population)
+            # Keep callbacks and animation alive until the GUI closes.
+            _app = App(args.star,planets, population=population)
             plt.show()
             return 0
     except ValueError as exc:

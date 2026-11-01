@@ -34,9 +34,11 @@ def test_single_period_and_kepler(star,planet):
 
 def test_many_orbit_conservation():
     system,t,r,inv = measure('sun',['mercury','earth','jupiter'],orbits=30)
-    e = np.array([x[0] for x in inv]); p = np.array([x[1] for x in inv]); l = np.array([x[2] for x in inv])
+    e = np.array([x[0] for x in inv])
+    p = np.array([x[1] for x in inv])
+    angular_momenta = np.array([x[2] for x in inv])
     energy = np.max(abs(e/e[0]-1))
-    angular = np.max(abs(l/l[0]-1))
+    angular = np.max(abs(angular_momenta/angular_momenta[0]-1))
     # Normalize P by sum of initial scalar momenta; P starts at zero.
     initial = make_system('sun',['mercury','earth','jupiter'])
     momentum = np.max(np.linalg.norm(p-p[0],axis=1))/np.sum(initial.masses*np.linalg.norm(initial.v,axis=1))
@@ -49,9 +51,12 @@ def test_many_orbit_conservation():
 def test_perturbed_periods():
     system = make_system('sun',['earth','jupiter'])
     expected = [period('sun',p,PLANETS[p].distance) for p in ['earth','jupiter']]
-    t=[]; r=[]
+    t=[]
+    r=[]
     for _ in range(round(3*max(expected)/system.dt)+1):
-        t.append(system.time); r.append(system.r-system.r[0]); system.step()
+        t.append(system.time)
+        r.append(system.r-system.r[0])
+        system.step()
     r=np.array(r)
     for i,target in enumerate(expected,1):
         theta=np.unwrap(np.arctan2(r[:,i,1],r[:,i,0]))
