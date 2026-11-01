@@ -132,7 +132,8 @@ def _decode_population(value):
     _object(value, ('id', 'reference_id', 'generator', 'version', 'settings'), 'Population')
     if value['generator'] != 'PCG64' or value['version'] != GENERATOR_VERSION:
         raise ValueError('Unsupported population generator/version.')
-    _string(value['id'], 'Population ID'); _string(value['reference_id'], 'Population reference')
+    _string(value['id'], 'Population ID')
+    _string(value['reference_id'], 'Population reference')
     settings = _object(value['settings'], {field.name for field in fields(Population)}, 'Population settings')
     for key in ('count', 'seed', 'reference'):
         if type(settings[key]) is not int:
@@ -160,7 +161,8 @@ def _decode(document):
     if type(document['setup']) is dict and 'collision_policy' in document['setup']:
         keys.add('collision_policy')
     value = _object(document['setup'], keys, 'Setup')
-    _string(value['name'], 'Setup name'); _string(value['preset_id'], 'Preset ID', nullable=True)
+    _string(value['name'], 'Setup name')
+    _string(value['preset_id'], 'Preset ID', nullable=True)
     _string(value['collision_mode'], 'Collision mode')
     if value['collision_mode'] == 'perfect_merge' and 'collision_policy' not in value:
         raise ValueError('Physical collision mode requires an explicit versioned collision policy.')

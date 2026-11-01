@@ -61,7 +61,8 @@ def test_live_moon_insertion_preserves_existing_state_and_shortens_fixed_segment
 def test_moon_parent_does_not_modify_force_law_or_reattach_fast_moon():
     p = build_system(replace(pair(), bodies=(pair().bodies[0], moon_body(5.))))
     numeric = System(p.system.masses.copy(), p.system.r.copy(), p.system.v.copy(), p.system.dt)
-    p.system.step(300); numeric.step(300)
+    p.system.step(300)
+    numeric.step(300)
     np.testing.assert_array_equal(p.system.r, numeric.r)
     np.testing.assert_array_equal(p.system.v, numeric.v)
     assert np.linalg.norm(p.system.r[1] - p.system.r[0]) > 5 * SEPARATION
@@ -73,9 +74,11 @@ def measure_pair(divisor):
     angles, times, energies, angular = [], [], [], []
     for step in range(3 * divisor + 2):
         r = p.system.r[1] - p.system.r[0]
-        angles.append(np.arctan2(r[1], r[0])); times.append(p.system.time)
+        angles.append(np.arctan2(r[1], r[0]))
+        times.append(p.system.time)
         energy, _, momentum = p.system.invariants()
-        energies.append(energy); angular.append(momentum)
+        energies.append(energy)
+        angular.append(momentum)
         if step == 3 * divisor:
             final = r.copy()
         p.system.step()
@@ -124,8 +127,10 @@ def test_sun_earth_moon_and_second_star_are_finite_mutually_forced(second_star):
 def test_invalid_moon_parent_or_overlap_is_recoverable_without_mutation(body):
     p = build_system(replace(pair(.001), bodies=pair().bodies[:1]))
     saved = p.system.r.copy(), p.system.v.copy(), p.system.time
-    with pytest.raises(ValueError): insert_body(p, body)
-    np.testing.assert_array_equal(p.system.r, saved[0]); np.testing.assert_array_equal(p.system.v, saved[1])
+    with pytest.raises(ValueError):
+        insert_body(p, body)
+    np.testing.assert_array_equal(p.system.r, saved[0])
+    np.testing.assert_array_equal(p.system.v, saved[1])
     assert p.system.time == saved[2]
 
 
@@ -141,7 +146,8 @@ def test_moon_unresolved_step_cycle_nonfinite_and_missing_parent_are_rejected():
 
 
 def test_separation_inspection_uses_frame_world_state_and_reports_missing_parent():
-    p = build_system(pair()); p.system.step(30)
+    p = build_system(pair())
+    p.system.step(30)
     p.system.r[1] += (SEPARATION, 0)
     frame = StateFrame.capture(p)
     result = relative_state(frame, 'moon')

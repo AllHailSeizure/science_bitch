@@ -14,10 +14,9 @@ from simulations.star_system.core import System
 from simulations.star_system.collisions import advance_prepared
 from simulations.star_system.experiments import capture_current_setup
 from simulations.star_system.initialization import build_system, insert_body
-from simulations.star_system.model import BodySpec, InitialBody, InitialSetup, PopulationSpec
+from simulations.star_system.model import BodySpec, InitialBody, InitialSetup
 from simulations.star_system.persistence import save_setup, load_setup, setup_digest
 from simulations.star_system.plotting import App
-from simulations.star_system.populations import Population
 from simulations.star_system.recording import Calculation, CalculationRequest, frame_storage_bytes
 from simulations.star_system.scenarios import get_scenario
 
@@ -41,12 +40,14 @@ def app():
     value = App(setup=setup_fixture())
     value.timer.stop()
     yield value
-    value.close(); plt.close(value.fig)
+    value.close()
+    plt.close(value.fig)
 
 
 def test_save_reload_reproduces_contact_times_membership_properties_and_states(tmp_path):
     setup = setup_fixture()
-    path = tmp_path/'contact.json'; save_setup(setup, path)
+    path = tmp_path/'contact.json'
+    save_setup(setup, path)
     loaded = load_setup(path)
     assert setup_digest(setup) == setup_digest(loaded)
     assert loaded.collision_policy == setup.collision_policy
@@ -59,7 +60,8 @@ def test_save_reload_reproduces_contact_times_membership_properties_and_states(t
     for a, b in zip(first.result.frames, second.result.frames):
         assert a.body_ids == b.body_ids and a.body_specs == b.body_specs
         assert a.events == b.events and a.reference_ids == b.reference_ids
-        np.testing.assert_array_equal(a.r, b.r); np.testing.assert_array_equal(a.v, b.v)
+        np.testing.assert_array_equal(a.r, b.r)
+        np.testing.assert_array_equal(a.v, b.v)
     pre, post = first.result.frames[1:3]
     assert pre.event_phase == 'pre' and post.event_phase == 'post'
     assert pre.time == post.time == first.prepared.events[0].time
@@ -67,18 +69,21 @@ def test_save_reload_reproduces_contact_times_membership_properties_and_states(t
     assert pre.events == post.events and len(pre.body_ids) == 2 and len(post.body_ids) == 1
     assert first.result.actual_end_time == .4
     for frame in first.result.frames:
-        with pytest.raises(ValueError): frame.r.setflags(write=True)
+        with pytest.raises(ValueError):
+            frame.r.setflags(write=True)
 
 
 def test_legacy_mode_none_schema1_keeps_its_numerical_version(tmp_path):
     path = tmp_path/'legacy.json'
-    original = get_scenario('sun-earth-jupiter'); save_setup(original, path)
+    original = get_scenario('sun-earth-jupiter')
+    save_setup(original, path)
     document = json.loads(path.read_text())
     assert document['schema_version'] == 1 and 'collision_policy' not in document['setup']
     assert document['numerical_version'] == 'fixed-yoshida4-v1'
     loaded = load_setup(path)
     a, b = build_system(original), build_system(loaded)
-    a.system.step(3); b.system.step(3)
+    a.system.step(3)
+    b.system.step(3)
     np.testing.assert_array_equal(a.system.r, b.system.r)
 
 
@@ -86,11 +91,14 @@ def test_legacy_mode_none_schema1_keeps_its_numerical_version(tmp_path):
                                          ('numerical','negative-yoshida-contact'), ('max_substeps',True), ('guard_fraction',1),
                                          ('time_tolerance',1), ('max_refinements',2)])
 def test_unsupported_policy_rejected_before_install(app, tmp_path, field, value):
-    path = tmp_path/'invalid.json'; save_setup(app.initial_setup, path)
-    document = json.loads(path.read_text()); document['setup']['collision_policy'][field] = value
+    path = tmp_path/'invalid.json'
+    save_setup(app.initial_setup, path)
+    document = json.loads(path.read_text())
+    document['setup']['collision_policy'][field] = value
     path.write_text(json.dumps(document))
     old, initial = app.prepared, app.initial_setup
-    with pytest.raises(ValueError): app.load_setup(path)
+    with pytest.raises(ValueError):
+        app.load_setup(path)
     assert app.prepared is old and app.initial_setup is initial
 
 
@@ -104,7 +112,8 @@ def test_current_capture_retains_mode_policy_ancestry_and_valid_moon_parent(tmp_
     captured = capture_current_setup(calc.prepared, setup, 'New contact epoch')
     assert captured.collision_mode == 'perfect_merge' and captured.collision_policy == setup.collision_policy
     assert captured.provenance['collision_events'][0]['ancestry'] == ('a', 'b')
-    path = tmp_path/'epoch.json'; save_setup(captured, path)
+    path = tmp_path/'epoch.json'
+    save_setup(captured, path)
     rebuilt = build_system(load_setup(path))
     assert rebuilt.body_ids == calc.prepared.body_ids
     np.testing.assert_allclose(rebuilt.system.r, calc.prepared.system.r, atol=1e-14, rtol=0)
@@ -140,7 +149,8 @@ def test_live_and_replay_selection_event_frames_trails_and_prior_membership(app,
     calc = calculate(app.initial_setup, steps=1)
     app.painter.use_blit = blit
     app.set_frame_mode('world')
-    app.selected_id = 'a'; app.following = True
+    app.selected_id = 'a'
+    app.following = True
     app.step_once()
     remnant = app.prepared.events[0].remnant_id
     assert app.selected_id == remnant and app.following and app.paused
@@ -155,18 +165,22 @@ def test_live_and_replay_selection_event_frames_trails_and_prior_membership(app,
     monkeypatch.setattr(System, 'step', unexpected)
     monkeypatch.setattr('simulations.star_system.collisions.advance_prepared', unexpected)
     monkeypatch.setattr('simulations.star_system.plotting.advance_prepared', unexpected)
-    app.show_recording(calc.result); app.selected_id = 'a'; app.following = True
+    app.show_recording(calc.result)
+    app.selected_id = 'a'
+    app.following = True
     app.step_once()  # pre-event frame still has the original ID
     assert app.selected_id == 'a' and app.prepared.body_ids == ('a', 'b')
     app.step_once()  # exact same time, post-event membership
     assert app.selected_id == remnant and app.following
     assert 'explicit merge mapping' in app.status.get_text()
-    app.fig.canvas.draw(); app.step_once()
+    app.fig.canvas.draw()
+    app.step_once()
     incremental = np.asarray(app.fig.canvas.buffer_rgba()).copy()
     app.fig.canvas.draw()
     np.testing.assert_array_equal(incremental, np.asarray(app.fig.canvas.buffer_rgba()))
     assert app._advance(1) == 0
-    app.playback.index = 0; app._display_recorded_frame()
+    app.playback.index = 0
+    app._display_recorded_frame()
     assert app.prepared.body_ids == ('a', 'b') and app.prepared.body_specs[0].radius == .1
     np.testing.assert_array_equal(app.system.r, calc.result.frames[0].r)
 
@@ -176,7 +190,9 @@ def test_absorbed_tracer_selection_reports_removal_without_remnant(app):
         InitialBody('host', BodySpec('Host', 'planet', 1e-14, .1), (0,0), (0,0)),
         InitialBody('tracer', BodySpec('Tracer', 'particle', 0., None), (-1,0), (10,0))),
         .2, collision_mode='perfect_merge')
-    app.select_setup(setup); app.selected_id = 'tracer'; app.step_once()
+    app.select_setup(setup)
+    app.selected_id = 'tracer'
+    app.step_once()
     assert app.selected_id == 'tracer' and 'missing / removed' in app.inspector.get_text()
     assert 'absorbed' in app.status.get_text() and 'zero mass/momentum' in app.status.get_text()
 
@@ -184,8 +200,10 @@ def test_absorbed_tracer_selection_reports_removal_without_remnant(app):
 def test_policy_dialog_is_explicit_reset_and_previous_result_stays_immutable(app):
     old = calculate(app.initial_setup).result
     app.session.retain_recording(old)
-    app.step_once(); assert app.system.time > 0
-    app.edit_experiment(); editor = app.experiment_editor
+    app.step_once()
+    assert app.system.time > 0
+    app.edit_experiment()
+    editor = app.experiment_editor
     assert editor.collision_picker.value_selected == 'perfect_merge'
     editor.collision_picker.set_active(0)
     # Collision-free guard rejects this large dt; failed policy application leaves live state.
@@ -194,8 +212,10 @@ def test_policy_dialog_is_explicit_reset_and_previous_result_stays_immutable(app
     assert app.system.time > 0 and app.initial_setup.collision_mode == 'perfect_merge'
     editor.finish()
     app.select_setup(get_scenario('sun-earth-jupiter'))
-    app.edit_experiment(); editor = app.experiment_editor
-    editor.collision_picker.set_active(1); editor.collisions()
+    app.edit_experiment()
+    editor = app.experiment_editor
+    editor.collision_picker.set_active(1)
+    editor.collisions()
     assert app.experiment_editor is None and app.preparing and app.paused and app.system.time == 0
     assert app.initial_setup.collision_mode == 'perfect_merge'
     assert app.initial_setup.preset_id is None and app.initial_setup.provenance['origin_preset'] == 'sun-earth-jupiter'
@@ -212,7 +232,8 @@ def test_population_moon_insertion_and_display_scale_do_not_change_physics(app, 
     moons = InitialSetup('Moon contact', (host, moon), .2, collision_mode='perfect_merge')
     assert calculate(moons, steps=1).prepared.events[0].kind == 'merge'
     original = calculate(app.initial_setup, steps=1)
-    app.ax.set_xlim(-.01, .01); app.ax.set_ylim(-.02, .02)
+    app.ax.set_xlim(-.01, .01)
+    app.ax.set_ylim(-.02, .02)
     monkeypatch.setattr('simulations.star_system.rendering.body_size', lambda spec: 200.)
     app.step_once()
     assert app.prepared.events == original.prepared.events
@@ -229,7 +250,8 @@ def test_saved_collision_cli_and_unsupported_contact_export_status(tmp_path):
         result = subprocess.run([sys.executable, '-m', 'simulations.star_system', '--load', str(path),
             '--years', '.2', '--sample-stride', '100', '--output', str(image)], capture_output=True, text=True)
         assert result.returncode == expected, result.stderr
-        if expected: assert 'halted' in result.stderr and '#14' in result.stderr
+        if expected:
+            assert 'halted' in result.stderr and '#14' in result.stderr
         with Image.open(image) as png:
             assert png.format == 'PNG' and png.size == (1350, 1350)
 

@@ -127,7 +127,8 @@ class Sidebar:
             widget.ax.set_visible(enabled)
             widget.active = enabled and not editing and self.app.preparing and not calculating
         if authoring:
-            for ax in self.app.body_editor.axes: ax.set_visible(self.visible)
+            for ax in self.app.body_editor.axes:
+                ax.set_visible(self.visible)
             for widget in self.app.body_editor.widgets:
                 widget.active = self.visible and (widget != self.app.body_editor.fields['dt'] or self.app.preparing)
         if hasattr(self.app, 'painter'):
@@ -180,8 +181,10 @@ class Sidebar:
             index = self.offset + row
             if 0 <= row < 6 and 0 <= index < len(self.rows):
                 key = self.rows[index][0]
-                if isinstance(key, int): self.app.selected_index = key
-                else: self.app.selected_id = key
+                if isinstance(key, int):
+                    self.app.selected_index = key
+                else:
+                    self.app.selected_id = key
                 self.app._refresh()
 
     def update(self, time, speed, selected_index):
@@ -240,8 +243,10 @@ class ExperimentEditor:
                                     ('capture_path', 'Capture JSON path', 'output/experiment-captured.json', .32)]:
             box = TextBox(self.fig.add_axes((.28, y, .64, .045)), label+'  ', initial=value,
                           color='#1b3044', hovercolor='#294b60')
-            box.label.set_color(TEXT); box.text_disp.set_color(TEXT)
-            self.widgets.append(box); self.fields[key] = box
+            box.label.set_color(TEXT)
+            box.text_disp.set_color(TEXT)
+            self.widgets.append(box)
+            self.fields[key] = box
         self._button((.07, .74, .39, .045), 'Apply name', self.rename)
         self._button((.50, .74, .42, .045), 'Prepare selected setup', self.prepare)
         self._button((.07, .565, .39, .045), 'Save initial setup', self.save_initial)
@@ -252,7 +257,8 @@ class ExperimentEditor:
             ('none', 'perfect_merge'), active=int(app.initial_setup.collision_mode == 'perfect_merge'), activecolor=ACCENT, useblit=False)
         self.collision_picker.ax.set_facecolor(PANEL)
         for label in self.collision_picker.labels:
-            label.set_color(TEXT); label.set_fontsize(9)
+            label.set_color(TEXT)
+            label.set_fontsize(9)
         self.widgets.append(self.collision_picker)
         self._button((.50, .45, .42, .04), 'Apply collisions + RESET', self.collisions)
         self.fig.text(.07, .435, 'Perfect merge: nonstellar spheres / point tracers; stellar contact halts (#14).', color=MUTED, fontsize=8, va='top')
@@ -262,7 +268,8 @@ class ExperimentEditor:
         self.preset_picker = RadioButtons(self.fig.add_axes((.07, .115, .54, .085)), list(DESCRIPTIONS), activecolor=ACCENT, useblit=False)
         self.preset_picker.ax.set_facecolor(PANEL)
         for label in self.preset_picker.labels:
-            label.set_color(TEXT); label.set_fontsize(9)
+            label.set_color(TEXT)
+            label.set_fontsize(9)
         self.widgets.append(self.preset_picker)
         self._button((.65, .16, .27, .04), 'Open preset', self.preset)
         self._button((.65, .11, .27, .04), 'Close', lambda event: self.finish())
@@ -300,7 +307,9 @@ class ExperimentEditor:
         try:
             self.app.set_collision_mode(self.collision_picker.value_selected)
         except ValueError as exc:
-            self.error.set_text(fill(str(exc), 105)); self.fig.canvas.draw_idle(); return
+            self.error.set_text(fill(str(exc), 105))
+            self.fig.canvas.draw_idle()
+            return
         self.was_paused = True
         self.was_playing = False
         self.finish()
@@ -328,7 +337,8 @@ class ExperimentEditor:
         try:
             self.app.load_setup(self.fields['path'].text)
         except (ValueError, OSError) as exc:
-            self.error.set_text(fill(str(exc), 105)); self.fig.canvas.draw_idle()
+            self.error.set_text(fill(str(exc), 105))
+            self.fig.canvas.draw_idle()
             return
         self.was_paused = True
         self.finish()
@@ -343,20 +353,26 @@ class ExperimentEditor:
         try:
             self.app.prepare_jupiter_control()
         except ValueError as exc:
-            self.error.set_text(fill(str(exc), 105)); self.fig.canvas.draw_idle(); return
+            self.error.set_text(fill(str(exc), 105))
+            self.fig.canvas.draw_idle()
+            return
         self.was_paused = True
         self.finish()
 
     def on_key(self, event):
-        if event.key == 'escape': self.finish()
+        if event.key == 'escape':
+            self.finish()
 
     def finish(self):
-        if self.finished: return
+        if self.finished:
+            return
         import matplotlib.pyplot as plt
         import time
         self.finished = True
-        for widget in self.widgets: widget.disconnect_events()
-        for connection in self.connections: self.fig.canvas.mpl_disconnect(connection)
+        for widget in self.widgets:
+            widget.disconnect_events()
+        for connection in self.connections:
+            self.fig.canvas.mpl_disconnect(connection)
         self.app.experiment_editor = None
         self.app.paused = True if self.app.preparing else self.was_paused
         if self.app.playback is not None and self.was_playing:
@@ -382,14 +398,17 @@ class CalculationEditor:
                                     ('budget', 'Budget (MiB)', '256', .47)]:
             box = TextBox(self.fig.add_axes((.32, y, .58, .065)), label+'  ', initial=value,
                           color='#1b3044', hovercolor='#294b60')
-            box.label.set_color(TEXT); box.text_disp.set_color(TEXT)
-            self.fields[key] = box; self.widgets.append(box)
+            box.label.set_color(TEXT)
+            box.text_disp.set_color(TEXT)
+            self.fields[key] = box
+            self.widgets.append(box)
             box.on_text_change(lambda text: self.resolve())
         self.summary = self.fig.text(.07, .39, '', color=TEXT, fontsize=10, va='top')
         self.error = self.fig.text(.07, .20, '', color='#efb17b', fontsize=9, va='top')
         self.start = button(self.fig, (.07, .07, .56, .065), 'Start calculation')
         self.cancel = button(self.fig, (.67, .07, .23, .065), 'Close')
-        self.start.on_clicked(self.begin); self.cancel.on_clicked(lambda event: self.finish())
+        self.start.on_clicked(self.begin)
+        self.cancel.on_clicked(lambda event: self.finish())
         self.widgets += [self.start, self.cancel]
         self.connections = [self.fig.canvas.mpl_connect('close_event', lambda event: self.finish()),
                             self.fig.canvas.mpl_connect('key_press_event', self.on_key)]
@@ -410,12 +429,15 @@ class CalculationEditor:
         try:
             calc = Calculation(self.app.initial_setup, self.request())
         except (ValueError, OverflowError) as exc:
-            self.summary.set_text(''); self.error.set_text(fill(str(exc), 100)); self.start.active = False
+            self.summary.set_text('')
+            self.error.set_text(fill(str(exc), 100))
+            self.start.active = False
         else:
             self.summary.set_text(f'Requested {calc.request.duration_years:.9g} yr → {calc.total_steps:,} whole steps\n'
                                   f'Fixed dt {calc.prepared.system.dt:.9g} yr; resolved end {calc.resolved_end_time:.9g} yr\n'
                                   f'Conservative storage estimate {calc.estimated_bytes/1048576:.2f} MiB / budget {calc.request.max_bytes/1048576:g} MiB')
-            self.error.set_text(''); self.start.active = True
+            self.error.set_text('')
+            self.start.active = True
         self.fig.canvas.draw_idle()
 
     def begin(self, event=None):
@@ -424,19 +446,25 @@ class CalculationEditor:
             from .recording import Calculation
             Calculation(self.app.initial_setup, request)
         except (ValueError, OverflowError) as exc:
-            self.error.set_text(fill(str(exc), 100)); self.fig.canvas.draw_idle(); return
+            self.error.set_text(fill(str(exc), 100))
+            self.fig.canvas.draw_idle()
+            return
         self.finish()
         self.app.start_calculation(request)
 
     def on_key(self, event):
-        if event.key == 'escape': self.finish()
+        if event.key == 'escape':
+            self.finish()
 
     def finish(self):
-        if self.finished: return
+        if self.finished:
+            return
         import matplotlib.pyplot as plt
         self.finished = True
-        for widget in self.widgets: widget.disconnect_events()
-        for connection in self.connections: self.fig.canvas.mpl_disconnect(connection)
+        for widget in self.widgets:
+            widget.disconnect_events()
+        for connection in self.connections:
+            self.fig.canvas.mpl_disconnect(connection)
         self.app.calculation_editor = None
         self.app.sidebar._sync()
         self.app._refresh()

@@ -58,7 +58,8 @@ def test_guides_are_equilateral_geometry_and_missing_references_are_explicit():
     with pytest.raises(ValueError, match='Jupiter'):
         frame_transform(replace(frame, body_ids=tuple('absent' if key == 'jupiter' else key for key in frame.body_ids),
                                 body_specs=tuple(replace(s, catalog_key=None) if i == 1 else s for i, s in enumerate(frame.body_specs))), 'rotating')
-    same = frame.r.copy(); same[1] = same[0]
+    same = frame.r.copy()
+    same[1] = same[0]
     with pytest.raises(ValueError, match='coincident'):
         frame_transform(replace(frame, r=same), 'rotating')
 
@@ -68,10 +69,12 @@ def test_rotating_authoring_inverse_and_physical_vector_survive_view_switch():
     import matplotlib.pyplot as plt
     from simulations.star_system.plotting import App
     from simulations.star_system.authoring import VELOCITY_PIXELS_PER_AUYR
-    app = App(setup=get_scenario('sun-jupiter-ring')); app.timer.stop()
+    app = App(setup=get_scenario('sun-jupiter-ring'))
+    app.timer.stop()
     before_r, before_v = app.system.r.copy(), app.system.v.copy()
     try:
-        app.set_frame_mode('rotating'); app.edit_body()
+        app.set_frame_mode('rotating')
+        app.edit_body()
         editor = app.body_editor
         world = np.array([-1.2, 1.7]) + app.system.r[0]
         display = app.scene.world_to_display(world)
@@ -86,7 +89,8 @@ def test_rotating_authoring_inverse_and_physical_vector_survive_view_switch():
         _, velocity = editor.vectors()
         np.testing.assert_allclose(velocity, physical_v, atol=1e-14)
         fields = tuple(editor.fields[k].text for k in ('x', 'y', 'vx', 'vy'))
-        app.scene.set_frame_mode('world'); editor.preview()
+        app.scene.set_frame_mode('world')
+        editor.preview()
         assert tuple(editor.fields[k].text for k in ('x', 'y', 'vx', 'vy')) == fields
         app.set_frame_mode('rotating')  # modal callback guard
         assert app.scene.frame_mode == 'world'
@@ -95,4 +99,5 @@ def test_rotating_authoring_inverse_and_physical_vector_survive_view_switch():
         assert app.system.time == 0
         editor.finish()
     finally:
-        app.close(); plt.close(app.fig)
+        app.close()
+        plt.close(app.fig)

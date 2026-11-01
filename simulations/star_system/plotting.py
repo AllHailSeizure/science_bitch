@@ -9,11 +9,11 @@ from .core import SOLAR_RADIUS_AU
 from .data import STARS, PLANETS, AU_KM
 from .initialization import build_system, legacy_setup, PreparedSystem
 from .history import StateFrame, MAX_HISTORY, relative_state
-from .rendering import BACKGROUND, PANEL, TEXT, MUTED, ACCENT, CanvasPainter, draw, draw_system
+from .rendering import BACKGROUND, PANEL, TEXT, MUTED, ACCENT, CanvasPainter, draw as draw, draw_system
 from .sidebar import Sidebar
 from .experiments import ExperimentSession
 from .scenarios import get_scenario
-from .recording import Calculation, CalculationRequest
+from .recording import Calculation
 from .playback import Playback
 from .collisions import advance_prepared, mapped_selection
 
@@ -520,7 +520,9 @@ class App:
             setup = replace(self.initial_setup, bodies=tuple(b for b in self.initial_setup.bodies if b.id != self.selected_id))
             prepared = build_system(setup)
         except ValueError as exc:
-            self.status.set_text(str(exc)); self._refresh(); return
+            self.status.set_text(str(exc))
+            self._refresh()
+            return
         self.initial_setup = setup
         self._legacy_configuration = False
         self.selected_index = 0
@@ -630,8 +632,10 @@ class App:
             half_width, half_height = np.diff(xlim)[0]/2, np.diff(ylim)[0]/2
             new_x = (center[0]-half_width, center[0]+half_width)
             new_y = (center[1]-half_height, center[1]+half_height)
-            if new_x != xlim: self.ax.set_xlim(new_x)
-            if new_y != ylim: self.ax.set_ylim(new_y)
+            if new_x != xlim:
+                self.ax.set_xlim(new_x)
+            if new_y != ylim:
+                self.ax.set_ylim(new_y)
         self.mode.set_text('HALTED' if self.halted and self.playback is None else self.mode_name)
         self.mode.set_color('#efb17b' if self.halted else MUTED if self.paused else ACCENT)
         for label, text in ((self.pause.label, ('Play' if self.playback is not None else 'Run live' if self.preparing else 'Resume') if self.paused else 'Pause'),
@@ -650,8 +654,10 @@ class App:
         if self.mode_name == "CALCULATING":
             return
         if self.playback is not None:
-            if self.playback.playing: self.playback.pause()
-            else: self.playback.play()
+            if self.playback.playing:
+                self.playback.pause()
+            else:
+                self.playback.play()
             self._display_recorded_frame()
             return
         self.paused = not self.paused
@@ -737,15 +743,19 @@ class App:
             return
         self.ax.set_xlim(event.xdata+(np.asarray(xlim)-event.xdata)*scale)
         self.ax.set_ylim(event.ydata+(np.asarray(ylim)-event.ydata)*scale)
-        if self.body_editor is not None: self.body_editor.preview()
+        if self.body_editor is not None:
+            self.body_editor.preview()
         self.fig.canvas.draw_idle()
 
     def on_press(self, event):
         if self.population_editor is not None or self.experiment_editor is not None or self.calculation_editor is not None:
             return
         if self.body_editor is not None:
-            try: self.body_editor.on_press(event)
-            except ValueError as exc: self.body_editor.error.set_text(str(exc)); self.painter.paint()
+            try:
+                self.body_editor.on_press(event)
+            except ValueError as exc:
+                self.body_editor.error.set_text(str(exc))
+                self.painter.paint()
             return
         if not self.sidebar.contains_event(event) and event.inaxes == self.ax and event.button == 1 and not self._toolbar_active():
             self._drag = (event.x, event.y, self.ax.get_xlim(), self.ax.get_ylim())
@@ -792,16 +802,20 @@ class App:
 
     def on_key(self, event):
         if self.calculation_editor is not None:
-            if event.key == 'escape': self.calculation_editor.finish()
+            if event.key == 'escape':
+                self.calculation_editor.finish()
             return
         if self.experiment_editor is not None:
-            if event.key == 'escape': self.experiment_editor.finish()
+            if event.key == 'escape':
+                self.experiment_editor.finish()
             return
         if self.body_editor is not None:
-            if event.key == 'escape': self.body_editor.finish()
+            if event.key == 'escape':
+                self.body_editor.finish()
             return
         if self.population_editor is not None:
-            if event.key == 'escape': self.population_editor.finish()
+            if event.key == 'escape':
+                self.population_editor.finish()
             return
         if event.key == 'm':
             self.toggle_sidebar()

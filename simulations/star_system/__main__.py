@@ -32,7 +32,7 @@ def main(argv=None):
     import matplotlib
     if args.output:
         matplotlib.use('Agg')
-    from .plotting import App, draw, draw_system
+    from .plotting import App, draw_system
     import matplotlib.pyplot as plt
     try:
         if not math.isfinite(args.years) or args.years < 0:
@@ -74,7 +74,8 @@ def main(argv=None):
                 print(f'{result.status}: {result.reason}', file=sys.stderr)
                 return 2
         else:
-            app = App(args.star,planets, population=population, setup=loaded)
+            # Keep callbacks and animation alive until the GUI closes.
+            _app = App(args.star,planets, population=population, setup=loaded)
             plt.show()
             return 0
     except (ValueError, OSError) as exc:

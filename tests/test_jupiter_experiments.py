@@ -23,8 +23,10 @@ def test_scenario_is_independent_reproducible_and_saveable(tmp_path):
     assert first is not second and first.population is not second.population
     assert first.population.settings.count == 32 and first.population.settings.seed == 7
     assert first.population.settings.inner == 3.2 and first.population.settings.angles == 'even'
-    path = tmp_path/'jupiter.json'; save_setup(first, path)
-    built = build_system(first); restored = build_system(load_setup(path))
+    path = tmp_path/'jupiter.json'
+    save_setup(first, path)
+    built = build_system(first)
+    restored = build_system(load_setup(path))
     np.testing.assert_array_equal(built.system.r, restored.system.r)
     np.testing.assert_array_equal(built.system.v, restored.system.v)
     np.testing.assert_array_equal(built.system.r, build_system(second).system.r)
@@ -41,7 +43,8 @@ def test_control_uses_resolved_identical_vectors_without_hidden_jupiter(tmp_path
         i, j = first.body_ids.index(key), second.body_ids.index(key)
         np.testing.assert_array_equal(first.system.r[i], second.system.r[j])
         np.testing.assert_array_equal(first.system.v[i], second.system.v[j])
-    path = tmp_path/'control.json'; save_setup(control, path)
+    path = tmp_path/'control.json'
+    save_setup(control, path)
     again = build_system(load_setup(path))
     assert again.body_ids == second.body_ids
     np.testing.assert_array_equal(again.system.r, second.system.r)
@@ -83,7 +86,8 @@ def test_partial_comparison_reports_only_common_sampled_interval():
     first, control = make_jupiter_comparison(get_scenario('sun-jupiter-ring'))
     complete = calculate(first, 60, 10)
     calc = Calculation(control, CalculationRequest(control.dt*60, 10))
-    calc.advance(23); partial = calc.cancel()
+    calc.advance(23)
+    partial = calc.cancel()
     summary = compare_recordings(complete, partial)
     assert summary.end_time == complete.frames[2].time < partial.actual_end_time
     assert 'incomplete' in summary.description.lower()
@@ -151,7 +155,8 @@ def test_selected_particle_history_uses_stable_identity():
         scene.select('jupiter')
         assert not scene.selected_trail.get_visible()
         history = tuple(replace(first, time=1+i*.02) for i in range(1001))
-        scene.update(prepared, history); scene.select('population:3')
+        scene.update(prepared, history)
+        scene.select('population:3')
         assert len(scene.selected_trail.get_segments()) == 399
         assert scene.selected_trail_vertices == 400
         assert scene.selected_trail_times == tuple(frame.time for frame in history)
@@ -171,25 +176,33 @@ def test_jupiter_workflow_preserves_saved_initial_conditions(tmp_path):
     save_setup(setup, path)
     restored = load_setup(path)
     run = calculate(restored, 12, 2)
-    app = App(setup=restored); app.timer.stop()
+    app = App(setup=restored)
+    app.timer.stop()
     try:
-        app.session.retain_recording(run); app.show_recording(run)
-        app.selected_id = 'population:5'; app.toggle_follow()
+        app.session.retain_recording(run)
+        app.show_recording(run)
+        app.selected_id = 'population:5'
+        app.toggle_follow()
         app.set_frame_mode('rotating')
         app.step_once()
         assert app.selected_id == 'population:5' and app.following
         assert 'Jupiter separation' in app.inspector.get_text()
         assert 'physical inertial v' in app.inspector.get_text()
-        app.toggle_pause(); assert app.playback.playing
-        app.toggle_pause(); assert not app.playback.playing
-        app.run_live(); app.toggle_pause(); app.step_once()
+        app.toggle_pause()
+        assert app.playback.playing
+        app.toggle_pause()
+        assert not app.playback.playing
+        app.run_live()
+        app.toggle_pause()
+        app.step_once()
         assert app.paused and app.system.time == setup.dt
         app.restart()
         np.testing.assert_array_equal(app.system.r, initial.system.r)
         np.testing.assert_array_equal(app.system.v, initial.system.v)
         np.testing.assert_array_equal(build_system(load_setup(path)).system.r, initial.system.r)
     finally:
-        app.close(); plt.close(app.fig)
+        app.close()
+        plt.close(app.fig)
     result = subprocess.run([sys.executable, '-m', 'simulations.star_system', '--load', str(path),
         '--years', str(setup.dt*12), '--sample-stride', '2', '--output', str(image)], capture_output=True, text=True, timeout=60)
     assert result.returncode == 0, result.stderr
@@ -200,7 +213,8 @@ def test_shared_picker_calculate_control_and_result_switching():
     import matplotlib.pyplot as plt
     from simulations.star_system.plotting import App
     from simulations.star_system.scenarios import JUPITER_RING
-    app = App(); app.timer.stop()
+    app = App()
+    app.timer.stop()
     try:
         app.edit_experiment()
         editor = app.experiment_editor
@@ -215,16 +229,19 @@ def test_shared_picker_calculate_control_and_result_switching():
         original = app.initial_setup
         request = CalculationRequest(original.dt*31, 4)
         app.start_calculation(request)
-        app.calculation.advance(100); app._finish_calculation()
+        app.calculation.advance(100)
+        app._finish_calculation()
         first = app.playback.recording
-        app.edit_experiment(); app.experiment_editor.control()
+        app.edit_experiment()
+        app.experiment_editor.control()
         assert app.preparing and app.paused
         assert app.initial_setup.population is None and 'jupiter' not in app.prepared.body_ids
         assert not app.sidebar.rotating_view.active
         assert 'Jupiter' in app.scene.rotating_reason
         assert first.source_setup is original
         app.start_calculation(request)
-        app.calculation.advance(100); app._finish_calculation()
+        app.calculation.advance(100)
+        app._finish_calculation()
         assert len(app.session.recordings) == 2
         assert 'Matched common sampled interval' in app.scene.result_info.get_text()
         assert 'compared at' in app.scene.result_info.get_text()
@@ -242,4 +259,5 @@ def test_shared_picker_calculate_control_and_result_switching():
         app.toggle_sidebar()
         assert app.sidebar.rotating_view.ax.get_visible() and not app.sidebar.rotating_view.active
     finally:
-        app.close(); plt.close(app.fig)
+        app.close()
+        plt.close(app.fig)

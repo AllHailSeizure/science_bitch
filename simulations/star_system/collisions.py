@@ -11,7 +11,7 @@ from collections.abc import Mapping
 import numpy as np
 
 from .core import System
-from .model import BodySpec, CollisionPolicy
+from .model import BodySpec
 from .initialization import PreparedSystem
 from .history import StateFrame
 
