@@ -20,7 +20,8 @@ def app():
     instance = App()
     instance.timer.stop()
     yield instance
-    instance.close(); plt.close(instance.fig)
+    instance.close()
+    plt.close(instance.fig)
 
 
 def test_scenario_factories_are_independent_and_session_drafts_cancel():
@@ -63,10 +64,12 @@ def test_app_begins_paused_and_prepare_never_advances(app):
 
 
 def test_load_failure_and_experiment_dialog_cancel_preserve_live_state(app, tmp_path):
-    app.toggle_pause(); app._advance(3)
+    app.toggle_pause()
+    app._advance(3)
     before, initial = app.system, app.initial_setup
     r, v, time = before.r.copy(), before.v.copy(), before.time
-    path = tmp_path/'bad.json'; path.write_text('{"not":"a setup"}')
+    path = tmp_path/'bad.json'
+    path.write_text('{"not":"a setup"}')
     with pytest.raises(ValueError):
         app.load_setup(path)
     assert app.system is before and app.initial_setup is initial
@@ -77,12 +80,18 @@ def test_load_failure_and_experiment_dialog_cancel_preserve_live_state(app, tmp_
     editor.load()
     assert app.experiment_editor is editor and editor.error.get_text()
     editor.fields['name'].set_val('Unapplied draft')
-    app.step_once(); app.update(None); app.toggle_pause(); app.prepare_setup(); app.restart()
-    app.edit_body(); app.edit_population()
+    app.step_once()
+    app.update(None)
+    app.toggle_pause()
+    app.prepare_setup()
+    app.restart()
+    app.edit_body()
+    app.edit_population()
     assert app.body_editor is None and app.population_editor is None
     editor.finish()
     assert not app.paused and app.initial_setup is initial and app.system is before
-    np.testing.assert_array_equal(app.system.r, r); np.testing.assert_array_equal(app.system.v, v)
+    np.testing.assert_array_equal(app.system.r, r)
+    np.testing.assert_array_equal(app.system.v, v)
     assert app.system.time == time
 
 
@@ -94,15 +103,20 @@ def test_ui_name_preset_save_load_and_restart_use_selected_initial(app, tmp_path
     assert app.prepared is app.session.prepared and app.prepared.setup is app.initial_setup
     app.step_once()
     expected = build_system(app.initial_setup)
-    app.edit_experiment(); editor = app.experiment_editor
-    path = tmp_path/'mine.json'; editor.fields['path'].set_val(str(path)); editor.save_initial()
+    app.edit_experiment()
+    editor = app.experiment_editor
+    path = tmp_path/'mine.json'
+    editor.fields['path'].set_val(str(path))
+    editor.save_initial()
     assert load_setup(path).name == 'My starting setup'
     editor.load()
     assert app.experiment_editor is None and app.preparing and app.paused
     np.testing.assert_array_equal(app.system.r, expected.system.r)
-    app.step_once(); app.restart()
+    app.step_once()
+    app.restart()
     np.testing.assert_array_equal(app.system.v, expected.system.v)
-    app.edit_experiment(); app.experiment_editor.preset()
+    app.edit_experiment()
+    app.experiment_editor.preset()
     assert app.initial_setup.preset_id == COMPATIBILITY and app.preparing and app.paused
 
 
@@ -131,7 +145,9 @@ def test_capture_preserves_evolved_particles_live_insertion_and_original(tmp_pat
 
 def test_ui_separate_capture_path_preserves_initial_file(app, tmp_path):
     initial, captured = tmp_path/'initial.json', tmp_path/'captured.json'
-    app.step_once(); app.edit_experiment(); editor = app.experiment_editor
+    app.step_once()
+    app.edit_experiment()
+    editor = app.experiment_editor
     editor.fields['path'].set_val(str(initial))
     editor.save_initial()
     content = initial.read_bytes()
@@ -156,7 +172,8 @@ def test_current_moon_capture_subtracts_parent_once_and_discloses_smaller_dt(tmp
     assert captured.bodies[1].reference_id == 'earth'
     np.testing.assert_array_equal(captured.bodies[1].r, live.system.r[1]-live.system.r[0])
     np.testing.assert_array_equal(captured.bodies[1].v, live.system.v[1]-live.system.v[0])
-    path = tmp_path/'moon.json'; save_setup(captured, path)
+    path = tmp_path/'moon.json'
+    save_setup(captured, path)
     rebuilt = build_system(load_setup(path))
     np.testing.assert_allclose(rebuilt.system.r, live.system.r, atol=1e-15)
     np.testing.assert_allclose(rebuilt.system.v, live.system.v, atol=1e-15)
@@ -244,7 +261,10 @@ def test_calculate_dialog_preflight_overlay_and_cancel_is_recoverable(app):
     app.edit_calculation()
     editor = app.calculation_editor
     assert editor.start.active and 'whole steps' in editor.summary.get_text()
-    app.step_once(); app.toggle_pause(); app.edit_body(); app.edit_population()
+    app.step_once()
+    app.toggle_pause()
+    app.edit_body()
+    app.edit_population()
     assert app.system.time == 0 and app.body_editor is None and app.population_editor is None
     editor.fields['duration'].set_val('nan')
     assert editor.error.get_text() and not editor.start.active
@@ -280,7 +300,9 @@ def test_recorded_capture_uses_displayed_sample_and_true_source_after_draft_edit
     finish_calculation(app)
     result = app.playback.recording
     app.rename_setup('Another preparation draft')
-    app.show_recording(result); app.step_once(); app.step_once()
+    app.show_recording(result)
+    app.step_once()
+    app.step_once()
     frame = app.playback.current_frame
     assert frame.time > 0
     app.edit_experiment()

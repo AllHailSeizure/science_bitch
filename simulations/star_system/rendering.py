@@ -9,7 +9,7 @@ from matplotlib.patches import Circle
 from matplotlib.transforms import Bbox
 
 from .core import SOLAR_RADIUS_AU
-from .data import STARS, PLANETS, CATALOG, AU_KM, blackbody_rgb, star_size
+from .data import PLANETS, CATALOG, AU_KM, blackbody_rgb
 from .model import BodySpec
 from .initialization import PreparedSystem
 from .history import StateFrame

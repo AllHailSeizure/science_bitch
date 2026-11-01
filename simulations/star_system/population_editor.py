@@ -49,9 +49,11 @@ class PopulationEditor:
                                    activecolor=ACCENT, useblit=False)
         for picker in (self.kind, self.angles):
             picker.ax.set_facecolor(PANEL)
-            for spine in picker.ax.spines.values(): spine.set_visible(False)
+            for spine in picker.ax.spines.values():
+                spine.set_visible(False)
             picker.set_radio_props({'edgecolor': MUTED, 'facecolor': ACCENT})
-            for label in picker.labels: label.set_color(TEXT)
+            for label in picker.labels:
+                label.set_color(TEXT)
             self.widgets.append(picker)
         for key, label, value, y in (
             ('count', 'Particles (1-2000 total)', settings.count, .52),
@@ -80,13 +82,15 @@ class PopulationEditor:
         widget = Button(self.fig.add_axes(bounds), label, color='#1b3044', hovercolor='#294b60', useblit=False)
         widget.label.set_color(TEXT)
         widget.label.set_fontsize(9)
-        for spine in widget.ax.spines.values(): spine.set_edgecolor('#294055')
+        for spine in widget.ax.spines.values():
+            spine.set_edgecolor('#294055')
         widget.on_clicked(callback)
         self.widgets.append(widget)
         return widget
 
     def on_key(self, event):
-        if event.key == 'escape': self.finish()
+        if event.key == 'escape':
+            self.finish()
 
     def cycle_reference(self, event=None):
         keys = reference_ids((body.id, body.spec) for body in self.app.initial_setup.bodies)
@@ -114,13 +118,15 @@ class PopulationEditor:
             raise ValueError('Reference orbital period exceeds the numeric range; choose smaller radii.') from None
 
     def describe_reference(self):
-        if self.finished: return
+        if self.finished:
+            return
         try:
             body = self.reference_body()
             self.reference_label.set_text(fill(f'Reference: {body.spec.name} [{body.id}]', width=78)
                                           + '\nInitial reference frame / radii in AU / circular prograde velocities')
             inner = float(self.fields['inner'].text)
-            if not 0 < inner < float('inf'): raise ValueError('Enter a finite positive inner radius.')
+            if not 0 < inner < float('inf'):
+                raise ValueError('Enter a finite positive inner radius.')
             dt = self.fixed_dt(inner, body)
             self.timestep_label.set_text(f'Fixed dt on Apply: {dt:.6g} yr\n'
                                          'Uses min(starting dt, reference inner orbital period / 600).')
@@ -170,11 +176,14 @@ class PopulationEditor:
         self.finish(setup, prepared)
 
     def finish(self, setup=None, prepared=None, closing=False):
-        if self.finished: return
+        if self.finished:
+            return
         self.finished = True
         self.app.population_editor = None
-        for widget in self.widgets: widget.disconnect_events()
-        for connection in self.connections: self.fig.canvas.mpl_disconnect(connection)
+        for widget in self.widgets:
+            widget.disconnect_events()
+        for connection in self.connections:
+            self.fig.canvas.mpl_disconnect(connection)
         if prepared is not None:
             self.app.initial_setup = setup
             self.app._legacy_configuration = self.app._legacy_configuration and (

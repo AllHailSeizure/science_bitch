@@ -40,7 +40,7 @@ python -m ruff check .
 python -m pytest -q
 ```
 
-The test suite covers physics, population generation, controls, and rendering. Physics tolerances are listed in the [star system README](simulations/star_system/README.md). Tests select Matplotlib's Agg backend and need no display.
+The test suite covers physics, population generation, body authoring, persistence, recorded playback, collisions, controls, and rendering. Physics tolerances are listed in the [star system README](simulations/star_system/README.md). Tests select Matplotlib's Agg backend and need no display.
 
 [Ruff](https://docs.astral.sh/ruff/) checks application and test code using the rules in `ruff.toml`: Python errors, undefined/unused names, and ambiguous statements. Its version is pinned in `requirements-dev.txt` so local checks and CI use the same rules. To apply supported automatic fixes, run `python -m ruff check . --fix`, review the diff, and rerun both checks. Formatting is not enforced.
 

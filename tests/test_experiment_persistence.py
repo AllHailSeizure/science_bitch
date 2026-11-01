@@ -9,7 +9,7 @@ import pytest
 from PIL import Image
 
 from simulations.star_system.data import CATALOG, AU_KM
-from simulations.star_system.initialization import build_system, legacy_setup, insert_body, circular_relative_velocity
+from simulations.star_system.initialization import build_system, legacy_setup, circular_relative_velocity
 from simulations.star_system.model import InitialBody, InitialSetup, PopulationSpec
 from simulations.star_system.populations import Population
 from simulations.star_system.persistence import save_setup, load_setup, setup_digest
@@ -40,7 +40,8 @@ def test_roundtrip_initial_arrays_sources_and_fifty_steps(tmp_path, setup):
     assert a.body_ids == b.body_ids and a.reference_ids == b.reference_ids
     for key in ('masses', 'r', 'v'):
         np.testing.assert_array_equal(getattr(a.system, key), getattr(b.system, key))
-    a.system.step(50); b.system.step(50)
+    a.system.step(50)
+    b.system.step(50)
     np.testing.assert_allclose(a.system.r, b.system.r, rtol=1e-12, atol=1e-12)
     np.testing.assert_allclose(a.system.v, b.system.v, rtol=1e-12, atol=1e-12)
 
@@ -88,8 +89,11 @@ def test_save_creates_explicit_parent_path_after_validation(tmp_path):
     lambda d: d['setup']['bodies'][1].update(id='sun'),
 ])
 def test_invalid_or_unknown_settings_rejected(tmp_path, mutate):
-    path = tmp_path/'setup.json'; save_setup(fixtures()[0], path)
-    document = json.loads(path.read_text()); mutate(document); path.write_text(json.dumps(document))
+    path = tmp_path/'setup.json'
+    save_setup(fixtures()[0], path)
+    document = json.loads(path.read_text())
+    mutate(document)
+    path.write_text(json.dumps(document))
     with pytest.raises(ValueError):
         load_setup(path)
 
@@ -98,25 +102,33 @@ def test_invalid_or_unknown_settings_rejected(tmp_path, mutate):
                                    '{"schema_version":1,"schema_version":1}',
                                    '{"x":NaN}', '{"x":Infinity}', '{"x":1e999}'])
 def test_non_json_duplicate_and_nonfinite_rejected(tmp_path, content):
-    path = tmp_path/'bad.json'; path.write_text(content)
-    with pytest.raises(ValueError): load_setup(path)
+    path = tmp_path/'bad.json'
+    path.write_text(content)
+    with pytest.raises(ValueError):
+        load_setup(path)
 
 
 @pytest.mark.parametrize('key,value', [('generator', 'unknown'), ('version', 'unknown'),
                                      ('settings', {'bad': 'ignored?'})])
 def test_unknown_population_configuration_rejected(tmp_path, key, value):
-    path = tmp_path/'setup.json'; save_setup(fixtures()[2], path)
-    document = json.loads(path.read_text()); document['setup']['population'][key] = value
+    path = tmp_path/'setup.json'
+    save_setup(fixtures()[2], path)
+    document = json.loads(path.read_text())
+    document['setup']['population'][key] = value
     path.write_text(json.dumps(document))
-    with pytest.raises(ValueError): load_setup(path)
+    with pytest.raises(ValueError):
+        load_setup(path)
 
 
 @pytest.mark.parametrize('operation', ['replace', 'fsync'])
 def test_failed_atomic_replace_and_invalid_save_preserve_destination(tmp_path, monkeypatch, operation):
     import simulations.star_system.persistence as codec
-    path = tmp_path/'setup.json'; original = fixtures()[0]; save_setup(original, path)
+    path = tmp_path/'setup.json'
+    original = fixtures()[0]
+    save_setup(original, path)
     content = path.read_bytes()
-    unrelated = tmp_path/'.setup.json.someone-else.tmp'; unrelated.write_text('preserve')
+    unrelated = tmp_path/'.setup.json.someone-else.tmp'
+    unrelated.write_text('preserve')
     with pytest.raises(ValueError):
         save_setup(replace(original, bodies=(replace(original.bodies[0], reference_id='missing'),)), path)
     assert path.read_bytes() == content

@@ -36,19 +36,24 @@ class BodyEditor:
         if initial is not None:
             reference = initial.reference_id or 'world'
         self.panel = self._axes((0, .005, .31, .89))
-        self.panel.set_xticks([]); self.panel.set_yticks([])
+        self.panel.set_xticks([])
+        self.panel.set_yticks([])
         self.panel.text(.05, .985, ('Edit starting body' if body_id else 'Add body') + (' / preparation' if app.preparing else ' / live insertion'), color=TEXT, fontsize=12, va='top')
         self.notice = self.panel.text(.05, .94, '', color=MUTED, fontsize=8, va='top', wrap=True)
         self.category = RadioButtons(self._axes((.02,.727,.27,.065)), ['star','planet','moon','asteroid','custom'], active=(['star','planet','moon','asteroid'].index(self.spec.kind) if self.spec.catalog_key else 4), activecolor=ACCENT, useblit=False)
         for label in self.category.labels:
-            label.set_color(TEXT); label.set_fontsize(8)
+            label.set_color(TEXT)
+            label.set_fontsize(8)
         self.widgets.append(self.category)
         self.category.on_clicked(self.change_category)
         def field(key, label, value, y):
             widget = TextBox(self._axes((.118,y,.17,.026)), label+' ', initial=str(value), color='#1b3044', hovercolor='#294b60')
-            widget.label.set_color(TEXT); widget.label.set_fontsize(8)
-            widget.text_disp.set_color(TEXT); widget.text_disp.set_fontsize(8)
-            self.fields[key] = widget; self.widgets.append(widget)
+            widget.label.set_color(TEXT)
+            widget.label.set_fontsize(8)
+            widget.text_disp.set_color(TEXT)
+            widget.text_disp.set_fontsize(8)
+            self.fields[key] = widget
+            self.widgets.append(widget)
             return widget
         field('catalog','Catalog key',self.spec.catalog_key or 'custom',.688).on_submit(self.load_catalog)
         self.previous = self._button((.02,.652,.065,.026),'<', lambda e:self.browse(-1))
@@ -80,14 +85,17 @@ class BodyEditor:
 
     def _axes(self, bounds):
         ax = self.app.fig.add_axes(bounds,zorder=30,facecolor=PANEL)
-        for spine in ax.spines.values(): spine.set_visible(False)
+        for spine in ax.spines.values():
+            spine.set_visible(False)
         self.axes.append(ax)
         return ax
 
     def _button(self,bounds,label,callback):
         widget = Button(self._axes(bounds),label,color='#1b3044',hovercolor='#294b60',useblit=False)
-        widget.label.set_color(TEXT); widget.label.set_fontsize(8)
-        widget.on_clicked(callback); self.widgets.append(widget)
+        widget.label.set_color(TEXT)
+        widget.label.set_fontsize(8)
+        widget.on_clicked(callback)
+        self.widgets.append(widget)
         return widget
 
     def _describe(self):
@@ -145,7 +153,9 @@ class BodyEditor:
     def load_catalog(self, key):
         key = key.strip().lower()
         if key not in CATALOG:
-            self.error.set_text('Unknown catalog key. Use category and < / > to browse.'); self.app.painter.paint(); return
+            self.error.set_text('Unknown catalog key. Use category and < / > to browse.')
+            self.app.painter.paint()
+            return
         self.spec = CATALOG[key]
         self._fill_spec()
 
@@ -159,42 +169,55 @@ class BodyEditor:
         self.fields['catalog'].eventson=True
         self._filling_spec=False
         self.kind_changed()
-        self.error.set_text(''); self._describe(); self.preview()
+        self.error.set_text('')
+        self._describe()
+        self.preview()
 
     def cycle_reference(self,event=None):
         p=self.app.prepared
         keys=reference_ids(zip(p.body_ids,p.body_specs), exclude=self.body_id, world=not self.is_moon, kind='planet' if self.is_moon else None)
         if not keys:
-            self.error.set_text('Add a planet before authoring a moon.'); self.app.painter.paint(); return
+            self.error.set_text('Add a planet before authoring a moon.')
+            self.app.painter.paint()
+            return
         current=self.fields['reference'].text.strip()
         self.fields['reference'].set_val(keys[(keys.index(current)+1)%len(keys)] if current in keys else keys[0])
         self.preview()
 
     def reference_state(self):
         key=self.fields['reference'].text.strip()
-        if key == 'world' and not self.is_moon: return np.zeros(2),np.zeros(2),None
+        if key == 'world' and not self.is_moon:
+            return np.zeros(2),np.zeros(2),None
         p=self.app.prepared
         if not key or key not in p.body_ids:
             if self.is_moon:
                 raise ValueError('Choose an existing planet ID as the moon parent.')
             raise ValueError('Choose a massive reference ID from the body list, or enter world.')
-        if key == self.body_id: raise ValueError('A body cannot reference itself.')
+        if key == self.body_id:
+            raise ValueError('A body cannot reference itself.')
         i=p.body_ids.index(key)
         if self.is_moon and p.body_specs[i].kind != 'planet':
             raise ValueError('A moon parent must be a planet with positive mass.')
-        if p.system.masses[i] <= 0: raise ValueError('Choose a massive reference body.')
+        if p.system.masses[i] <= 0:
+            raise ValueError('Choose a massive reference body.')
         return p.system.r[i],p.system.v[i],key
 
     def vectors(self):
-        try: r=np.array([float(self.fields[k].text) for k in ('x','y')]); v=np.array([float(self.fields[k].text) for k in ('vx','vy')])
-        except ValueError: raise ValueError('Position and velocity components must be numbers.') from None
-        if not np.isfinite([r,v]).all(): raise ValueError('Position and velocity must be finite.')
+        try:
+            r=np.array([float(self.fields[k].text) for k in ('x','y')])
+            v=np.array([float(self.fields[k].text) for k in ('vx','vy')])
+        except ValueError:
+            raise ValueError('Position and velocity components must be numbers.') from None
+        if not np.isfinite([r,v]).all():
+            raise ValueError('Position and velocity must be finite.')
         return r,v
 
     def preview(self):
-        if self.finished or self._filling_spec: return
+        if self.finished or self._filling_spec:
+            return
         try:
-            r,v=self.vectors(); rr,vv,key=self.reference_state()
+            r,v=self.vectors()
+            rr,vv,key=self.reference_state()
             anchor=self.app.scene.world_to_display(r+rr)
             pixel=self.app.ax.transData.transform(anchor)
             displayed_v=self.app.scene.transform.vectors(v)
@@ -208,7 +231,9 @@ class BodyEditor:
             separation = self.fields['separation']
             distance_text=f'{distance*AU_KM:.10g}'
             if separation.text != distance_text:
-                separation.eventson=False; separation.set_val(distance_text); separation.eventson=True
+                separation.eventson=False
+                separation.set_val(distance_text)
+                separation.eventson=True
             text = (f'{label}: {reference} / '+('initial' if self.app.preparing else 'current')+' reference state\n'
                     f'relative r = ({r[0]:.6g}, {r[1]:.6g}) AU / {distance:.6g} AU = {distance*AU_KM:,.7g} km\n'
                     f'relative v = ({v[0]:.6g}, {v[1]:.6g}) AU/yr / speed {np.linalg.norm(v):.6g}\n'
@@ -225,44 +250,58 @@ class BodyEditor:
                     text += f'\nDraft fixed dt: {self.fields["dt"].text} yr'
                 text += '\nInitial aid only; no forced binding or reattachment.'
             self.legend.set_text(text)
-            for a in self.artists: a.set_visible(True)
+            for a in self.artists:
+                a.set_visible(True)
         except ValueError as exc:
-            self.marker.set_visible(False); self.arrow.set_visible(False)
-            self.legend.set_text(fill(str(exc),width=65)); self.legend.set_visible(True)
-        if hasattr(self.app,'painter'): self.app.painter.paint()
+            self.marker.set_visible(False)
+            self.arrow.set_visible(False)
+            self.legend.set_text(fill(str(exc),width=65))
+            self.legend.set_visible(True)
+        if hasattr(self.app,'painter'):
+            self.app.painter.paint()
 
     def on_press(self,event):
-        if event.button != 1 or event.inaxes != self.app.ax or self.app.sidebar.contains_event(event) or event.xdata is None: return
+        if event.button != 1 or event.inaxes != self.app.ax or self.app.sidebar.contains_event(event) or event.xdata is None:
+            return
         tip=self.app.ax.transData.transform(getattr(self,'velocity_tip',(np.inf,np.inf)))
         if np.linalg.norm(tip-(event.x,event.y)) < 15:
-            self.dragging=True; return
+            self.dragging=True
+            return
         rr,_,_=self.reference_state()
         world=self.app.scene.display_to_world((event.xdata,event.ydata))
         r=world-rr
-        for key,value in zip(('x','y'),r): self.fields[key].set_val(f'{value:.16g}')
+        for key,value in zip(('x','y'),r):
+            self.fields[key].set_val(f'{value:.16g}')
         self.preview()
 
     def on_motion(self,event):
-        if not self.dragging or event.x is None: return
+        if not self.dragging or event.x is None:
+            return
         displayed_v=(np.array([event.x,event.y])-self.app.ax.transData.transform(self.anchor))/VELOCITY_PIXELS_PER_AUYR
         v=self.app.scene.transform.inverse_vectors(displayed_v)
-        for key,value in zip(('vx','vy'),v): self.fields[key].set_val(f'{value:.16g}')
+        for key,value in zip(('vx','vy'),v):
+            self.fields[key].set_val(f'{value:.16g}')
         self.preview()
 
     def circular_aid(self,event=None):
         try:
-            r,_=self.vectors(); _,_,key=self.reference_state()
-            if key is None: raise ValueError('Circular aid requires a massive reference body, not world.')
+            r,_=self.vectors()
+            _,_,key=self.reference_state()
+            if key is None:
+                raise ValueError('Circular aid requires a massive reference body, not world.')
             mass=float(self.fields['mass'].text)
             ref_mass=self.app.system.masses[self.app.prepared.body_ids.index(key)]
             v=circular_relative_velocity(r,ref_mass,mass)
-            for key,value in zip(('vx','vy'),v): self.fields[key].set_val(f'{value:.16g}')
+            for key,value in zip(('vx','vy'),v):
+                self.fields[key].set_val(f'{value:.16g}')
             self.error.set_text('Two-body prograde initial aid; no stability guarantee.')
-        except ValueError as exc: self.error.set_text(fill(str(exc),width=49))
+        except ValueError as exc:
+            self.error.set_text(fill(str(exc),width=49))
         self.preview()
 
     def draft_body(self):
-        r,v=self.vectors(); _,_,reference=self.reference_state()
+        r,v=self.vectors()
+        _,_,reference=self.reference_state()
         values={key:(float(self.fields[key].text) if self.fields[key].text.strip() else None) for key in ('mass','radius','temperature')}
         overrides={key:value for key,value in values.items() if value != getattr(self.spec,key)}
         sources=dict(self.spec.sources)
@@ -277,13 +316,16 @@ class BodyEditor:
             body=self.draft_body()
             if self.app.preparing:
                 bodies=tuple(body if b.id == self.body_id else b for b in self.app.initial_setup.bodies)
-                if self.body_id is None: bodies += (body,)
+                if self.body_id is None:
+                    bodies += (body,)
                 setup=replace(self.app.initial_setup,bodies=bodies,dt=float(self.fields['dt'].text))
                 prepared=build_system(setup)
             else:
                 prepared=insert_body(self.app.prepared,body)
         except ValueError as exc:
-            self.error.set_text(fill(str(exc),width=49)); self.app.painter.paint(); return
+            self.error.set_text(fill(str(exc),width=49))
+            self.app.painter.paint()
+            return
         preparing = self.app.preparing
         self.finish(confirmed=True)
         if preparing:
@@ -295,15 +337,21 @@ class BodyEditor:
             self.app._refresh()
 
     def finish(self,confirmed=False):
-        if self.finished: return
+        if self.finished:
+            return
         self.finished=True
         self.app.body_editor=None
-        for w in self.widgets: w.disconnect_events()
-        for ax in self.axes: ax.set_animated(False); ax.remove()
+        for w in self.widgets:
+            w.disconnect_events()
+        for ax in self.axes:
+            ax.set_animated(False)
+            ax.remove()
         for artist in self.artists:
-            if artist in self.app.ax.get_children(): artist.remove()
+            if artist in self.app.ax.get_children():
+                artist.remove()
         self.app.paused=True if confirmed else self.was_paused
-        self.app.pending=0.; self.app.last=time.monotonic()
+        self.app.pending=0.
+        self.app.last=time.monotonic()
         self.app._sync_painter()
         self.app.sidebar._sync()
         self.app._refresh()
