@@ -9,7 +9,7 @@ if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hoste
     throw 'Native UI checks run only on GitHub-hosted remote runners.'
 }
 
-Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Drawing
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Drawing, System.Windows.Forms
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
@@ -71,8 +71,26 @@ function Invoke-Button([string]$Name) {
 
 function Select-Tab([string]$Name) {
     $control = Wait-Control $Name ([System.Windows.Automation.ControlType]::TabItem)
-    $pattern = $control.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
-    $pattern.Select()
+    Click-Control $control
+}
+
+function Click-Control([System.Windows.Automation.AutomationElement]$Control) {
+    $bounds = $Control.Current.BoundingRectangle
+    if ($bounds.Width -le 0 -or $bounds.Height -le 0) { throw 'Control has no visible native bounds.' }
+    [RemoteWindow]::SetForegroundWindow($script:windowHandle) | Out-Null
+    [RemoteWindow]::SetCursorPos([int]($bounds.X+$bounds.Width/2), [int]($bounds.Y+$bounds.Height/2)) | Out-Null
+    [RemoteWindow]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
+    [RemoteWindow]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 150
+}
+
+function Send-AppKeys([string]$Keys) {
+    $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
+    if ($null -eq $focused -or $focused.Current.ProcessId -ne $appPid) {
+        throw 'Refusing keyboard input outside the packaged application.'
+    }
+    [System.Windows.Forms.SendKeys]::SendWait($Keys)
+    Start-Sleep -Milliseconds 150
 }
 
 function Read-Texts {
@@ -153,18 +171,22 @@ try {
 
     # Qt virtualizes list rows; use the visible item rather than counting UIA children.
     $sun = Wait-Control 'Sun'
-    $sun.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    Click-Control $sun
     Select-Tab 'Edit body'
     $beforeMass = (Read-Texts | Where-Object { $_ -like 'Resulting mass:*' } | Select-Object -First 1)
     $mass = Wait-Control 'Mass multiplier'
-    $mass.GetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern).SetValue(2.)
+    Click-Control $mass
+    Send-AppKeys '^a2{TAB}'
     Invoke-Button 'Apply to starting setup'
     Wait-Result { (Read-Texts | Where-Object { $_ -like 'Resulting mass:*' -and $_ -ne $beforeMass }).Count -gt 0 } 'updated stellar mass' | Out-Null
     Capture '05-edited-stellar-mass'
     $script:checks.Add('Edit the starting stellar mass through the native control')
 
     Select-Tab 'Add body'
-    Wait-Control 'Body type' | Out-Null
+    $bodyType = Wait-Control 'Body type'
+    Click-Control $bodyType
+    Send-AppKeys '{END}{ENTER}'
+    Wait-Control 'Vesta' ([System.Windows.Automation.ControlType]::Text) | Out-Null
     Wait-Control 'Body definition' | Out-Null
     Capture '06-body-catalog'
     Invoke-Button 'Add'
