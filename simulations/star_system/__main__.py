@@ -1,4 +1,4 @@
-"""Default: prepare/calculate/playback GUI. --output: display-free PNG render."""
+"""Default: desktop starting menu. --output: display-free PNG render."""
 import argparse
 import math
 import sys
@@ -9,6 +9,10 @@ from .populations import Population, with_population
 
 
 def main(argv=None):
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if not arguments:
+        from .desktop import main as desktop_main
+        return desktop_main()
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument('--star', choices=STARS, default='sun')
     parser.add_argument('--load', type=Path, help='Load a versioned starting setup JSON')
@@ -23,7 +27,6 @@ def main(argv=None):
     parser.add_argument('--outer', type=float, help='Outer radius in AU; defaults to inner for rings, 3.5 otherwise')
     parser.add_argument('--seed', type=int, default=0, help='Nonnegative population seed')
     parser.add_argument('--angles', choices=('random', 'even'), default='random')
-    arguments = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(arguments)
     construction = {'--star', '--planet', '--population', '--count', '--inner', '--outer', '--seed', '--angles'}
     if args.load is not None and any(argument.split('=', 1)[0] in construction for argument in arguments):
