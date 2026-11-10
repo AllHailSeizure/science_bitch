@@ -170,11 +170,11 @@ try {
     $script:checks.Add('Run, pause and return to starting setup')
 
     # Qt virtualizes list rows; use the visible item rather than counting UIA children.
-    $sun = Wait-Control 'Sun'
+    $sun = Wait-Control 'Sun' ([System.Windows.Automation.ControlType]::ListItem)
     Click-Control $sun
     Select-Tab 'Edit body'
     $beforeMass = (Read-Texts | Where-Object { $_ -like 'Resulting mass:*' } | Select-Object -First 1)
-    $mass = Wait-Control 'Mass multiplier'
+    $mass = Wait-Control 'Mass multiplier' ([System.Windows.Automation.ControlType]::Spinner)
     Click-Control $mass
     Send-AppKeys '^a2{TAB}'
     Invoke-Button 'Apply to starting setup'
@@ -183,7 +183,7 @@ try {
     $script:checks.Add('Edit the starting stellar mass through the native control')
 
     Select-Tab 'Add body'
-    $bodyType = Wait-Control 'Body type'
+    $bodyType = Wait-Control 'Body type' ([System.Windows.Automation.ControlType]::ComboBox)
     Click-Control $bodyType
     Send-AppKeys '{END}{ENTER}'
     Wait-Control 'Vesta' ([System.Windows.Automation.ControlType]::Text) | Out-Null
