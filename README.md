@@ -4,6 +4,29 @@ Small, well-established physics simulations in Python. Each one uses an integrat
 
 ## Install
 
+For the Windows desktop application, double-click **Observatory.exe**. The
+executable includes Python, Qt, the renderer, and the physical catalog; no
+terminal or Python installation is needed. The Windows executable workflow
+provides it as the **Observatory-Windows** build artifact.
+
+The app opens at a starting menu: **Choose experiment** or **Load saved
+experiment**. Choose a prepared experiment to open its frozen starting setup.
+Every new experiment uses the Sun and all eight planets as its Solar System
+template. Run it unchanged, edit a copy, or save a variation. The supplied
+Solar System is an illustrative 2D circular model, not an ephemeris.
+
+To build the executable from source on Windows:
+
+```powershell
+python -m pip install -r requirements-build.txt
+./scripts/build-windows.ps1
+```
+
+The result is `dist/Observatory.exe`, a single windowed executable. The build
+script accepts `-Python <path-to-python.exe>` for a virtual environment.
+
+### Development installation
+
 From the repository root, with Python 3.10 or newer:
 
 ```bash
@@ -17,13 +40,36 @@ The dependencies are numpy, matplotlib, pillow, pytest, and PyQt6 (GUI backend).
 ## Run
 
 ```bash
-python -m simulations.star_system  # live interactive GUI
+python -m simulations.star_system  # desktop starting menu
 python -m simulations.star_system --star sun --planet earth --planet jupiter --output output/star-system.png
 ```
 
 Details, presets, and the other command-line flags are in each simulation's README:
 
 - [Interactive star system](simulations/star_system/README.md) — tunable stars and planets with full N-body gravity
+
+The desktop sidebar uses **Inspect**, **Add body**, and **Edit body** tabs.
+Add body follows **Type → Body → Information → Add → click in the scene**.
+Escape cancels placement. Drag the divider to resize the sidebar. Select a
+body to reveal its relevant parent–body L4/L5 guides and estimated orbit curves
+for its orbiting bodies. No Lagrange pair is chosen automatically for a star.
+**Focus selected and its orbiting bodies** zooms to the local system and
+follows it, so moons can be inspected without repeatedly zooming from the
+scale of the entire Solar System.
+
+**Edit body** lets you replace the catalog definition or multiply its mass
+while preserving starting motion. Exact properties and vectors are available
+in an expandable section. **Undo edit** and **Restore original** keep edits
+reversible. **Reset** returns a run to your edited starting setup; **Restore
+original** restores the supplied or loaded experiment. Save writes starting
+conditions, not the current live state or a recording.
+
+**Run / Pause** starts immediately. The optional **Calculate a recording**
+section computes a bounded result for playback. Previously calculated results
+remain selectable after editing the starting setup; each keeps its source
+name and digest. **Edit starting setup** returns to time zero for further
+changes. The explicit CLI construction flags retain the compatibility GUI;
+`--output` still renders headlessly.
 
 ## Development checks
 
