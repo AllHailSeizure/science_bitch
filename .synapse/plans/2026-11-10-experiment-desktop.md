@@ -50,3 +50,11 @@ Verification: `.venv/Scripts/python.exe -m pytest -q tests/test_desktop.py tests
 ### 4. Build and deliver executable (mechanical)
 
 Package PyQt6, Matplotlib, NumPy and catalog JSON into windowed `dist/Observatory.exe`; add a build script and Windows CI artifact workflow. Document launch and experiment editing. Run `.venv/Scripts/python.exe -m ruff check .`, `.venv/Scripts/python.exe -m pytest -q --basetemp output/pytest-desktop-final`, `powershell -File scripts/build-windows.ps1`, and launch the resulting application. Commit, push, and open a PR against master when checks pass.
+
+## Execution results
+
+- Tasks 1–4 implemented as a PR stack: foundations → desktop → Windows packaging.
+- Baseline: 327 tests passed. Integration suite: 354 passed before the final camera-focus addition. Final focused suite: 28 passed, including the camera addition; Ruff and whitespace checks passed.
+- The final Windows build produced the 78,501,936-byte single-file `dist/Observatory.exe`. Its archive includes Python, Qt Widgets, the physical catalog JSON and the DejaVu font.
+- The final executable loaded a saved all-eight-planet setup with a Moon from a separate working directory and rendered 0.05 years successfully (exit 0, 162,170-byte PNG).
+- Qt widget interaction tests and rendered 1280 × 800 previews were checked. The source application's native starting menu was observed through accessibility. The packaged app was launched minimized, but computer inspection was stopped with the user's Escape key before its menu could be inspected. A complete native packaged-app walkthrough is therefore unverified; no further Computer Use actions were taken.

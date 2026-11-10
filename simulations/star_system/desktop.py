@@ -72,12 +72,16 @@ def scrollable(widget):
 
 
 class Observatory(QMainWindow):
+    _fonts_loaded = False
+
     def __init__(self):
         super().__init__()
         # Matplotlib already ships this font, including in the frozen bundle.
         # Loading it explicitly also supports machines without system fonts.
-        if 'DejaVu Sans' not in QFontDatabase.families():
-            QFontDatabase.addApplicationFont(str(Path(get_data_path())/'fonts/ttf/DejaVuSans.ttf'))
+        if not Observatory._fonts_loaded:
+            for filename in ('DejaVuSans.ttf', 'DejaVuSans-Bold.ttf'):
+                QFontDatabase.addApplicationFont(str(Path(get_data_path())/'fonts/ttf'/filename))
+            Observatory._fonts_loaded = True
         self.setWindowTitle('Observatory')
         self.resize(1440, 940)
         self.setMinimumSize(960, 680)
@@ -184,6 +188,7 @@ class Observatory(QMainWindow):
         header = QHBoxLayout()
         header.addWidget(action('Starting menu', self.show_menu))
         self.name_field = QLineEdit()
+        self.name_field.setAccessibleName('Experiment name')
         self.name_field.setPlaceholderText('Experiment name')
         self.name_field.editingFinished.connect(self.rename_experiment)
         header.addWidget(self.name_field, 1)
@@ -199,6 +204,7 @@ class Observatory(QMainWindow):
         side.addWidget(self.mode_label)
         side.addWidget(label('Bodies', 'muted'))
         self.body_list = QListWidget()
+        self.body_list.setAccessibleName('Experiment bodies')
         self.body_list.setMinimumHeight(110)
         self.body_list.setMaximumHeight(150)
         self.body_list.currentItemChanged.connect(self.select_list_body)
@@ -246,6 +252,7 @@ class Observatory(QMainWindow):
         view_layout.setContentsMargins(0, 0, 0, 0)
         self.figure = Figure(figsize=(10, 8), facecolor=BACKGROUND)
         self.canvas = FigureCanvasQTAgg(self.figure)
+        self.canvas.setAccessibleName('Simulation scene')
         self.canvas.setMinimumWidth(480)
         self.ax = self.figure.add_axes((0, 0, 1, 1))
         view_layout.addWidget(self.canvas, 1)

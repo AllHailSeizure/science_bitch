@@ -1,0 +1,62 @@
+name: Windows executable
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'simulations/**'
+      - 'Observatory.spec'
+      - 'launch_observatory.pyw'
+      - 'requirements*.txt'
+      - 'scripts/build-windows.ps1'
+      - 'scripts/check-windows-ui.ps1'
+      - '.github/workflows/windows-executable.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-build.txt
+      - name: Install build dependencies
+        run: python -m pip install -r requirements-build.txt
+      - name: Build windowed executable
+        shell: pwsh
+        run: ./scripts/build-windows.ps1
+      - name: Check bundled headless render
+        shell: pwsh
+        run: |
+          $appProcess = Start-Process -FilePath ./dist/Observatory.exe -ArgumentList '--years 0.01 --output output/bundle-smoke.png' -WindowStyle Hidden -Wait -PassThru
+          if ($appProcess.ExitCode -ne 0 -or -not (Test-Path output/bundle-smoke.png)) {
+            throw 'Bundled application failed its headless render check.'
+          }
+      - name: Upload Windows application
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: Observatory-Windows
+          path: dist/Observatory.exe
+          if-no-files-found: error
+          retention-days: 14
+      - name: Exercise packaged Windows interface remotely
+        shell: pwsh
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/check-windows-ui.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged Windows UI check failed.' }
+      - name: Upload UI screenshots and report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: Observatory-UI-checks
+          path: output/windows-ui/
+          if-no-files-found: warn
+          retention-days: 14

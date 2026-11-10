@@ -1,9 +1,66 @@
 # Interactive star system
 
+## Desktop workflow
+
+Double-click **Observatory.exe**, or run `python -m simulations.star_system`
+from an installed source checkout. The native Qt desktop opens with **Choose
+experiment** and **Load saved experiment**. The Sun and eight planets form the
+default Solar System template. The prepared library includes that baseline,
+a doubled stellar mass, an added Moon, and a ring of editable massless test
+particles. Each opens frozen at time zero, with a description of what to observe.
+Use **Focus selected and its orbiting bodies** to zoom to a planet's local
+system and follow it; **Fit view** returns to the whole system.
+These use the existing illustrative planar circular initializer, not current
+astronomical positions or observed asteroid-capture initial conditions.
+
+Use **Run** to start, **Pause** to inspect, **Reset** to return to your edited
+starting conditions, and **Edit starting setup** to change the frozen setup.
+The sidebar is resizable. **Add body** uses type and body dropdowns, an image
+and physical information, then **Add** and a click in the scene. Escape cancels.
+Choose a named reference and either an initial circular-orbit aid or manual
+speed/direction. The circular aid sets initial motion once; it does not force
+an orbit during evolution. Position, velocity and exact physical inputs remain
+available under expandable controls. Velocity arrows use a linear 12 pixels
+per AU/year scale and can be dragged to edit starting motion.
+
+Selecting a body shows L4/L5 geometry for its assigned parent–body pair, plus
+instantaneous bound two-body ellipse estimates for its referenced orbiting
+bodies. The marker labels identify the pair. A star with no assigned parent
+has no unique Lagrange pair; selecting it shows its orbiting bodies' curves.
+Clearing selection clears these overlays. Orbit curves are estimates from the
+displayed state, not future N-body trajectories or capture detection.
+The L4/L5 construction follows the ideal equilateral geometry described by
+[NASA](https://science.nasa.gov/resource/what-is-a-lagrange-point/).
+
+**Edit body** can replace a definition or change its mass without changing
+starting vectors. Untouched displayed values retain their exact original
+values across unit conversions. Edits create a custom copy, validate atomically,
+and retain the original experiment. A conservative fixed step is chosen for
+the new starting setup when shorter timescales require it. **Undo edit** and
+**Restore original** restore prior starting definitions. Native file dialogs
+save and load the existing validated JSON format.
+
+The optional **Calculate a recording** section uses the shared bounded
+calculator. Recorded results retain their own source definitions after further
+edits; choose them from **Recorded results**. Saves contain starting conditions;
+recordings remain in memory. An unresolved encounter pauses or halts with the
+last valid state and a reason. The compatibility Matplotlib controller and
+explicit command-line construction/export flags described below remain available.
+
+Windows build instructions are in the root README. Packaging uses the
+[PyInstaller windowed executable workflow](https://www.pyinstaller.org/en/stable/usage.html)
+and bundles the existing Qt backend and catalog data.
+
+## Compatibility controller and command-line reference
+
+The following sections describe the compatibility Matplotlib controller and
+shared simulation APIs. Explicit construction flags open that controller;
+the default desktop uses the workflow above.
+
 Run from the repository root with `requirements.txt` installed:
 
 ```powershell
-python -m simulations.star_system
+python -m simulations.star_system --star sun --planet earth --planet jupiter
 python -m simulations.star_system --star sun --planet earth --planet jupiter --years 1 --output output/star-system.png
 python -m simulations.star_system --load output/experiment.json --years 0.01 --output output/restored.png
 python -m pytest -q
