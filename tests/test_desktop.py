@@ -155,6 +155,18 @@ def test_selection_replaces_and_clears_contextual_guides(window, qtapp):
     assert not any(item.get_visible() for item in window.context_names)
 
 
+def test_focus_frames_the_selected_planets_moon_without_changing_state(window, qtapp):
+    window.open_experiment('earth-moon')
+    qtapp.processEvents()
+    window.select_body('earth')
+    before = window.prepared.system.r.copy()
+    old_width = np.ptp(window.ax.get_xlim())
+    window.focus_button.click()
+    assert np.ptp(window.ax.get_xlim()) < old_width/100
+    assert window.following
+    np.testing.assert_array_equal(window.prepared.system.r, before)
+
+
 def test_save_reload_and_bad_load_are_transactional(window, qtapp, tmp_path):
     open_solar(window, qtapp)
     window.select_body('sun')

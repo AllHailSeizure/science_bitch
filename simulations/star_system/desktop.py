@@ -210,6 +210,8 @@ class Observatory(QMainWindow):
         inspection_layout.addWidget(self.body_information)
         self.context_label = label('Select a body in the scene or the list to inspect it.', 'muted')
         inspection_layout.addWidget(self.context_label)
+        self.focus_button = action('Focus selected and its orbiting bodies', self.focus_selected)
+        inspection_layout.addWidget(self.focus_button)
         self.follow_button = action('Follow selected', self.toggle_follow)
         inspection_layout.addWidget(self.follow_button)
         self.remove_button = action('Remove selected body', self.remove_selected)
@@ -425,6 +427,7 @@ class Observatory(QMainWindow):
     def refresh_inspection(self, update_editor=True):
         present = self.selected_id in self.prepared.body_ids
         self.body_information.setVisible(present)
+        self.focus_button.setEnabled(present)
         self.follow_button.setEnabled(present)
         if not present:
             self.context_label.setText('The selected body is absent from this state.' if self.selected_id else
@@ -865,6 +868,27 @@ class Observatory(QMainWindow):
             self.following = not self.following
             self.follow_button.setText('Stop following' if self.following else 'Follow selected')
             self.refresh_scene()
+
+    def focus_selected(self):
+        if self.selected_id not in self.prepared.body_ids:
+            return
+        i = self.prepared.body_ids.index(self.selected_id)
+        frame = StateFrame.capture(self.prepared)
+        context = selection_context(frame, self.selected_id)
+        center = self.scene.positions[i]
+        curves = list(context.orbits.values())
+        if curves:
+            points = self.scene.world_to_display(np.vstack(curves))
+            extent = max(1e-5, float(np.max(np.abs(points-center))))*1.25
+        else:
+            extent = .5
+        ratio = self.ax.bbox.height/max(self.ax.bbox.width, 1)
+        width = extent/min(1., ratio)
+        self.ax.set_xlim(center[0]-width, center[0]+width)
+        self.ax.set_ylim(center[1]-width*ratio, center[1]+width*ratio)
+        self.following = True
+        self.follow_button.setText('Stop following')
+        self.refresh_scene()
 
     def on_press(self, event):
         if not self.session or event.inaxes is not self.ax or event.button != 1 or event.xdata is None:
