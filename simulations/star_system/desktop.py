@@ -72,12 +72,16 @@ def scrollable(widget):
 
 
 class Observatory(QMainWindow):
+    _fonts_loaded = False
+
     def __init__(self):
         super().__init__()
         # Matplotlib already ships this font, including in the frozen bundle.
         # Loading it explicitly also supports machines without system fonts.
-        if 'DejaVu Sans' not in QFontDatabase.families():
-            QFontDatabase.addApplicationFont(str(Path(get_data_path())/'fonts/ttf/DejaVuSans.ttf'))
+        if not Observatory._fonts_loaded:
+            for filename in ('DejaVuSans.ttf', 'DejaVuSans-Bold.ttf'):
+                QFontDatabase.addApplicationFont(str(Path(get_data_path())/'fonts/ttf'/filename))
+            Observatory._fonts_loaded = True
         self.setWindowTitle('Observatory')
         self.resize(1440, 940)
         self.setMinimumSize(960, 680)

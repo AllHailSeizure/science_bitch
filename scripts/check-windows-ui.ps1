@@ -81,14 +81,6 @@ function Read-Texts {
     return @($elements | ForEach-Object { $_.Current.Name })
 }
 
-function Body-Count {
-    $list = Wait-Control 'Experiment bodies' ([System.Windows.Automation.ControlType]::List)
-    $condition = New-Object System.Windows.Automation.PropertyCondition(
-        [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-        [System.Windows.Automation.ControlType]::ListItem)
-    return $list.FindAll([System.Windows.Automation.TreeScope]::Children, $condition).Count
-}
-
 function Capture([string]$Name) {
     Start-Sleep -Milliseconds 300
     $rect = New-Object RemoteWindow+Rect
@@ -105,7 +97,10 @@ function Capture([string]$Name) {
     try {
         $bitmap.Save((Join-Path $outputPath ($Name+'.png')), [System.Drawing.Imaging.ImageFormat]::Png)
     } finally { $bitmap.Dispose() }
-    Read-Texts | Set-Content -LiteralPath (Join-Path $outputPath ($Name+'.txt')) -Encoding UTF8
+    $script:appWindow.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+        [System.Windows.Automation.Condition]::TrueCondition) |
+        ForEach-Object { $_.Current.ControlType.ProgrammaticName+': '+$_.Current.Name } |
+        Set-Content -LiteralPath (Join-Path $outputPath ($Name+'.txt')) -Encoding UTF8
     $script:captures.Add($Name+'.png')
 }
 
@@ -139,9 +134,14 @@ try {
     Capture '02-experiment-library'
     Invoke-Button 'Open frozen starting setup'
     Wait-Control 'Run' | Out-Null
-    Wait-Result { (Body-Count) -eq 9 } 'Sun and eight planets' | Out-Null
+    $name = Wait-Control 'Experiment name'
+    if ($name.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'Solar System') {
+        throw 'The library did not select the Solar System starting setup.'
+    }
+    Wait-Control 'Sun' | Out-Null
+    Wait-Result { (Read-Texts | Where-Object { $_ -like 'Starting setup*' }).Count -gt 0 } 'the frozen starting setup' | Out-Null
     Capture '03-frozen-solar-system'
-    $script:checks.Add('Library opens the frozen Solar System with nine bodies')
+    $script:checks.Add('Library opens the frozen Solar System')
 
     Invoke-Button 'Run'
     Wait-Control 'Pause' | Out-Null
@@ -151,7 +151,8 @@ try {
     Invoke-Button 'Reset'
     $script:checks.Add('Run, pause and return to starting setup')
 
-    $sun = Wait-Control 'Sun' ([System.Windows.Automation.ControlType]::ListItem)
+    # Qt virtualizes list rows; use the visible item rather than counting UIA children.
+    $sun = Wait-Control 'Sun'
     $sun.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
     Select-Tab 'Edit body'
     $beforeMass = (Read-Texts | Where-Object { $_ -like 'Resulting mass:*' } | Select-Object -First 1)
@@ -175,10 +176,10 @@ try {
     [RemoteWindow]::SetCursorPos([int]($bounds.X+$bounds.Width*.8), [int]($bounds.Y+$bounds.Height*.25)) | Out-Null
     [RemoteWindow]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
     [RemoteWindow]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
-    Wait-Result { (Body-Count) -eq 10 } 'scene placement adding the tenth body' | Out-Null
+    Wait-Result { (Read-Texts | Where-Object { $_ -like 'Body added to the starting setup.*' }).Count -gt 0 } 'successful scene placement' | Out-Null
     Capture '07-body-placed'
     Invoke-Button 'Undo edit'
-    Wait-Result { (Body-Count) -eq 9 } 'undo body placement' | Out-Null
+    Wait-Result { (Read-Texts | Where-Object { $_ -like 'Restored the previous starting setup.*' }).Count -gt 0 } 'undo body placement' | Out-Null
     Invoke-Button 'Restore original'
     Capture '08-original-restored'
     $script:checks.Add('Catalog, scene placement, undo and restore original')
