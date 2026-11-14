@@ -96,6 +96,7 @@ class Observatory(QMainWindow):
         self.history = deque(maxlen=MAX_HISTORY)
         self._drag = None
         self.following = False
+        self.planetary_id = None
         self.pending_time = 0.
         self.last_tick = time.monotonic()
         self.stack = QStackedWidget()
@@ -212,6 +213,8 @@ class Observatory(QMainWindow):
         inspection_layout.addWidget(self.context_label)
         self.focus_button = action('Focus selected and its orbiting bodies', self.focus_selected)
         inspection_layout.addWidget(self.focus_button)
+        self.planetary_button = action('Open planetary view', self.open_planetary_view)
+        inspection_layout.addWidget(self.planetary_button)
         self.follow_button = action('Follow selected', self.toggle_follow)
         inspection_layout.addWidget(self.follow_button)
         self.remove_button = action('Remove selected body', self.remove_selected)
@@ -257,6 +260,8 @@ class Observatory(QMainWindow):
         controls.addWidget(self.reset_button)
         controls.addWidget(self.step_button)
         controls.addWidget(action('Fit view', self.fit_view))
+        self.system_view_button = action('Return to system view', self.open_system_view)
+        controls.addWidget(self.system_view_button)
         controls.addWidget(label('Years / second', 'muted'))
         self.speed = spin(.5, .0001, 1000, 4)
         controls.addWidget(self.speed)
@@ -368,6 +373,7 @@ class Observatory(QMainWindow):
         self.editing, self.dirty = True, False
         self.pending_body = None
         self.following = False
+        self.planetary_id = None
         self.undo_stack.clear()
         self.playback = self.calculation = None
         self.result_combo.blockSignals(True)
@@ -400,6 +406,8 @@ class Observatory(QMainWindow):
         self.body_list.blockSignals(True)
         self.body_list.clear()
         for key, spec in zip(self.prepared.body_ids, self.prepared.body_specs):
+            if key not in self.visible_body_ids():
+                continue
             name = spec.name if spec.kind != 'particle' else 'Test particle '+key.rsplit(':', 1)[-1]
             item = QListWidgetItem(name)
             item.setData(Qt.ItemDataRole.UserRole, key)
@@ -418,7 +426,7 @@ class Observatory(QMainWindow):
         self.select_body(item.data(Qt.ItemDataRole.UserRole) if item else None)
 
     def select_body(self, body_id):
-        self.selected_id = body_id if body_id in self.prepared.body_ids else None
+        self.selected_id = body_id if body_id in self.visible_body_ids() else None
         self.refresh_inspection()
         self.sync_catalog_references()
         self.sync_controls()
@@ -428,6 +436,8 @@ class Observatory(QMainWindow):
         present = self.selected_id in self.prepared.body_ids
         self.body_information.setVisible(present)
         self.focus_button.setEnabled(present)
+        self.planetary_button.setEnabled(present and self.planetary_id is None and
+            self.prepared.body_specs[self.prepared.body_ids.index(self.selected_id)].kind == 'planet')
         self.follow_button.setEnabled(present)
         if not present:
             self.context_label.setText('The selected body is absent from this state.' if self.selected_id else
@@ -481,14 +491,56 @@ class Observatory(QMainWindow):
         self.arrows_checkbox.setEnabled(self.editing)
         self.progress.setVisible(calculating)
         self.result_combo.setEnabled(not calculating and not placing and bool(self.session.recordings))
+        self.system_view_button.setVisible(self.planetary_id is not None)
+
+    def visible_body_ids(self):
+        if self.planetary_id is None:
+            return set(self.prepared.body_ids)
+        return {self.planetary_id, *(key for key, ref in zip(self.prepared.body_ids, self.prepared.reference_ids)
+                                     if ref == self.planetary_id)}
+
+    def open_planetary_view(self):
+        if self.selected_id not in self.prepared.body_ids:
+            return
+        index = self.prepared.body_ids.index(self.selected_id)
+        if self.prepared.body_specs[index].kind != 'planet':
+            return
+        self.planetary_id = self.selected_id
+        self.scene.origin_id = self.planetary_id
+        self.scene.set_frame_mode('sun-relative')
+        self.following = False
+        self.refresh_bodies()
+        self.fit_view()
+
+    def open_system_view(self):
+        self.planetary_id = None
+        self.scene.origin_id = next((key for key, spec in zip(self.prepared.body_ids, self.prepared.body_specs)
+                                     if spec.kind == 'star'), self.prepared.body_ids[0])
+        self.scene.set_frame_mode('sun-relative')
+        self.following = False
+        self.refresh_bodies()
+        self.fit_view()
 
     def refresh_scene(self):
         if not self.session or not hasattr(self, 'scene'):
             return
+        if self.planetary_id is not None and self.planetary_id not in self.prepared.body_ids:
+            self.planetary_id = None
+            self.scene.origin_id = next((key for key, spec in zip(self.prepared.body_ids, self.prepared.body_specs)
+                                         if spec.kind == 'star'), self.prepared.body_ids[0])
+            self.refresh_bodies()
+            self.sync_controls()
         self.scene.update(self.prepared, self.history)
         self.scene.select(self.selected_id)
+        visible = self.visible_body_ids()
+        for key, artist in self.scene.artists_by_id.items():
+            artist.set_visible(artist.get_visible() and key in visible)
+            self.scene.labels_by_id[key].set_visible(self.scene.labels_by_id[key].get_visible() and key in visible)
+        for key, trail in self.scene.trails_by_id.items():
+            trail.set_visible(trail.get_visible() and key in visible)
         self.scene.highlight.set_visible(self.selected_id in self.prepared.body_ids)
-        self.scene.particles.set_visible(any(spec.kind == 'particle' for spec in self.prepared.body_specs))
+        self.scene.particles.set_visible(self.planetary_id is None and
+            any(spec.kind == 'particle' for spec in self.prepared.body_specs))
         # The legacy controller retains its compatibility guides. The desktop
         # deliberately replaces them with generic, selection-scoped overlays.
         self.scene.reference_guides.set_visible(False)
@@ -496,9 +548,10 @@ class Observatory(QMainWindow):
         for item in self.scene.guide_labels:
             item.set_visible(False)
         frame = StateFrame.capture(self.prepared)
-        context = selection_context(frame, self.selected_id)
+        context = selection_context(frame, self.planetary_id or self.selected_id)
         self.context_orbits.set_segments([self.scene.world_to_display(curve) for curve in context.orbits.values()])
-        points = self.scene.world_to_display(context.guides) if len(context.guides) else np.empty((0, 2))
+        points = (self.scene.world_to_display(context.guides)
+                  if self.planetary_id is None and len(context.guides) else np.empty((0, 2)))
         self.context_points.set_offsets(points)
         self.context_points.set_visible(bool(len(points)))
         for index, item in enumerate(self.context_names):
@@ -506,17 +559,21 @@ class Observatory(QMainWindow):
             if len(points):
                 item.xy = points[index]
         text = ''
-        if context.pair:
+        if context.pair and self.planetary_id is None:
             names = [frame.body_specs[frame.body_ids.index(key)].name for key in context.pair]
             text = ' – '.join(names)+': L4/L5 geometric guides (ideal circular model).'
         if context.orbits:
             text += '\nOrbit curves: instantaneous two-body estimates, not predicted trajectories.'
         self.context_note.set_text(text.strip())
+        if self.planetary_id is not None:
+            self.scene.heading.set_text(self.prepared.body_specs[self.prepared.body_ids.index(self.planetary_id)].name+
+                ' planetary view · planet-relative / inertial axes')
         self.draw_starting_velocities()
         if not self.editing:
             self.refresh_inspection(update_editor=False)
-        if self.following and self.selected_id in self.prepared.body_ids:
-            point = self.scene.positions[self.prepared.body_ids.index(self.selected_id)]
+        follow_id = self.planetary_id or self.selected_id
+        if self.following and follow_id in self.prepared.body_ids:
+            point = self.scene.positions[self.prepared.body_ids.index(follow_id)]
             width, height = np.ptp(self.ax.get_xlim()), np.ptp(self.ax.get_ylim())
             self.ax.set_xlim(point[0]-width/2, point[0]+width/2)
             self.ax.set_ylim(point[1]-height/2, point[1]+height/2)
@@ -530,6 +587,8 @@ class Observatory(QMainWindow):
             return
         self.velocity_tips = {}
         for i, (key, spec, reference) in enumerate(zip(self.prepared.body_ids, self.prepared.body_specs, self.prepared.reference_ids)):
+            if key not in self.visible_body_ids():
+                continue
             if spec.kind == 'particle' and key != self.selected_id:
                 continue
             parent = self.prepared.body_ids.index(reference) if reference in self.prepared.body_ids else None
@@ -860,7 +919,18 @@ class Observatory(QMainWindow):
     def fit_view(self):
         if self.session:
             self.following = False
-            self.scene.fit_view()
+            if self.planetary_id is None:
+                self.scene.fit_view()
+            else:
+                ids = self.visible_body_ids()
+                points = np.array([self.scene.positions[i] for i, key in enumerate(self.prepared.body_ids) if key in ids])
+                center = self.scene.positions[self.prepared.body_ids.index(self.planetary_id)]
+                extent = max(.05, float(np.max(np.abs(points-center)))*1.3)
+                ratio = self.ax.bbox.height/max(self.ax.bbox.width, 1)
+                width = extent/min(1., ratio)
+                self.ax.set_xlim(center[0]-width, center[0]+width)
+                self.ax.set_ylim(center[1]-width*ratio, center[1]+width*ratio)
+                self.following = True
             self.refresh_scene()
 
     def toggle_follow(self):
@@ -906,6 +976,7 @@ class Observatory(QMainWindow):
                 self.tell('Drag to set the starting velocity. Release applies; Escape cancels.')
                 return
         distances = np.linalg.norm(self.ax.transData.transform(self.scene.positions)-point, axis=1)
+        distances[[i for i, key in enumerate(self.prepared.body_ids) if key not in self.visible_body_ids()]] = np.inf
         index = int(np.argmin(distances))
         if distances[index] < 20:
             self.select_body(self.prepared.body_ids[index])

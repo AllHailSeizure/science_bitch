@@ -16,6 +16,12 @@ ten planet/dwarf-planet selectors. General catalog bodies and custom states are
 available through the authoring UI and Python API. A desktop backend is needed
 for interactive input; `--output` uses Agg without a display.
 
+In the desktop workspace, select a planet in the system view and choose
+**Open planetary view**. The scene recenters on that planet and shows it with
+the moons assigned to it in the experiment; the body list follows the same
+scope. **Return to system view** restores the full system. The switch changes
+only the display; gravity still includes every body in the experiment.
+
 ## Calculate first, then inspect
 
 The primary flow is **PREP → CALCULATING → RECORDED**. Prepare bodies,

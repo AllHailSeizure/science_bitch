@@ -167,6 +167,30 @@ def test_focus_frames_the_selected_planets_moon_without_changing_state(window, q
     np.testing.assert_array_equal(window.prepared.system.r, before)
 
 
+def test_planetary_view_shows_selected_planet_and_its_moon(window, qtapp):
+    from PyQt6.QtCore import Qt
+    window.open_experiment('earth-moon')
+    before = window.prepared.system.r.copy()
+    window.select_body('earth')
+    assert window.planetary_button.isEnabled()
+    window.planetary_button.click()
+    assert window.planetary_id == 'earth'
+    assert window.scene.origin_id == 'earth'
+    assert {window.body_list.item(i).data(Qt.ItemDataRole.UserRole)
+            for i in range(window.body_list.count())} == {'earth', 'moon'}
+    assert not window.scene.artists_by_id['sun'].get_visible()
+    assert window.scene.artists_by_id['moon'].get_visible()
+    assert len(window.context_orbits.get_segments()) == 1
+    assert 'planetary view' in window.scene.heading.get_text()
+    window.select_body('moon')
+    assert window.selected_id == 'moon'
+    window.system_view_button.click()
+    assert window.planetary_id is None
+    assert window.scene.origin_id == 'sun'
+    assert window.scene.artists_by_id['sun'].get_visible()
+    np.testing.assert_array_equal(window.prepared.system.r, before)
+
+
 def test_save_reload_and_bad_load_are_transactional(window, qtapp, tmp_path):
     open_solar(window, qtapp)
     window.select_body('sun')
