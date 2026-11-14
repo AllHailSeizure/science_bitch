@@ -40,7 +40,7 @@ class System:
         delta = self.r[None, sources, :] - self.r[:, None, :]
         d2 = np.sum(delta**2, axis=-1)
         d2[sources, np.arange(len(sources))] = np.inf
-        return G*np.sum(delta * (self.masses[None, sources]/d2**1.5)[:, :, None], axis=1)
+        return G*np.sum(delta * (self.masses[None, sources]/(d2*np.sqrt(d2)))[:, :, None], axis=1)
 
     def resolution_limit(self):
         """Largest supported step from pair gravity and relative crossing time."""
@@ -56,7 +56,7 @@ class System:
         dist[sources, np.arange(len(sources))] = np.inf
         speed = np.linalg.norm(self.v[None, sources, :] - self.v[:, None, :], axis=-1)
         with np.errstate(divide='ignore', invalid='ignore', over='ignore'):
-            gravity = np.sqrt(dist**3/(G*(self.masses[:, None]+self.masses[None, sources])))
+            gravity = np.sqrt((dist*dist*dist)/(G*(self.masses[:, None]+self.masses[None, sources])))
             crossing = np.divide(dist, speed, out=np.full_like(dist, np.inf), where=speed > 0)
         return float(min(np.min(gravity), np.min(crossing))/10)
 
