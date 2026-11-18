@@ -79,6 +79,9 @@ class System:
                 trial.validate_step()
                 trial.v += .5*h*trial.accelerations()
                 trial.validate_step()
+            candidate = self.time + self.dt
+            if not np.isfinite(candidate) or candidate <= self.time:
+                raise ValueError('Yoshida numerical halt: timestep cannot advance clock; state preserved.')
             self.r[:] = trial.r
             self.v[:] = trial.v
             self.time += self.dt
