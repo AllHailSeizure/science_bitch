@@ -85,12 +85,16 @@ def _validate_surfaces(r, specs, collision_mode='none'):
         raise ValueError(f'Bodies overlap: {specs[i].name} and {specs[sources[j]].name}. Move them apart.')
 
 
-def build_system(setup):
-    if any(body.spec.kind == 'particle' and body.spec.mass != 0 for body in setup.bodies):
-        raise ValueError('Test particles must have mass zero.')
+def _validate_particles(specs):
     from .populations import MAX_PARTICLES
-    if sum(body.spec.kind == 'particle' for body in setup.bodies) > MAX_PARTICLES:
+    if any(spec.kind == 'particle' and spec.mass != 0 for spec in specs):
+        raise ValueError('Test particles must have mass zero.')
+    if sum(spec.kind == 'particle' for spec in specs) > MAX_PARTICLES:
         raise ValueError(f'At most {MAX_PARTICLES} test particles are supported.')
+
+
+def build_system(setup):
+    _validate_particles(tuple(body.spec for body in setup.bodies))
     bodies = {body.id: body for body in setup.bodies}
     if len(bodies) != len(setup.bodies):
         raise ValueError('Body IDs must be unique, including repeated catalog choices.')
@@ -153,6 +157,7 @@ def insert_body(prepared, body):
         raise ValueError('Body ID already exists; choose a unique instance ID.')
     if body.spec.mass is None:
         raise ValueError('Gravity requires a known mass; enter a custom mass.')
+    _validate_particles(prepared.body_specs+(body.spec,))
     r, v = np.array(body.r), np.array(body.v)
     if body.reference_id is not None:
         if body.reference_id not in prepared.body_ids:

@@ -308,10 +308,14 @@ def advance_prepared(prepared):
                     continue
                 a, b = (trial.body_ids.index(key) for key in contact[1:])
                 radius = sum(trial.body_specs[i].radius if trial.system.masses[i] > 0 else 0. for i in (a, b))
-                distance = float(np.linalg.norm(candidate.r[a]-candidate.r[b]))
+                # World endpoints near 1 AU cannot preserve a sub-kilometer
+                # separation. Verify the same relative drift the root search used.
+                relative = ((s.r[a]-s.r[b])+(s.v[a]-s.v[b])*elapsed
+                            +.5*(acceleration[a]-acceleration[b])*elapsed**2)
+                distance = float(np.linalg.norm(relative))
                 # Time proximity alone cannot put a still-separated pair into
                 # the contact group (especially when h << time_tolerance).
-                if distance <= radius*(1+policy.distance_rtol)+64*np.finfo(float).eps*max(radius, distance):
+                if distance <= radius*(1+policy.distance_rtol)+64*np.finfo(float).eps*max(radius, distance, float(np.linalg.norm(s.r[a]-s.r[b]))):
                     simultaneous.append(contact)
             if not simultaneous:
                 raise ValueError('Collision numerical halt: swept contact geometry unresolved; state preserved.')

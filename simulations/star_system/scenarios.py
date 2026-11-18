@@ -26,14 +26,32 @@ def get_scenario(key):
                    provenance={'origin_preset': key, 'description': DESCRIPTIONS[key]})
 
 
+def _catalog_id(prepared, catalog_key):
+    matches = [body_id for body_id, spec in zip(prepared.body_ids, prepared.body_specs)
+               if spec.catalog_key == catalog_key]
+    if len(matches) != 1:
+        raise ValueError(f'Jupiter comparison needs exactly one catalog {catalog_key.title()}.')
+    return matches[0]
+
+
+def _perturber_record(prepared, body_id):
+    index = prepared.body_ids.index(body_id)
+    spec = prepared.body_specs[index]
+    return {'id': body_id, 'catalog_key': spec.catalog_key, 'mass': float(spec.mass),
+            'radius': None if spec.radius is None else float(spec.radius),
+            'r': tuple(float(value) for value in prepared.system.r[index]),
+            'v': tuple(float(value) for value in prepared.system.v[index])}
+
+
 def make_jupiter_comparison(setup):
-    """Remove only Jupiter from an already resolved state; never regenerate/recenter."""
+    """Remove only catalog Jupiter from an already resolved state; never regenerate/recenter."""
     from .persistence import setup_digest
     prepared = build_system(setup)
-    jupiter = reference_id(prepared, 'jupiter')
+    jupiter = _catalog_id(prepared, 'jupiter')
     sun = reference_id(prepared, 'sun')
     source = setup_digest(setup)
-    metadata = dict(setup.provenance, comparison_source=source, comparison_sun=sun)
+    metadata = dict(setup.provenance, comparison_source=source, comparison_sun=sun,
+                    comparison_perturber=_perturber_record(prepared, jupiter))
     with_jupiter = replace(setup, provenance=dict(metadata, comparison_role='with-jupiter'))
     authored = {body.id: body for body in setup.bodies}
     if any(body.spec.kind == 'moon' and body.reference_id == jupiter for body in setup.bodies):
@@ -68,7 +86,8 @@ def compare_recordings(first, second):
         other = metadata[1-i]
         if not metadata[i].get('comparison_source') and run.setup_digest == other.get('comparison_source'):
             metadata[i].update(comparison_source=run.setup_digest, comparison_role='with-jupiter',
-                               comparison_sun=other['comparison_sun'])
+                               comparison_sun=other['comparison_sun'],
+                               comparison_perturber=other.get('comparison_perturber'))
     if (not metadata[0].get('comparison_source') or metadata[0].get('comparison_source') != metadata[1].get('comparison_source')
             or {m.get('comparison_role') for m in metadata} != {'with-jupiter', 'without-jupiter'}
             or setups[0].dt != setups[1].dt):
@@ -76,7 +95,17 @@ def compare_recordings(first, second):
     initial = [build_system(setup) for setup in setups]
     perturbation = next(i for i, m in enumerate(metadata) if m['comparison_role'] == 'with-jupiter')
     original, control = initial[perturbation], initial[1-perturbation]
-    jupiter = reference_id(original, 'jupiter')
+    jupiter = _catalog_id(original, 'jupiter')
+    recorded = metadata[0].get('comparison_perturber') or metadata[1].get('comparison_perturber')
+    if recorded is None or not hasattr(recorded, 'get'):
+        raise ValueError('Matched Jupiter comparison is missing the original Jupiter record. Make the pair again.')
+    index = original.body_ids.index(jupiter)
+    spec = original.body_specs[index]
+    same_motion = (np.array_equal(original.system.r[index], np.asarray(recorded['r'], dtype=float))
+                   and np.array_equal(original.system.v[index], np.asarray(recorded['v'], dtype=float)))
+    if (spec.catalog_key != 'jupiter' or jupiter != recorded['id'] or spec.mass != recorded['mass']
+            or spec.radius != recorded['radius'] or not same_motion):
+        raise ValueError('The Jupiter treatment no longer matches the paired source. Make a new comparison from the edited setup.')
     expected = set(original.body_ids)-{jupiter}
     if (set(control.body_ids) != expected or setups[0].collision_mode != setups[1].collision_mode
             or setups[0].collision_policy != setups[1].collision_policy):

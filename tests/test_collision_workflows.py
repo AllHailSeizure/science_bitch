@@ -121,6 +121,37 @@ def test_current_capture_retains_mode_policy_ancestry_and_valid_moon_parent(tmp_
     assert setup.bodies[0].id == 'a'  # original source unchanged
 
 
+def test_repeated_capture_preserves_merger_ancestry(tmp_path):
+    spec = BodySpec('Rock', 'asteroid', 1e-14, .1)
+    setup = InitialSetup('Three rocks', (
+        InitialBody('a', spec, (-1., 0.), (10., 0.)),
+        InitialBody('b', spec, (1., 0.), (0., 0.)),
+        InitialBody('c', spec, (10., 0.), (0., 0.)),
+    ), .2, collision_mode='perfect_merge')
+    merged = advance_prepared(build_system(setup)).prepared
+    assert len(merged.events) == 1
+    first = capture_current_setup(merged, setup, 'Epoch 1')
+    save_setup(first, tmp_path/'epoch1.json')
+    loaded = load_setup(tmp_path/'epoch1.json')
+    assert loaded.provenance['collision_events'][0]['source_epoch'] == 'Three rocks'
+    second = capture_current_setup(build_system(loaded), loaded, 'Epoch 2')
+    save_setup(second, tmp_path/'epoch2.json')
+    reloaded = load_setup(tmp_path/'epoch2.json')
+    assert len(reloaded.provenance['collision_events']) == 1
+    record = reloaded.provenance['collision_events'][0]
+    assert set(record['ancestry']) == {'a', 'b'}
+    assert record['source_epoch'] == 'Three rocks'
+    assert record['epoch_time'] == first.provenance['collision_events'][0]['epoch_time']
+    state = build_system(reloaded)
+    later = None
+    for _ in range(30):
+        state = advance_prepared(state).prepared
+        if state.events:
+            later = state.events[-1]
+            break
+    assert later is not None and {'a', 'b', 'c'} <= set(later.ancestry)
+
+
 def test_memory_budget_rejects_event_macro_without_losing_policy_or_metadata():
     calc = Calculation(setup_fixture(), CalculationRequest(.4, 100))
     before = calc._checkpoint

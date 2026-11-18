@@ -7,6 +7,7 @@ from simulations.star_system.model import BodySpec, InitialBody, InitialSetup
 from simulations.star_system.initialization import build_system
 from simulations.star_system.collisions import advance_prepared, merge_pair, CollisionEvent
 from simulations.star_system.core import System
+from simulations.star_system.data import CATALOG
 
 
 def fixture(dt=.2, *, y=0., speed=10., mass=1e-14, kind='planet'):
@@ -28,8 +29,11 @@ def test_merge_conserves_mass_momentum_and_records_unmodeled_spin():
     assert merged.body_specs[0].radius == pytest.approx(np.cbrt(.002))
     assert merged.body_specs[0].temperature is None and not merged.body_specs[0].sources
     assert merged.body_specs[0].kind == 'planet'
-    assert event.lost_relative_kinetic == pytest.approx(.5*(2e-28/3e-14)*4.)
-    assert event.unmodeled_spin == pytest.approx(old.invariants()[2]-merged.system.invariants()[2])
+    expected_loss = .5*(2e-28/3e-14)*4.
+    expected_spin = old.invariants()[2]-merged.system.invariants()[2]
+    assert event.lost_relative_kinetic == pytest.approx(expected_loss, rel=1e-12, abs=0)
+    assert event.unmodeled_spin == pytest.approx(expected_spin, rel=1e-12, abs=0)
+    assert event.unmodeled_spin < 0
     np.testing.assert_array_equal(p.system.r, old.r)
 
 
@@ -110,7 +114,7 @@ def test_time_tie_tolerance_never_merges_a_still_separated_pair():
     result = advance_prepared(build_system(setup))
     events = result.prepared.events
     assert len(events) == 2 and events[0].time < events[1].time
-    assert events[1].time-events[0].time == pytest.approx(2e-16, rel=1e-8)
+    assert events[1].time-events[0].time == pytest.approx(2e-16, rel=1e-8, abs=0)
     for frame in result.event_frames:
         if frame.event_phase == 'pre':
             event = frame.events[-1]
@@ -246,3 +250,41 @@ def test_contact_time_converges_under_macro_dt_halving():
     print('contact convergence (dt=.08,.04,.02,reference=.0025):', times, 'errors:', errors)
     assert errors[2] < errors[1] < errors[0]
     assert errors[0] < 2e-5 and errors[2] < 2e-6
+
+
+def test_head_on_merger_loses_energy_and_keeps_spin_near_zero():
+    merged, event = merge_pair(build_system(fixture(dt=.001, y=0., speed=2.)), 'b', 'a')
+    assert event.lost_relative_kinetic > 0
+    assert event.unmodeled_spin == pytest.approx(0., abs=1e-18)
+    assert len(merged.body_ids) == 1
+
+
+def _bennu_pair(x, y=0.):
+    rock = CATALOG['bennu']
+    return build_system(InitialSetup('impact', (
+        InitialBody('a', rock, (x, y), (0.2, 3.5)),
+        InitialBody('b', rock, (x+2**-20, 0), (0, 3.5)),
+    ), 1e-5, collision_mode='perfect_merge'))
+
+
+def test_asteroid_contact_does_not_depend_on_a_one_au_translation():
+    origin = advance_prepared(_bennu_pair(0.)).prepared
+    shifted = advance_prepared(_bennu_pair(1.)).prepared
+    assert origin.events and shifted.events
+    assert shifted.events[0].time == pytest.approx(origin.events[0].time, rel=1e-8, abs=0)
+    assert shifted.events[0].kind == origin.events[0].kind == 'merge'
+
+
+def test_translated_near_miss_stays_a_miss_and_unresolved_contact_rolls_back():
+    gap = 4*CATALOG['bennu'].radius
+    for x in (0., 1.):
+        missed = advance_prepared(_bennu_pair(x, y=gap)).prepared
+        assert missed.events == () and len(missed.body_ids) == 2
+        assert missed.system.time == pytest.approx(1e-5)
+    star = build_system(fixture(kind='star'))
+    old = (star.system.r.copy(), star.system.v.copy(), star.system.time, star.body_ids, star.events)
+    with pytest.raises(ValueError, match='unresolved|star'):
+        advance_prepared(star)
+    np.testing.assert_array_equal(star.system.r, old[0])
+    np.testing.assert_array_equal(star.system.v, old[1])
+    assert star.system.time == old[2] and star.body_ids == old[3] and star.events == old[4]
