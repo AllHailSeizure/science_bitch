@@ -280,6 +280,7 @@ class Observatory(QMainWindow):
         self.result_combo = Dropdown()
         self.result_combo.setMinimumContentsLength(20)
         self.result_combo.currentIndexChanged.connect(self.select_recording)
+        self.result_combo.activated.connect(self.select_recording)
         recordings.addWidget(self.result_combo, 1)
         self.progress = QProgressBar()
         self.progress.setVisible(False)
@@ -496,8 +497,9 @@ class Observatory(QMainWindow):
     def visible_body_ids(self):
         if self.planetary_id is None:
             return set(self.prepared.body_ids)
-        return {self.planetary_id, *(key for key, ref in zip(self.prepared.body_ids, self.prepared.reference_ids)
-                                     if ref == self.planetary_id)}
+        return {self.planetary_id, *(key for key, spec, ref in zip(
+            self.prepared.body_ids, self.prepared.body_specs, self.prepared.reference_ids)
+            if ref == self.planetary_id and spec.kind == 'moon')}
 
     def open_planetary_view(self):
         if self.selected_id not in self.prepared.body_ids:
@@ -511,6 +513,7 @@ class Observatory(QMainWindow):
         self.following = False
         self.refresh_bodies()
         self.fit_view()
+        self.sync_controls()
 
     def open_system_view(self):
         self.planetary_id = None
@@ -520,6 +523,7 @@ class Observatory(QMainWindow):
         self.following = False
         self.refresh_bodies()
         self.fit_view()
+        self.sync_controls()
 
     def refresh_scene(self):
         if not self.session or not hasattr(self, 'scene'):
@@ -539,8 +543,10 @@ class Observatory(QMainWindow):
         for key, trail in self.scene.trails_by_id.items():
             trail.set_visible(trail.get_visible() and key in visible)
         self.scene.highlight.set_visible(self.selected_id in self.prepared.body_ids)
-        self.scene.particles.set_visible(self.planetary_id is None and
-            any(spec.kind == 'particle' for spec in self.prepared.body_specs))
+        particle_rows = [i for i, (key, spec) in enumerate(zip(self.prepared.body_ids, self.prepared.body_specs))
+                         if spec.kind == 'particle' and key in visible]
+        self.scene.particles.set_offsets(self.scene.positions[particle_rows] if particle_rows else np.empty((0, 2)))
+        self.scene.particles.set_visible(bool(particle_rows))
         # The legacy controller retains its compatibility guides. The desktop
         # deliberately replaces them with generic, selection-scoped overlays.
         self.scene.reference_guides.set_visible(False)
@@ -583,9 +589,9 @@ class Observatory(QMainWindow):
         for artist in self.velocity_artists:
             artist.remove()
         self.velocity_artists.clear()
+        self.velocity_tips = {}
         if not self.editing or not self.arrows_checkbox.isChecked():
             return
-        self.velocity_tips = {}
         for i, (key, spec, reference) in enumerate(zip(self.prepared.body_ids, self.prepared.body_specs, self.prepared.reference_ids)):
             if key not in self.visible_body_ids():
                 continue
@@ -757,6 +763,9 @@ class Observatory(QMainWindow):
         self.stop_activity()
         self.cancel_interaction()
         self.playback = None
+        self.result_combo.blockSignals(True)
+        self.result_combo.setCurrentIndex(-1)
+        self.result_combo.blockSignals(False)
         self.session.restart()
         self.editing = True
         self.history = deque([StateFrame.capture(self.prepared)], maxlen=MAX_HISTORY)
@@ -967,7 +976,8 @@ class Observatory(QMainWindow):
             self.place_at(self.scene.display_to_world((event.xdata, event.ydata)))
             return
         point = np.array([event.x, event.y])
-        if self.editing and self.selected_id in getattr(self, 'velocity_tips', {}):
+        if (self.editing and self.arrows_checkbox.isChecked()
+                and self.selected_id in getattr(self, 'velocity_tips', {})):
             tip = self.ax.transData.transform(self.velocity_tips[self.selected_id])
             index = self.prepared.body_ids.index(self.selected_id)
             anchor = self.ax.transData.transform(self.scene.positions[index])

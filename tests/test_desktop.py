@@ -1,5 +1,7 @@
 """Exercise native widgets and scene callbacks through the normal desktop workflow."""
 import os
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import numpy as np
@@ -35,6 +37,15 @@ def open_solar(window, qtapp):
     qtapp.processEvents()
 
 
+def widget_point(window, world):
+    """Matplotlib event pixels are physical; Qt mouse positions are logical."""
+    from PyQt6.QtCore import QPoint
+    display = window.scene.world_to_display(world)
+    pixel = window.ax.transData.transform(display)
+    ratio = float(getattr(window.canvas, 'device_pixel_ratio', 1) or 1)
+    return QPoint(round(pixel[0]/ratio), round((window.figure.bbox.height-pixel[1])/ratio))
+
+
 def test_launch_menu_then_frozen_solar_system(window, qtapp):
     assert window.session is None
     assert window.stack.currentWidget() is window.menu_page
@@ -59,7 +70,7 @@ def test_module_default_uses_desktop_entry(monkeypatch):
 
 
 def test_dropdown_info_add_then_scene_placement(window, qtapp):
-    from PyQt6.QtCore import Qt, QPoint
+    from PyQt6.QtCore import Qt
     from PyQt6.QtTest import QTest
     open_solar(window, qtapp)
     original = setup_digest(window.setup)
@@ -72,10 +83,7 @@ def test_dropdown_info_add_then_scene_placement(window, qtapp):
     assert window.pending_body is not None
     assert setup_digest(window.setup) == original
     world = window.prepared.system.r[0]+(2.1, 1.2)
-    display = window.scene.world_to_display(world)
-    pixel = window.ax.transData.transform(display)
-    QTest.mouseClick(window.canvas, Qt.MouseButton.LeftButton,
-        pos=QPoint(round(pixel[0]), round(window.figure.bbox.height-pixel[1])))
+    QTest.mouseClick(window.canvas, Qt.MouseButton.LeftButton, pos=widget_point(window, world))
     qtapp.processEvents()
     assert window.pending_body is None
     assert len(window.setup.bodies) == 10
@@ -96,6 +104,19 @@ def test_escape_cancels_placement_without_editing(window, qtapp):
     assert window.pending_body is None
     assert setup_digest(window.setup) == before
     assert not window.dirty
+
+
+@pytest.mark.parametrize('scale', ['1', '2'])
+def test_scene_placement_works_at_device_scale(scale):
+    env = os.environ.copy()
+    env['QT_QPA_PLATFORM'] = 'offscreen'
+    env['QT_SCALE_FACTOR'] = scale
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    completed = subprocess.run(
+        [sys.executable, '-m', 'pytest', '-q', '--tb=line', '-p', 'no:cacheprovider',
+         'tests/test_desktop.py::test_dropdown_info_add_then_scene_placement'],
+        cwd=root, env=env, capture_output=True, text=True, check=False)
+    assert completed.returncode == 0, completed.stdout+'\n'+completed.stderr
 
 
 def test_mass_edit_restore_and_undo_preserve_frozen_original(window, qtapp):
@@ -175,6 +196,7 @@ def test_planetary_view_shows_selected_planet_and_its_moon(window, qtapp):
     assert window.planetary_button.isEnabled()
     window.planetary_button.click()
     assert window.planetary_id == 'earth'
+    assert window.system_view_button.isVisible()
     assert window.scene.origin_id == 'earth'
     assert {window.body_list.item(i).data(Qt.ItemDataRole.UserRole)
             for i in range(window.body_list.count())} == {'earth', 'moon'}
@@ -184,11 +206,50 @@ def test_planetary_view_shows_selected_planet_and_its_moon(window, qtapp):
     assert 'planetary view' in window.scene.heading.get_text()
     window.select_body('moon')
     assert window.selected_id == 'moon'
+    assert window.system_view_button.isVisible()
     window.system_view_button.click()
     assert window.planetary_id is None
+    assert not window.system_view_button.isVisible()
     assert window.scene.origin_id == 'sun'
     assert window.scene.artists_by_id['sun'].get_visible()
     np.testing.assert_array_equal(window.prepared.system.r, before)
+
+
+def test_planetary_view_return_is_visible_without_a_moon(window, qtapp):
+    from PyQt6.QtCore import Qt
+    open_solar(window, qtapp)
+    window.select_body('mercury')
+    window.planetary_button.click()
+    assert window.planetary_id == 'mercury'
+    assert window.system_view_button.isVisible()
+    assert {window.body_list.item(i).data(Qt.ItemDataRole.UserRole)
+            for i in range(window.body_list.count())} == {'mercury'}
+    window.system_view_button.click()
+    assert window.planetary_id is None
+    assert not window.system_view_button.isVisible()
+    assert window.scene.artists_by_id['sun'].get_visible()
+
+
+def test_planetary_view_membership_is_the_planet_and_its_moons(window, qtapp):
+    from PyQt6.QtCore import Qt
+    from simulations.star_system.model import BodySpec
+    from simulations.star_system.templates import place_body
+    window.open_experiment('earth-moon')
+    earth = window.prepared.body_ids.index('earth')
+    tracer = BodySpec('tracer', 'particle', 0., None)
+    setup = place_body(window.setup, tracer, window.prepared.system.r[earth]+(0.002, 0.001),
+                       'earth', circular=False, velocity=(0., 0.), body_id='tracer')
+    window.install_experiment(setup)
+    window.select_body('earth')
+    window.planetary_button.click()
+    listed = {window.body_list.item(i).data(Qt.ItemDataRole.UserRole)
+              for i in range(window.body_list.count())}
+    assert listed == window.visible_body_ids() == {'earth', 'moon'}
+    assert window.scene.artists_by_id['earth'].get_visible()
+    assert window.scene.artists_by_id['moon'].get_visible()
+    assert not window.scene.particles.get_visible()
+    window.select_body('tracer')
+    assert window.selected_id is None
 
 
 def test_save_reload_and_bad_load_are_transactional(window, qtapp, tmp_path):
@@ -229,12 +290,25 @@ def test_recordings_keep_their_source_when_edited_setup_changes(window, qtapp):
     window.properties.apply_button.click()
     edited_digest = setup_digest(window.setup)
     assert edited_digest != original_digest
-    window.result_combo.setCurrentIndex(-1)
+    assert window.playback is None
+    assert window.result_combo.currentIndex() == -1
+    opened = window.session.recordings[0]
     window.result_combo.setCurrentIndex(0)
     assert window.playback.recording.setup_digest == original_digest
+    assert window.prepared.system.time == opened.frames[0].time
+    assert window.prepared.system.masses[0] == 1
     assert setup_digest(window.setup) == edited_digest
     window.edit_starting_setup()
     assert window.prepared.system.masses[0] == 2
+    assert window.playback is None
+    window.result_combo.blockSignals(True)
+    window.result_combo.setCurrentIndex(0)
+    window.result_combo.blockSignals(False)
+    assert window.playback is None
+    window.result_combo.activated.emit(0)
+    assert window.playback.recording.setup_digest == original_digest
+    assert window.prepared.system.time == opened.frames[0].time
+    assert window.prepared.system.masses[0] == 1
 
 
 def test_invalid_property_and_overlapping_placement_preserve_setup(window, qtapp):
@@ -249,6 +323,23 @@ def test_invalid_property_and_overlapping_placement_preserve_setup(window, qtapp
     assert window.pending_body is not None
     assert setup_digest(window.setup) == before
     window.cancel_interaction()
+
+
+def test_hidden_velocity_arrow_does_not_change_starting_motion(window, qtapp):
+    open_solar(window, qtapp)
+    window.select_body('earth')
+    tip = window.ax.transData.transform(window.velocity_tips['earth'])
+    before = window.prepared.system.v.copy()
+    undo = len(window.undo_stack)
+    window.arrows_checkbox.setChecked(False)
+    qtapp.processEvents()
+    assert window.velocity_tips == {}
+    window.on_press(SimpleNamespace(inaxes=window.ax, button=1, xdata=1., ydata=0., x=tip[0], y=tip[1]))
+    moved = tip+(24, 0)
+    window.on_motion(SimpleNamespace(inaxes=window.ax, xdata=1., ydata=0., x=moved[0], y=moved[1]))
+    window.on_release(SimpleNamespace(inaxes=window.ax, xdata=1., ydata=0., x=moved[0], y=moved[1]))
+    np.testing.assert_array_equal(window.prepared.system.v, before)
+    assert len(window.undo_stack) == undo
 
 
 def test_dragging_velocity_changes_starting_motion_only_on_release(window, qtapp):
