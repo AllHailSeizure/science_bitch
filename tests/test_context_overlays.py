@@ -3,9 +3,13 @@ from dataclasses import replace
 
 import numpy as np
 
+import pytest
+
 from simulations.star_system.context import selection_context
+from simulations.star_system.frames import lagrange_guides
 from simulations.star_system.history import StateFrame
 from simulations.star_system.initialization import build_system
+from simulations.star_system.model import BodySpec, InitialBody, InitialSetup
 from simulations.star_system.templates import get_experiment
 
 
@@ -58,3 +62,42 @@ def test_unbound_child_is_not_drawn_as_a_closed_orbit():
     velocity[1] *= 4
     result = selection_context(replace(frame, v=velocity), 'sun')
     assert 'mercury' not in result.orbits
+
+
+PLUS_60 = np.array((.5, np.sqrt(3)/2))
+MINUS_60 = np.array((.5, -np.sqrt(3)/2))
+
+
+def sun_jupiter_pair(velocity):
+    sun = BodySpec('Sun', 'star', 1., 1e-4, temperature=5772.)
+    jupiter = BodySpec('Jupiter', 'planet', 1e-3, 1e-4, color='#c9b27c', catalog_key='jupiter')
+    return InitialSetup('Sun Jupiter pair', (
+        InitialBody('sun', sun, (0., 0.), (0., 0.)),
+        InitialBody('jupiter', jupiter, (1., 0.), (float(velocity[0]), float(velocity[1])), 'sun'),
+    ), .01)
+
+
+def test_prograde_selection_keeps_leading_vertex_first():
+    frame = StateFrame.capture(build_system(sun_jupiter_pair((0., 1.))))
+    result = selection_context(frame, 'jupiter')
+    np.testing.assert_allclose(result.guides[0], PLUS_60)
+    np.testing.assert_allclose(result.guides, lagrange_guides(frame, 'sun', 'jupiter'))
+    assert result.guide_labels == ('L4', 'L5')
+
+
+def test_retrograde_selection_and_legacy_guides_share_leading_l4():
+    frame = StateFrame.capture(build_system(sun_jupiter_pair((0., -1.))))
+    result = selection_context(frame, 'jupiter')
+    np.testing.assert_allclose(result.guides[0], MINUS_60)
+    np.testing.assert_allclose(result.guides, lagrange_guides(frame, 'sun', 'jupiter'))
+    assert result.guide_labels == ('L4', 'L5')
+
+
+@pytest.mark.parametrize('velocity', [(0., 0.), (1., 0.)])
+def test_zero_angular_momentum_selection_is_geometric_and_unlabeled(velocity):
+    frame = StateFrame.capture(build_system(sun_jupiter_pair(velocity)))
+    result = selection_context(frame, 'jupiter')
+    np.testing.assert_allclose(result.guides, np.vstack((PLUS_60, MINUS_60)))
+    np.testing.assert_allclose(result.guides, lagrange_guides(frame, 'sun', 'jupiter'))
+    assert result.guide_labels == ('Guide', 'Guide')
+    assert 'L4' not in result.guide_labels and 'L5' not in result.guide_labels

@@ -5,10 +5,11 @@ import numpy as np
 import pytest
 
 from simulations.star_system.history import StateFrame
-from simulations.star_system.initialization import build_system
 from simulations.star_system.scenarios import get_scenario
 from simulations.star_system.frames import frame_transform, rotate_about_sun, lagrange_guides
-from simulations.star_system.rendering import coordinates, inverse_coordinates
+from simulations.star_system.initialization import build_system
+from simulations.star_system.model import BodySpec, InitialBody, InitialSetup
+from simulations.star_system.rendering import coordinates, inverse_coordinates, draw_system
 
 
 def sample():
@@ -101,3 +102,74 @@ def test_rotating_authoring_inverse_and_physical_vector_survive_view_switch():
     finally:
         app.close()
         plt.close(app.fig)
+
+
+PLUS_60 = np.array((.5, np.sqrt(3)/2))
+MINUS_60 = np.array((.5, -np.sqrt(3)/2))
+
+
+def sun_jupiter_pair(velocity):
+    """Sun at the origin, Jupiter at (1, 0), with Jupiter's absolute velocity."""
+    sun = BodySpec('Sun', 'star', 1., 1e-4, temperature=5772.)
+    jupiter = BodySpec('Jupiter', 'planet', 1e-3, 1e-4, color='#c9b27c', catalog_key='jupiter')
+    return InitialSetup('Sun Jupiter pair', (
+        InitialBody('sun', sun, (0., 0.), (0., 0.)),
+        InitialBody('jupiter', jupiter, (1., 0.), (float(velocity[0]), float(velocity[1])), 'sun'),
+    ), .01)
+
+
+def _guide_labels(scene):
+    displayed = np.vstack([np.asarray(label.xy, dtype=float) for label in scene.guide_labels])
+    return scene.display_to_world(displayed), [label.get_text() for label in scene.guide_labels]
+
+
+def test_prograde_l4_guide_is_the_leading_equilateral_vertex():
+    prepared = build_system(sun_jupiter_pair((0., 1.)))
+    frame = StateFrame.capture(prepared)
+    np.testing.assert_allclose(lagrange_guides(frame, 'sun', 'jupiter')[0], PLUS_60)
+    import matplotlib.pyplot as plt
+    figure, ax = plt.subplots()
+    try:
+        points, texts = _guide_labels(draw_system(ax, prepared))
+        np.testing.assert_allclose(points[0], PLUS_60)
+        np.testing.assert_allclose(points[1], MINUS_60)
+        assert texts == ['L4 guide', 'L5 guide']
+    finally:
+        plt.close(figure)
+
+
+def test_retrograde_l4_guide_leads_clockwise_motion():
+    prepared = build_system(sun_jupiter_pair((0., -1.)))
+    frame = StateFrame.capture(prepared)
+    guides = lagrange_guides(frame, 'sun', 'jupiter')
+    np.testing.assert_allclose(guides[0], MINUS_60)
+    np.testing.assert_allclose(guides[1], PLUS_60)
+    import matplotlib.pyplot as plt
+    figure, ax = plt.subplots()
+    try:
+        points, texts = _guide_labels(draw_system(ax, prepared))
+        np.testing.assert_allclose(points[0], MINUS_60)
+        np.testing.assert_allclose(points[1], PLUS_60)
+        assert texts == ['L4 guide', 'L5 guide']
+    finally:
+        plt.close(figure)
+
+
+@pytest.mark.parametrize('velocity', [(0., 0.), (1., 0.)])
+def test_zero_angular_momentum_guides_are_not_labeled_l4_or_l5(velocity):
+    prepared = build_system(sun_jupiter_pair(velocity))
+    frame = StateFrame.capture(prepared)
+    guides = lagrange_guides(frame, 'sun', 'jupiter')
+    np.testing.assert_allclose(guides, np.vstack((PLUS_60, MINUS_60)))
+    import matplotlib.pyplot as plt
+    figure, ax = plt.subplots()
+    try:
+        scene = draw_system(ax, prepared)
+        points, texts = _guide_labels(scene)
+        np.testing.assert_allclose(points, np.vstack((PLUS_60, MINUS_60)))
+        assert all('L4' not in text and 'L5' not in text and 'guide' in text.lower() for text in texts)
+        note = scene.guide_note.get_text()
+        assert 'no direction of revolution' in note
+        assert 'L4' not in note and 'L5' not in note
+    finally:
+        plt.close(figure)

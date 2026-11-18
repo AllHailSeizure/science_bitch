@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .core import G
+from .frames import order_lagrange_points
 
 
 @dataclass(frozen=True)
@@ -11,6 +12,7 @@ class SelectionContext:
     pair: tuple | None
     guides: np.ndarray
     orbits: dict
+    guide_labels: tuple = ()
 
 
 def orbit_curve(frame, index, parent, count=240):
@@ -51,13 +53,11 @@ def selection_context(frame, selected_id):
             if curve is not None:
                 orbits[frame.body_ids[j]] = curve
     parent = references[i]
-    pair, points = None, np.empty((0, 2))
+    pair, points, labels = None, np.empty((0, 2)), ()
     if parent in frame.body_ids and frame.masses[i] > 0:
         j = frame.body_ids.index(parent)
         delta, velocity = frame.r[i]-frame.r[j], frame.v[i]-frame.v[j]
         if frame.masses[j] > 0 and np.linalg.norm(delta) > 0:
-            direction = 1 if delta[0]*velocity[1]-delta[1]*velocity[0] >= 0 else -1
-            perpendicular = direction*np.array([-delta[1], delta[0]])
-            points = frame.r[j] + .5*delta + np.array([1, -1])[:, None]*np.sqrt(3)/2*perpendicular
+            points, labels = order_lagrange_points(frame.r[j], delta, velocity)
             pair = (parent, selected_id)
-    return SelectionContext(pair, points, orbits)
+    return SelectionContext(pair, points, orbits, labels)
