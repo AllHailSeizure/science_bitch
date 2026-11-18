@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from simulations.star_system.model import BodySpec, InitialBody, InitialSetup
 from simulations.star_system.persistence import setup_digest
 
 
@@ -278,3 +279,45 @@ def test_asteroid_preset_has_editable_starting_particles(window, qtapp):
     window.properties.apply_button.click()
     index = window.prepared.body_ids.index('asteroids:0')
     assert window.prepared.body_specs[index].name == 'Vesta'
+
+
+def _context_world(window):
+    return window.scene.display_to_world(np.asarray(window.context_points.get_offsets(), dtype=float))
+
+
+def test_desktop_labels_l4_ahead_of_motion_and_omits_it_without_revolution(window, qtapp):
+    plus = np.array((.5, np.sqrt(3)/2))
+    minus = np.array((.5, -np.sqrt(3)/2))
+    window.install_experiment(InitialSetup('Sun Jupiter pair', (
+        InitialBody('sun', BodySpec('Sun', 'star', 1., 1e-4, temperature=5772.), (0., 0.), (0., 0.)),
+        InitialBody('jupiter', BodySpec('Jupiter', 'planet', 1e-3, 1e-4, color='#c9b27c', catalog_key='jupiter'),
+                    (1., 0.), (0., 1.), 'sun'),
+    ), .01))
+    qtapp.processEvents()
+    window.select_body('jupiter')
+    np.testing.assert_allclose(_context_world(window)[0], plus)
+    assert [item.get_text() for item in window.context_names] == ['L4', 'L5']
+
+    window.install_experiment(InitialSetup('Sun Jupiter pair', (
+        InitialBody('sun', BodySpec('Sun', 'star', 1., 1e-4, temperature=5772.), (0., 0.), (0., 0.)),
+        InitialBody('jupiter', BodySpec('Jupiter', 'planet', 1e-3, 1e-4, color='#c9b27c', catalog_key='jupiter'),
+                    (1., 0.), (0., -1.), 'sun'),
+    ), .01))
+    qtapp.processEvents()
+    window.select_body('jupiter')
+    np.testing.assert_allclose(_context_world(window)[0], minus)
+    assert [item.get_text() for item in window.context_names] == ['L4', 'L5']
+
+    window.install_experiment(InitialSetup('Sun Jupiter pair', (
+        InitialBody('sun', BodySpec('Sun', 'star', 1., 1e-4, temperature=5772.), (0., 0.), (0., 0.)),
+        InitialBody('jupiter', BodySpec('Jupiter', 'planet', 1e-3, 1e-4, color='#c9b27c', catalog_key='jupiter'),
+                    (1., 0.), (0., 0.), 'sun'),
+    ), .01))
+    qtapp.processEvents()
+    window.select_body('jupiter')
+    np.testing.assert_allclose(_context_world(window), np.vstack((plus, minus)))
+    texts = [item.get_text() for item in window.context_names]
+    assert all('L4' not in text and 'L5' not in text and 'guide' in text.lower() for text in texts)
+    note = window.context_note.get_text()
+    assert 'no direction of revolution' in note
+    assert 'L4' not in note and 'L5' not in note
