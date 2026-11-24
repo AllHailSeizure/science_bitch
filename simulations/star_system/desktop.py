@@ -564,10 +564,14 @@ class Observatory(QMainWindow):
             item.set_visible(bool(len(points)))
             if len(points):
                 item.xy = points[index]
+                item.set_text(context.guide_labels[index])
         text = ''
         if context.pair and self.planetary_id is None:
             names = [frame.body_specs[frame.body_ids.index(key)].name for key in context.pair]
-            text = ' – '.join(names)+': L4/L5 geometric guides (ideal circular model).'
+            if context.guide_labels == ('L4', 'L5'):
+                text = ' – '.join(names)+': L4/L5 geometric guides (ideal circular model).'
+            else:
+                text = ' – '.join(names)+': geometric guides; no direction of revolution.'
         if context.orbits:
             text += '\nOrbit curves: instantaneous two-body estimates, not predicted trajectories.'
         self.context_note.set_text(text.strip())

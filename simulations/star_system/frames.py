@@ -67,11 +67,47 @@ def rotate_about_sun(frame, sun_id, jupiter_id):
     return frame_transform(frame, 'rotating', sun_id=sun_id, jupiter_id=jupiter_id).positions(frame.r)
 
 
+def order_lagrange_points(origin, delta, velocity):
+    """Equilateral vertices with L4 leading the direction of revolution.
+
+    ``delta`` and ``velocity`` are the secondary relative to the primary.
+    Signed z angular momentum is ``dx*vy - dy*vx``. Positive keeps +60° then
+    -60°; negative swaps them. Zero returns that geometric order and labels
+    neither vertex L4 or L5.
+    """
+    origin = np.asarray(origin, dtype=float)
+    delta = np.asarray(delta, dtype=float)
+    velocity = np.asarray(velocity, dtype=float)
+    cosine, sine = .5, np.sqrt(3)/2
+    plus = origin+np.array([cosine*delta[0]-sine*delta[1], sine*delta[0]+cosine*delta[1]])
+    minus = origin+np.array([cosine*delta[0]+sine*delta[1], -sine*delta[0]+cosine*delta[1]])
+    angular = delta[0]*velocity[1]-delta[1]*velocity[0]
+    if angular > 0:
+        return np.vstack((plus, minus)), ('L4', 'L5')
+    if angular < 0:
+        return np.vstack((minus, plus)), ('L4', 'L5')
+    return np.vstack((plus, minus)), ('Guide', 'Guide')
+
+
+def labeled_lagrange_guides(frame, sun_id, jupiter_id):
+    """Ordered world guides and roles for one Sun/Jupiter snapshot.
+
+    Callers pass a ``StateFrame`` (``.r``, ``.v``, ``.body_ids``). The rotating
+    transform validates the pair before velocity is read.
+    """
+    frame_transform(frame, 'rotating', sun_id=sun_id, jupiter_id=jupiter_id)
+    sun = frame.body_ids.index(sun_id)
+    jupiter = frame.body_ids.index(jupiter_id)
+    delta = frame.r[jupiter]-frame.r[sun]
+    return order_lagrange_points(frame.r[sun], delta, frame.v[jupiter]-frame.v[sun])
+
+
 def lagrange_guides(frame, sun_id, jupiter_id):
-    """World positions of ±60° ideal circular restricted-three-body geometry.
+    """World positions of ideal circular restricted-three-body equilateral guides.
 
     These are geometric guides, not detected occupancy or equilibrium claims.
+    L4 leads the direction of revolution and is returned first when signed
+    angular momentum is nonzero. With no direction of revolution the geometric
+    +60° then -60° order is returned and neither vertex is L4 or L5.
     """
-    transform = frame_transform(frame, 'rotating', sun_id=sun_id, jupiter_id=jupiter_id)
-    separation = np.linalg.norm(frame.r[frame.body_ids.index(jupiter_id)]-transform.origin)
-    return transform.inverse_positions(separation*np.array([[.5, np.sqrt(3)/2], [.5, -np.sqrt(3)/2]]))
+    return labeled_lagrange_guides(frame, sun_id, jupiter_id)[0]

@@ -13,7 +13,7 @@ from .data import PLANETS, CATALOG, AU_KM, blackbody_rgb
 from .model import BodySpec
 from .initialization import PreparedSystem
 from .history import StateFrame
-from .frames import frame_transform, reference_id, lagrange_guides, LABELS
+from .frames import frame_transform, reference_id, labeled_lagrange_guides, LABELS
 
 BACKGROUND = '#070d18'
 PANEL = '#101b2b'
@@ -385,14 +385,22 @@ class Scene:
         self.reference_guides.set_visible(available)
         for label in self.guide_labels:
             label.set_visible(available)
-        self.guide_note.set_text('L4/L5: ideal circular restricted-three-body reference geometry\n'
-                                 'Geometric guides; occupancy / stability / capture not detected.' if available else self.rotating_reason)
-        if available:
-            sun, jupiter = reference_id(self.frame, 'sun'), reference_id(self.frame, 'jupiter')
-            points = self.world_to_display(lagrange_guides(self.frame, sun, jupiter))
-            self.reference_guides.set_offsets(points)
-            for label, point in zip(self.guide_labels, points):
-                label.xy = point
+        if not available:
+            self.guide_note.set_text(self.rotating_reason)
+            return
+        sun, jupiter = reference_id(self.frame, 'sun'), reference_id(self.frame, 'jupiter')
+        world, roles = labeled_lagrange_guides(self.frame, sun, jupiter)
+        points = self.world_to_display(world)
+        named = roles == ('L4', 'L5')
+        self.guide_note.set_text(
+            'L4/L5: ideal circular restricted-three-body reference geometry\n'
+            'Geometric guides; occupancy / stability / capture not detected.' if named else
+            'Geometric guides; no direction of revolution.\n'
+            'Occupancy / stability / capture not detected.')
+        self.reference_guides.set_offsets(points)
+        for label, point, role in zip(self.guide_labels, points, roles):
+            label.xy = point
+            label.set_text(role+' guide' if named else 'Guide')
 
     def _set_trail(self, line, key, color):
         points, times = [], []
