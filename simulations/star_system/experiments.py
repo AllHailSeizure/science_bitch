@@ -43,7 +43,20 @@ def capture_current_setup(prepared, initial_setup, name):
     if initial_setup.preset_id or initial_setup.provenance.get('origin_preset'):
         provenance['origin_preset'] = initial_setup.preset_id or initial_setup.provenance['origin_preset']
     from .collisions import CollisionEvent
-    provenance['collision_events'] = [asdict(event) for event in prepared.events if isinstance(event, CollisionEvent)]
+    inherited = initial_setup.provenance.get('collision_events', ())
+    if not isinstance(inherited, (tuple, list)):
+        inherited = ()
+    fresh = []
+    for event in prepared.events:
+        if not isinstance(event, CollisionEvent):
+            continue
+        record = asdict(event)
+        # Time stays in the epoch that produced the event. A later epoch starts
+        # its own clock at zero and must not be read as that earlier timestamp.
+        record['source_epoch'] = initial_setup.name
+        record['epoch_time'] = event.time
+        fresh.append(record)
+    provenance['collision_events'] = tuple(inherited)+tuple(fresh)
     captured = InitialSetup(name.strip(), tuple(bodies), dt, collision_mode=initial_setup.collision_mode,
                             collision_policy=initial_setup.collision_policy, provenance=provenance)
     build_system(captured)

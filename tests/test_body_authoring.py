@@ -14,18 +14,18 @@ from simulations.star_system.populations import Population
 SUN = BodySpec('Sun', 'star', 1., .00465, temperature=5772.)
 EARTH = BodySpec('Earth', 'planet', 3e-6, 4.3e-5)
 
-def setup(dt=.0001):
+def authored_setup(dt=.0001):
     return InitialSetup('Authored', bodies=(InitialBody('sun', SUN, (3., 2.), (.2, -.1)),
         InitialBody('earth', EARTH, (1., 0.), (0., 6.28), 'sun')), dt=dt)
 
 def test_arbitrary_world_reference_chain_lone_body_binary():
-    prepared = build_system(setup())
+    prepared = build_system(authored_setup())
     np.testing.assert_array_equal(prepared.system.r, [[3, 2], [4, 2]])
     np.testing.assert_allclose(prepared.system.v, [[.2, -.1], [.2, 6.18]])
-    lone = build_system(replace(setup(), bodies=setup().bodies[:1]))
+    lone = build_system(replace(authored_setup(), bodies=authored_setup().bodies[:1]))
     lone.system.step()
     np.testing.assert_allclose(lone.system.r[0], [3.00002, 1.99999])
-    binary = build_system(replace(setup(), bodies=(InitialBody('a', SUN, (-1, 0), (0, -2)), InitialBody('b', SUN, (1, 0), (0, 2)))))
+    binary = build_system(replace(authored_setup(), bodies=(InitialBody('a', SUN, (-1, 0), (0, -2)), InitialBody('b', SUN, (1, 0), (0, 2)))))
     binary.system.step(10)
     assert binary.body_ids == ('a', 'b')
 
@@ -40,7 +40,7 @@ def test_invalid_complete_setup_rejected(bodies):
         build_system(InitialSetup('Bad', bodies=bodies, dt=.0001))
 
 def test_insertion_preserves_every_old_row_time_and_starting_setup():
-    before = build_system(setup())
+    before = build_system(authored_setup())
     before.system.step(5)
     r, v = before.system.r.copy(), before.system.v.copy()
     after = insert_body(before, InitialBody('new', EARTH, (2,1), (0,1), 'sun'))
@@ -55,13 +55,34 @@ def test_insertion_preserves_every_old_row_time_and_starting_setup():
         insert_body(before, InitialBody('earth', EARTH, (2,0), (0,0)))
     np.testing.assert_array_equal(before.system.r, r)
 
+def test_live_insertion_enforces_zero_mass_and_particle_limit():
+    from simulations.star_system.data import CATALOG
+    from simulations.star_system.model import PopulationSpec
+    from simulations.star_system.populations import MAX_PARTICLES, Population
+    sun = InitialBody('sun', CATALOG['sun'], (0., 0.), (0., 0.))
+    prepared = build_system(InitialSetup('isolated Sun', (sun,), 1e-4))
+    massive = InitialBody('p', BodySpec('tracer', 'particle', 1., .001), (1., 0.), (0., 0.))
+    old = (prepared.system.r.copy(), prepared.system.v.copy(), prepared.system.time,
+           prepared.body_ids, prepared.events)
+    with pytest.raises(ValueError, match='mass zero'):
+        insert_body(prepared, massive)
+    np.testing.assert_array_equal(prepared.system.r, old[0])
+    np.testing.assert_array_equal(prepared.system.v, old[1])
+    assert prepared.system.time == old[2] and prepared.body_ids == old[3] and prepared.events == old[4]
+    full = build_system(InitialSetup('full', (sun,), 1e-3, population=PopulationSpec(
+        'swarm', 'sun', Population(kind='ring', count=MAX_PARTICLES, inner=2., outer=2., angles='even', seed=1))))
+    extra = InitialBody('extra', BodySpec('tracer', 'particle', 0., None), (3., 0.), (0., 1.))
+    with pytest.raises(ValueError, match=str(MAX_PARTICLES)):
+        insert_body(full, extra)
+    assert len(full.body_ids) == MAX_PARTICLES+1
+
 def test_circular_aid_is_relative_and_prograde():
     np.testing.assert_allclose(circular_relative_velocity((1,0), 1., 3e-6), [0, np.sqrt(G*(1+3e-6))])
     with pytest.raises(ValueError):
         circular_relative_velocity((0,0), 1., 0.)
 
 def test_world_history_is_copied_readonly_and_identity_aligned():
-    p = build_system(setup())
+    p = build_system(authored_setup())
     frame = StateFrame.capture(p)
     saved = frame.r.copy()
     p.system.step()
@@ -71,7 +92,7 @@ def test_world_history_is_copied_readonly_and_identity_aligned():
         frame.r[0] = 0
 
 def test_high_speed_unresolved_step_is_transactional_and_insertion_shortens_segment():
-    p = build_system(setup())
+    p = build_system(authored_setup())
     fast = insert_body(p, InitialBody('flyby', EARTH, (0, 4), (1e5, 0)))
     assert fast.system.dt < p.system.dt
     assert fast.events[-1].new_dt == fast.system.dt
@@ -259,7 +280,7 @@ def test_binary_and_fast_flyby_step_halving_converges(case):
 @pytest.mark.parametrize('field,value',[('r',(float('nan'),0)),('v',(0,float('inf')))])
 def test_nonfinite_authored_vectors_are_rejected(field,value):
     with pytest.raises(ValueError,match='finite'):
-        replace(setup().bodies[0],**{field:value})
+        replace(authored_setup().bodies[0],**{field:value})
 
 def test_reference_chain_resolves_position_and_velocity_once():
     root=InitialBody('root',SUN,(5,6),(.25,.5))
@@ -283,7 +304,7 @@ def test_intermediate_rejection_rolls_back_all_kicks_drifts_and_time():
     assert s.time==0
 
 def test_invalid_insertion_preserves_active_state_and_explicit_dt_rejects():
-    p=build_system(setup())
+    p=build_system(authored_setup())
     p.system.step(2)
     r,v,t=p.system.r.copy(),p.system.v.copy(),p.system.time
     for body in (InitialBody('bad',EARTH,(0,0),(0,0),'sun'),InitialBody('bad',EARTH,(1,0),(0,0),'missing')):
@@ -293,7 +314,7 @@ def test_invalid_insertion_preserves_active_state_and_explicit_dt_rejects():
         np.testing.assert_array_equal(p.system.v,v)
         assert p.system.time==t
     with pytest.raises(ValueError,match='unresolved'):
-        build_system(replace(setup(),dt=1.))
+        build_system(replace(authored_setup(),dt=1.))
 
 def test_editor_particle_selection_requires_reference_and_cache_matches_full():
     app=App(population=Population(count=3))

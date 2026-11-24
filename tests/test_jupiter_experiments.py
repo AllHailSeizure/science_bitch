@@ -115,6 +115,24 @@ def test_halted_comparison_preserves_real_common_time():
         assert np.isfinite(run.frames[-1].r).all()
 
 
+def test_comparison_rejects_a_renamed_catalog_and_a_changed_jupiter():
+    from simulations.star_system.data import CATALOG
+    setup = get_scenario('sun-jupiter-ring')
+    saturns = tuple(replace(body, spec=CATALOG['saturn']) if body.spec.catalog_key == 'jupiter' else body
+                    for body in setup.bodies)
+    with pytest.raises(ValueError, match='catalog Jupiter'):
+        make_jupiter_comparison(replace(setup, bodies=saturns))
+    renamed = tuple(replace(body, id='giant') if body.spec.catalog_key == 'jupiter' else body
+                    for body in setup.bodies)
+    treatment, control = make_jupiter_comparison(replace(setup, bodies=renamed))
+    assert any(body.id == 'giant' for body in treatment.bodies)
+    assert all(body.id != 'giant' for body in control.bodies)
+    edited = tuple(replace(body, spec=replace(body.spec, mass=0.09545027)) if body.spec.catalog_key == 'jupiter' else body
+                   for body in treatment.bodies)
+    with pytest.raises(ValueError, match='no longer matches'):
+        compare_recordings(calculate(replace(treatment, bodies=edited), 20, 1), calculate(control, 20, 1))
+
+
 def test_original_recording_pairs_without_rewriting_source_and_edited_control_is_rejected():
     original = get_scenario('sun-jupiter-ring')
     _, control = make_jupiter_comparison(original)
