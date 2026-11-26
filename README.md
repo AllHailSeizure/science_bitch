@@ -4,7 +4,30 @@ Small, well-established physics simulations in Python. Each one uses an integrat
 
 ## Install
 
-From the repository root, with Python 3.10 or newer:
+Python 3.10 or newer. Install the Observatory and open it:
+
+```bash
+pipx install star-system
+star-system
+```
+
+`star-system` launches the Qt Observatory. It is registered as a GUI script, so on Windows the launcher uses `pythonw` and does not leave a console window open. `star-system-cli` is the full command line, including flags and a headless `--output` render.
+
+Until the package is on PyPI, the same commands install from this repository:
+
+```bash
+pipx install git+https://github.com/AllHailSeizure/star-system
+```
+
+For development, from the repository root:
+
+```bash
+pip install -e ".[dev]"
+```
+
+That install provides numpy, matplotlib, pillow, and PyQt6, plus the development tools pytest and ruff.
+
+A checkout can still use a virtual environment and the requirements files. `requirements.txt` is runtime only; tests need `requirements-dev.txt`:
 
 ```bash
 python3 -m venv ../venv
@@ -12,14 +35,18 @@ source ../venv/bin/activate
 pip install -r requirements.txt
 ```
 
-The dependencies are numpy, matplotlib, pillow, pytest, and PyQt6 (GUI backend). The tests and the headless render need no display.
+The tests and the headless render need no display.
 
 ## Run
 
 ```bash
+star-system
+star-system-cli --star sun --planet earth --planet jupiter --output output/star-system.png
 python -m simulations.star_system  # live interactive GUI
 python -m simulations.star_system --star sun --planet earth --planet jupiter --output output/star-system.png
 ```
+
+With no arguments, `python -m simulations.star_system` and `star-system-cli` open the Qt Observatory. Explicit flags open the legacy Matplotlib UI, and `--output` saves a still image without a display.
 
 Details, presets, and the other command-line flags are in each simulation's README:
 
@@ -27,9 +54,10 @@ Details, presets, and the other command-line flags are in each simulation's READ
 
 ## Development checks
 
-Install the development tools in your virtual environment:
+Install the development tools in your virtual environment. Either command is enough:
 
 ```bash
+pip install -e ".[dev]"
 python -m pip install -r requirements-dev.txt
 ```
 
@@ -46,7 +74,27 @@ The test suite covers physics, population generation, body authoring, persistenc
 
 The [CI workflow](.github/workflows/ci.yml) runs on every pull request (including PRs targeting another feature branch), pushes to `master`, and manual dispatch. Lint runs as a separate job; any lint or test failure fails CI. The complete pytest suite runs on Linux with Python 3.10 and 3.14, plus Windows with Python 3.14. Python 3.10 is the documented minimum; the Windows job also checks the desktop development platform. GitHub installs these interpreters on its runners; you only need one supported Python locally.
 
-To enforce passing checks before merging, configure branch protection or a ruleset to require `Lint` and the three `Tests (...)` jobs after the workflow's first run.
+The `Wheel` job builds the sdist and wheel, installs that wheel into a clean virtual environment, and smoke-tests `star-system-cli --help` plus a short headless `--output` render. Its check name is separate from the four jobs below.
+
+To enforce passing checks before merging, configure branch protection or a ruleset to require `Lint` and the three `Tests (...)` jobs after the workflow's first run. The `Wheel` job can be required as well; it does not replace those names.
+
+## Publishing
+
+[`.github/workflows/release.yml`](.github/workflows/release.yml) publishes to PyPI when a `v*` tag is pushed. It uses [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishers/) (OpenID Connect) and does not read a stored API token.
+
+One-time setup, before the first tag:
+
+1. Sign in to PyPI as the account that should own the project name `star-system`.
+2. The project is not on PyPI yet, so add a **pending publisher** (Account settings → Publishing):
+   - PyPI project name: `star-system`
+   - Owner: `AllHailSeizure`
+   - Repository name: `star-system`
+   - Workflow name: `release.yml`
+   - Environment name: `pypi`
+3. In this GitHub repository, create an environment named `pypi` (Settings → Environments). No secret is required. Optional protection rules can limit who is allowed to publish.
+4. Bump `version` in `pyproject.toml` and merge that change to `master`. Push a tag whose name is `v` plus that version exactly, for example version `0.1.0` and tag `v0.1.0`.
+
+The workflow checks that the tag matches `version`, builds the sdist and wheel, smoke-tests the wheel, then publishes those files. A tag that does not match the version fails before upload.
 
 ## Adding a simulation
 
@@ -57,4 +105,4 @@ Create `simulations/<name>/` with:
 - `plotting.py` — figures and the animation
 - `README.md` — the equation, how to run it, and what is checked
 
-Add the checks under `tests/`. Keep new packages in `requirements.txt` only when a simulation needs them.
+Add the checks under `tests/`. Keep new runtime dependencies in `requirements.txt` and `pyproject.toml` only when a simulation needs them.

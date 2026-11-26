@@ -63,9 +63,10 @@ def star_size(star):
 
 def _load_catalog():
     import json
-    from pathlib import Path
+    from importlib.resources import files
     from .model import BodySpec, PropertySource
-    records = json.loads(Path(__file__).with_name('catalog-sources.json').read_text())['bodies']
+    text = files(__package__).joinpath('catalog-sources.json').read_text(encoding='utf-8')
+    records = json.loads(text)['bodies']
     result = {}
     for key, record in records.items():
         record['sources'] = {field: PropertySource(**value) for field, value in record['sources'].items()}

@@ -1,8 +1,13 @@
 # Interactive star system
 
-Run from the repository root with `requirements.txt` installed:
+Run from the repository root with `requirements.txt` installed, or from an
+install of this package. `star-system` opens the Qt Observatory (on Windows
+that launcher uses `pythonw`, so no console window stays open).
+`star-system-cli` is the command line below, including headless `--output`.
 
 ```powershell
+star-system
+star-system-cli --star sun --planet earth --planet jupiter --years 1 --output output/star-system.png
 python -m simulations.star_system
 python -m simulations.star_system --star sun --planet earth --planet jupiter --years 1 --output output/star-system.png
 python -m simulations.star_system --load output/experiment.json --years 0.01 --output output/restored.png
