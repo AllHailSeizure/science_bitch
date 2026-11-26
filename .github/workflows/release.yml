@@ -12,8 +12,21 @@ permissions:
   contents: read
 
 jobs:
+  # Fails the release before anything is built or published unless CI on the
+  # tagged commit is green and LICENSE and README.md exist and are not empty.
+  # Shared with the Devvit releases: AllHailSeizure/.github release-gates.yml.
+  gates:
+    name: Release gates
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      statuses: read
+    uses: AllHailSeizure/.github/.github/workflows/release-gates.yml@master
+
   build:
     name: Build release
+    needs: gates
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -57,7 +70,7 @@ jobs:
 
   publish:
     name: Publish to PyPI
-    needs: build
+    needs: [gates, build]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
