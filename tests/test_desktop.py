@@ -412,3 +412,162 @@ def test_desktop_labels_l4_ahead_of_motion_and_omits_it_without_revolution(windo
     note = window.context_note.get_text()
     assert 'no direction of revolution' in note
     assert 'L4' not in note and 'L5' not in note
+
+
+def test_overlay_sidebar_covers_full_window_scene_without_resizing(window, qtapp):
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
+    open_solar(window, qtapp)
+    qtapp.processEvents()
+    assert window.canvas.geometry() == window.workspace.rect()
+    assert window.workspace.geometry().size() == window.stack.size()
+    assert window.stack.geometry().size() == window.centralWidget().size()
+    limits = (tuple(window.ax.get_xlim()), tuple(window.ax.get_ylim()))
+    origin = np.asarray(window.ax.transData.transform((0., 0.)), dtype=float)
+    assert window.sidebar.isVisible()
+    assert window.sidebar.geometry().intersects(window.canvas.geometry())
+    assert window.sidebar.width() < window.canvas.width()
+    assert window.menu_button.accessibleName() == 'Menu'
+    assert window.workspace.rect().contains(window.menu_button.geometry())
+    assert window.menu_button.width() > 40
+    window.menu_button.click()
+    qtapp.processEvents()
+    assert not window.sidebar.isVisible()
+    assert window.menu_button.isVisible()
+    assert window.canvas.geometry() == window.workspace.rect()
+    assert (tuple(window.ax.get_xlim()), tuple(window.ax.get_ylim())) == limits
+    np.testing.assert_allclose(window.ax.transData.transform((0., 0.)), origin)
+    window.canvas.setFocus()
+    QTest.keyClick(window.canvas, Qt.Key.Key_M)
+    qtapp.processEvents()
+    assert window.sidebar.isVisible()
+    assert window.canvas.geometry() == window.workspace.rect()
+    assert (tuple(window.ax.get_xlim()), tuple(window.ax.get_ylim())) == limits
+    np.testing.assert_allclose(window.ax.transData.transform((0., 0.)), origin)
+    window.name_field.setFocus()
+    typed = window.name_field.text()
+    QTest.keyClick(window.name_field, Qt.Key.Key_M)
+    qtapp.processEvents()
+    assert window.sidebar.isVisible()
+    assert window.name_field.text() == typed + 'm'
+    assert (tuple(window.ax.get_xlim()), tuple(window.ax.get_ylim())) == limits
+
+
+def test_sidebar_heading_is_the_scenario_and_shows_simulated_time(window, qtapp):
+    open_solar(window, qtapp)
+    window.speed.setValue(2)
+    window.step_button.click()
+    qtapp.processEvents()
+    assert window.heading_label.text() == 'Solar System'
+    assert window.windowTitle() == 'Solar System'
+    readout = window.time_readout.text()
+    assert f'{window.prepared.system.time:,.3f}' in readout
+    assert 'elapsed simulated years' in readout
+    assert '2' in readout and 'simulated years per second' in readout
+    joined = '\n'.join(widget.text() for widget in window.findChildren(type(window.heading_label)))
+    for phrase in ('A system in motion', 'An overhead view of gravity at work',
+                   'Build a system. Watch it move.', 'Orbital Observatory'):
+        assert phrase not in joined
+
+
+def test_catalog_stays_behind_add_body(window, qtapp):
+    open_solar(window, qtapp)
+    assert window.tabs.tabText(1) == 'Add body'
+    assert window.tabs.currentIndex() == 0
+    assert not window.catalog.isVisible()
+    assert not window.catalog.body_combo.isVisible()
+    window.tabs.setCurrentIndex(1)
+    qtapp.processEvents()
+    assert window.catalog.isVisible()
+    assert window.catalog.body_combo.isVisible()
+    window.tabs.setCurrentIndex(0)
+    qtapp.processEvents()
+    assert not window.catalog.isVisible()
+
+
+def test_live_pause_resume_and_step_one_timestep(window, qtapp):
+    open_solar(window, qtapp)
+    start = window.prepared.system.r.copy()
+    dt = window.prepared.system.dt
+    window.run_button.click()
+    assert window.running and window.run_button.text() == 'Pause'
+    window.run_button.click()
+    assert not window.running and window.run_button.text() == 'Resume'
+    assert window.prepared.system.time == 0
+    np.testing.assert_array_equal(window.prepared.system.r, start)
+    window.last_tick = 0.
+    window.tick()
+    assert window.prepared.system.time == 0
+    np.testing.assert_array_equal(window.prepared.system.r, start)
+    window.run_button.click()
+    assert window.running and window.run_button.text() == 'Pause'
+    assert window.prepared.system.time == 0
+    np.testing.assert_array_equal(window.prepared.system.r, start)
+    window.step_button.click()
+    assert not window.running and window.run_button.text() == 'Resume'
+    assert window.prepared.system.time == pytest.approx(dt)
+    window.step_button.click()
+    assert not window.running
+    assert window.prepared.system.time == pytest.approx(2*dt)
+
+
+def test_camera_persists_between_live_frames(window, qtapp):
+    open_solar(window, qtapp)
+    window.on_scroll(SimpleNamespace(inaxes=window.ax, xdata=.2, ydata=-.1, step=1))
+    limits = (tuple(window.ax.get_xlim()), tuple(window.ax.get_ylim()))
+    window.run_button.click()
+    window.advance_live(3)
+    assert window.prepared.system.time > 0
+    assert (tuple(window.ax.get_xlim()), tuple(window.ax.get_ylim())) == limits
+
+
+def test_clicking_a_body_shows_physical_information(window, qtapp):
+    open_solar(window, qtapp)
+    index = window.prepared.body_ids.index('jupiter')
+    pixel = window.ax.transData.transform(window.scene.positions[index])
+    position = window.scene.positions[index]
+    window.on_press(SimpleNamespace(inaxes=window.ax, button=1, xdata=position[0], ydata=position[1],
+                                    x=pixel[0], y=pixel[1]))
+    qtapp.processEvents()
+    assert window.selected_id == 'jupiter'
+    assert window.body_information.name.text() == 'Jupiter'
+    assert window.body_information.isVisible()
+    assert 'Mass:' in window.body_information.details.text()
+    assert 'Radius:' in window.body_information.details.text()
+
+
+def test_follow_centers_the_selection_until_disabled(window, qtapp):
+    open_solar(window, qtapp)
+    window.select_body('earth')
+    window.ax.set_xlim(10, 12)
+    window.ax.set_ylim(8, 10)
+    window.toggle_follow()
+    assert window.following and window.follow_button.text() == 'Stop following'
+    index = window.prepared.body_ids.index('earth')
+    center = window.scene.positions[index]
+    width = np.ptp(window.ax.get_xlim())
+    assert abs(np.mean(window.ax.get_xlim()) - center[0]) < 1e-6
+    assert abs(np.mean(window.ax.get_ylim()) - center[1]) < 1e-6
+    window.advance_live(1)
+    center = window.scene.positions[index]
+    assert abs(np.mean(window.ax.get_xlim()) - center[0]) < 1e-6
+    assert np.ptp(window.ax.get_xlim()) == pytest.approx(width)
+    window.toggle_follow()
+    assert not window.following and window.follow_button.text() == 'Follow selected'
+    limits = (tuple(window.ax.get_xlim()), tuple(window.ax.get_ylim()))
+    window.advance_live(1)
+    assert (tuple(window.ax.get_xlim()), tuple(window.ax.get_ylim())) == limits
+
+
+def test_playback_stays_reachable_with_a_long_body_list(window, qtapp):
+    window.open_experiment('asteroid-ring')
+    qtapp.processEvents()
+    assert window.body_list.count() > 20
+    window.body_list.scrollToBottom()
+    qtapp.processEvents()
+    viewport = window.sidebar_scroll.viewport()
+    center = window.run_button.mapTo(viewport, window.run_button.rect().center())
+    assert viewport.rect().contains(center)
+    assert window.run_button.isEnabled()
+    assert window.sidebar.isAncestorOf(window.catalog)
+    assert window.tabs.currentIndex() == 0

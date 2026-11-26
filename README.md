@@ -17,7 +17,7 @@ The dependencies are numpy, matplotlib, pillow, pytest, and PyQt6 (GUI backend).
 ## Run
 
 ```bash
-python -m simulations.star_system  # live interactive GUI
+python -m simulations.star_system  # Qt observatory; the scene fills the window
 python -m simulations.star_system --star sun --planet earth --planet jupiter --output output/star-system.png
 ```
 
