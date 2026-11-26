@@ -50,20 +50,77 @@ python -m simulations.star_system --star sun --planet earth --planet jupiter --y
 python -m simulations.star_system --load output/experiment.json --years 0.01 --output output/restored.png
 ```
 
-The Matplotlib observatory has a full-window overhead scene, glowing stars,
-illuminated bodies, trails, and a sidebar. **Menu [M]** hides the overlay without
-changing the camera or simulation. The CLI retains its original four star and
-ten planet/dwarf-planet selectors. General catalog bodies and custom states are
+With no arguments, the Qt Observatory opens. Its overhead scene fills the
+window. **Menu** (keyboard **M**, unless a text field is focused) opens and
+closes a sidebar drawn over that scene. Opening or closing the sidebar does
+not resize the canvas or move the camera. The sidebar heading is the current
+experiment name, such as **Solar System**. Passing selectors without `--output`
+opens the legacy Matplotlib controller, which has the same full-window scene
+and a **Menu [M]** overlay. The CLI retains its original four star and ten
+planet/dwarf-planet selectors. General catalog bodies and custom states are
 available through the authoring UI and Python API. A desktop backend is needed
 for interactive input; `--output` uses Agg without a display.
 
-In the Matplotlib workspace, select a planet in the system view and choose
-**Open planetary view**. The scene recenters on that planet and shows it with
-the moons assigned to it in the experiment; the body list follows the same
-scope. **Return to system view** restores the full system. The switch changes
-only the display; gravity still includes every body in the experiment.
+## Desktop observatory
+
+The sidebar shows elapsed simulated years, the requested simulated years per
+second, the bodies currently in view, and the playback and inspection controls.
+
+| Control | Action |
+| --- | --- |
+| Menu, `M` outside text fields | Show or hide the sidebar. The scene rectangle and camera stay as they are |
+| Run | Start live evolution from the starting setup |
+| Pause | Freeze simulated time and positions |
+| Resume | Continue that same live trajectory without returning to the start |
+| Step | Advance exactly one physics timestep and leave playback paused |
+| Reset | Return to the edited starting setup at time zero |
+| Simulated years per second | Change wall-clock pacing only. The integrator step stays fixed |
+| Fit view | Frame the current bodies and stop following |
+| Follow selected / Stop following | Keep the selected body centered at the current zoom, or leave the camera where it is |
+| Mouse wheel over the scene | Zoom around the cursor |
+| Left drag on empty space | Pan |
+| Click a body, or a row in Bodies | Show that body's mass, radius, and other physical information |
+| Add body | Open catalog choices. They are not listed on the main sidebar |
+| Open planetary view | Show the selected planet and the moons assigned to it |
+
+**Add body** is where catalog choices appear. Placement and starting-velocity
+editing stay on that existing path. A long body list scrolls inside the sidebar,
+so Run, Pause, Resume, and Step remain on screen.
+
+Select a planet and choose **Open planetary view**. The scene recenters on that
+planet and shows it with the moons assigned to it; the body list follows the
+same scope. **Return to system view** restores the full system. The switch
+changes only the display; gravity still includes every body in the experiment.
+
+Screen distances are compressed by `q = r * asinh(|r| / 0.05 AU) / |r|`. Marker
+diameters stay larger than those compressed distances so bodies remain visible,
+and they grow only logarithmically with physical radius. In the Sun/Jupiter
+view, Jupiter's marker stays substantially smaller than the Sun's luminous
+disk. Zooming in and selecting a body shows surface detail in the inspector.
+Planet shading faces the illuminating star. Stars are drawn as luminous disks.
+The background, labels, colors, and fading trails are illustrative: they are
+not a measured sky, a surface map, or a photometric model. The scene caption
+states the same limit: compressed distances, exaggerated body sizes, and
+illustrative lighting.
+
+Qt checks for this window use the offscreen platform. They click widgets and
+deliver scene events in-process. They do not open a native window, move a
+physical pointer, or judge smoothness. Passing them is not a manual playthrough.
+Agg checks of the legacy controller are a separate headless path, not desktop
+input.
+
+## Legacy Matplotlib controller
+
+Command-line selectors without `--output` open this controller. **Menu [M]**
+hides its overlay without changing the camera or simulation. Its controls are
+listed under Navigation and evolution.
 
 ## Calculate first, then inspect
+
+In the Qt observatory, open **Calculate a recording** in the sidebar, then
+**Calculate**. Playback of a finished recording uses **Play recording**,
+**Pause**, and **Next sample**. The legacy Matplotlib controller uses the
+control names in the rest of this section.
 
 The primary flow is **PREP → CALCULATING → RECORDED**. Prepare bodies,
 populations and moons with the same editors, then choose **Calculate...**.
@@ -530,7 +587,7 @@ does not merge PRs or close issues. #6 is already closed externally and remains 
 
 | Issue / plans | Implemented integration and acceptance evidence |
 | --- | --- |
-| #4 / 1 | Full-window overlay, camera/input controls, physical inspection, retained rendering and scenario naming; display/control regressions and normal App exports. Native desktop interaction remains unverified. |
+| #4 / 1 | Full-window scene and overlay sidebar in the default Qt observatory and the legacy Matplotlib controller; camera/input controls, physical inspection, retained rendering, and the current experiment name as the heading. Offscreen Qt and Agg checks cover those controls. Native desktop interaction remains unverified. |
 | #5 / 2 | Sourced/custom bodies, relative placement/velocity vectors, repeated identities, multi-star gravity and preserved live insertion; authoring/catalog/physics tests. Physical radii feed contact, never marker sizes. |
 | #6 / 3,5,6,8 | Seeded reference-relative populations save/reload/calculate/replay with stable IDs. Point-tracer absorption has no feedback; particle/particle interactions remain omitted. |
 | #9 / 4,5,6,8 | Planet-relative initial states and timescale limits, live insertion, separation inspection, save/replay; contact uses the same nonstellar response and explicit remnant-parent mapping. No forced binding or tides. |
