@@ -111,9 +111,17 @@ class BodyCatalog(QWidget):
         self.motion_combo = Dropdown()
         self.motion_combo.addItem('Initial circular orbit', True)
         self.motion_combo.addItem('Set speed and direction', False)
-        placement.addRow('Relative to', self.reference_combo)
+        self.reference_label = label('Relative to')
+        placement.addRow(self.reference_label, self.reference_combo)
         placement.addRow('Starting motion', self.motion_combo)
         layout.addLayout(placement)
+        self.distance_box = QWidget()
+        distance_form = QFormLayout(self.distance_box)
+        distance_form.setContentsMargins(0, 0, 0, 0)
+        distance_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        self.distance = spin(0, 0, 1e9, 1)
+        distance_form.addRow('Distance from parent (km)', self.distance)
+        layout.addWidget(self.distance_box)
         self.manual = QWidget()
         manual_form = QFormLayout(self.manual)
         manual_form.setContentsMargins(0, 0, 0, 0)
@@ -144,6 +152,18 @@ class BodyCatalog(QWidget):
             self.body_combo.setCurrentIndex(default)
         self.body_combo.blockSignals(False)
         self.show_body()
+        self.sync_lunar_fields()
+
+    def sync_lunar_fields(self):
+        lunar = self.type_combo.currentText() == 'Lunar'
+        self.distance_box.setVisible(lunar)
+        self.reference_label.setText('Parent planet' if lunar else 'Relative to')
+        if lunar:
+            self.note.setText('Distance is center-to-center from the parent planet, in kilometers. '
+                              'It is not that planet\'s distance from its star. '
+                              'A circular start is only a first guess; gravity determines the motion.')
+        else:
+            self.note.setText('The circular option sets a starting velocity. Gravity determines the motion after that.')
 
     def show_body(self):
         key = self.body_combo.currentData()
@@ -171,9 +191,10 @@ class BodyCatalog(QWidget):
     def request_add(self):
         theta = math.radians(self.direction.value())
         velocity = self.speed.value()/AUYR_TO_KMS*np.array([math.cos(theta), math.sin(theta)])
+        lunar = self.type_combo.currentText() == 'Lunar'
         self.add_requested.emit({'spec': CATALOG[self.body_combo.currentData()],
             'reference_id': self.reference_combo.currentData(), 'circular': self.motion_combo.currentData(),
-            'velocity': velocity})
+            'velocity': velocity, 'distance_km': self.distance.value() if lunar else None})
 
 
 class BodyProperties(QWidget):
@@ -243,7 +264,13 @@ class BodyProperties(QWidget):
             self.fields[key].setText(f'{value:.16g}')
         self.vector_texts = {key: self.fields[key].text() for key in ('x', 'y', 'vx', 'vy')}
         self.fill_physical()
-        self.note.setText('Starting motion is preserved when you change mass or replace the body.')
+        if body.spec.kind == 'moon':
+            distance = float(np.linalg.norm(body.r))*AU_KM
+            self.note.setText(f'Starting distance from the parent: {distance:,.6g} km. '
+                              'Relative x/y are that planet-centered distance in AU, not the planet\'s position from its star. '
+                              'Starting motion is preserved when you change mass or replace the body.')
+        else:
+            self.note.setText('Starting motion is preserved when you change mass or replace the body.')
 
     def fill_physical(self):
         for key, conversion in [('mass', SOLAR_KG), ('radius', AU_KM), ('temperature', 1)]:

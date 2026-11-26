@@ -42,7 +42,9 @@ saved experiment** opens validated JSON starting setups from disk.
 Each experiment opens at time zero with **Run**, **Pause**, **Reset**, and
 **Edit starting setup**. The resizable sidebar has **Inspect**, **Add body**, and
 **Edit body** tabs. **Add body** uses type/body dropdowns, information, **Add**,
-then a scene click; Escape cancels. **Calculate a recording** uses the shared
+then a scene click; Escape cancels. **Lunar** asks for the parent planet and the
+moon's center-to-center distance in kilometers, separate from that planet's
+position in the system; the click chooses only the direction. **Calculate a recording** uses the shared
 bounded calculator; completed recordings appear under **Recorded results**.
 Native file dialogs save and load the existing validated JSON format.
 
@@ -641,6 +643,12 @@ Primary records checked on 2026-10-30:
 - [NASA planetary fact sheets](https://nssdc.gsfc.nasa.gov/planetary/factsheet/), [JPL planets](https://ssd.jpl.nasa.gov/planets/phys_par.html), [Anglada-Escude et al. 2016](https://arxiv.org/html/1609.03449v1), and [Moravveji et al. 2012](https://arxiv.org/html/1202.1836v1): retained rounded legacy definitions; the latter identifies Rigel's mass as an evolutionary estimate.
 
 ## Planet-relative moons
+
+In the desktop, select a planet, open **Add body**, choose **Lunar**, and enter
+the moon's distance from that planet in kilometers. The scene click sets the
+direction only. That distance is center-to-center and is not the planet's
+position from its star. Inspect the moon to see the parent and the current
+separation. The parent does not pin the moon.
 
 Select a planet, choose **Add a body**, then the **moon** category and a catalog
 definition (Moon, Io, Europa, Ganymede, Callisto, or Titan). For a custom moon,
