@@ -1,4 +1,4 @@
-# science_bitch
+# star-system
 
 Small, well-established physics simulations in Python. Each one uses an integrator suited to the problem and checks itself against a known result.
 
@@ -16,12 +16,17 @@ The dependencies are numpy, matplotlib, pillow, pytest, and PyQt6 (GUI backend).
 
 ## Run
 
-```bash
-python -m simulations.star_system  # live interactive GUI
-python -m simulations.star_system --star sun --planet earth --planet jupiter --output output/star-system.png
-```
+The star-system module has three entry points. Pass no arguments for the default Qt desktop; any explicit selector opens another path.
 
-Details, presets, and the other command-line flags are in each simulation's README:
+| Entry | Command | What you see first |
+| --- | --- | --- |
+| Qt desktop (default) | `python -m simulations.star_system` | **Choose experiment** / **Load saved experiment** |
+| Legacy Matplotlib GUI | `python -m simulations.star_system --star sun --planet earth --planet jupiter` | Overhead scene in **PREP** at t=0; **Menu [M]** toggles the sidebar |
+| Headless PNG export | `python -m simulations.star_system --star sun --output output/star-system.png` | No window; writes an image file (Agg) |
+
+Evolution flags `--years`, `--sample-stride`, and `--max-recording-mib` apply only on the headless path together with `--output`. They run the shared incremental calculator before rendering; interactive GUIs evolve through **Calculate...** or **Run live** instead.
+
+Details, presets, and the full flag list are in each simulation's README:
 
 - [Interactive star system](simulations/star_system/README.md) — tunable stars and planets with full N-body gravity
 

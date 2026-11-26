@@ -1,12 +1,53 @@
 # Interactive star system
 
-Run from the repository root with `requirements.txt` installed:
+Run from the repository root with `requirements.txt` installed. Dispatch is
+argument-dependent: no flags opens the Qt desktop; any explicit selector uses the
+legacy Matplotlib controller or headless export described below.
 
-```powershell
-python -m simulations.star_system
+| Entry | Example | First screen |
+| --- | --- | --- |
+| Qt desktop (default) | `python -m simulations.star_system` | **Choose experiment** / **Load saved experiment** |
+| Legacy Matplotlib GUI | `python -m simulations.star_system --star sun --planet earth --planet jupiter` | Overhead scene in **PREP** at t=0; **Menu [M]** toggles the sidebar |
+| Headless PNG | `python -m simulations.star_system --load output/experiment.json --years 0.01 --output output/restored.png` | No window; Agg writes the file |
+
+`--years`, `--sample-stride`, and `--max-recording-mib` take effect only with
+`--output`. They drive the shared incremental calculator before the PNG is saved.
+Passing them without `--output` is rejected. Interactive GUIs open frozen at t=0 and
+evolve through **Calculate...** (Qt or Matplotlib) or **Run live**.
+
+```bash
+python -m pytest -q
+```
+
+## Qt desktop (default)
+
+`python -m simulations.star_system` with no arguments opens the native Qt
+**Observatory** window. **Choose experiment** lists prepared templates (Solar
+System, doubled stellar mass, added Moon, test-particle ring, and others). **Load
+saved experiment** opens validated JSON starting setups from disk.
+
+Each experiment opens at time zero with **Run**, **Pause**, **Reset**, and
+**Edit starting setup**. The resizable sidebar has **Inspect**, **Add body**, and
+**Edit body** tabs. **Add body** uses type/body dropdowns, information, **Add**,
+then a scene click; Escape cancels. **Calculate a recording** uses the shared
+bounded calculator; completed recordings appear under **Recorded results**.
+Native file dialogs save and load the existing validated JSON format.
+
+**Focus selected and its orbiting bodies** zooms to a planet's local system;
+**Fit view** returns to the full system. Select a body to see L4/L5 guides and
+estimated orbit curves for its orbiting bodies. These templates use the
+illustrative planar circular initializer, not current astronomical ephemerides.
+
+## Legacy Matplotlib controller and headless export
+
+Any explicit CLI selector (`--star`, `--planet`, `--load`, `--population`, and
+related construction flags) skips the Qt menu and opens the compatibility
+Matplotlib **App** in **PREP** at t=0, unless `--output` requests a headless PNG.
+
+```bash
+python -m simulations.star_system --star sun --planet earth --planet jupiter
 python -m simulations.star_system --star sun --planet earth --planet jupiter --years 1 --output output/star-system.png
 python -m simulations.star_system --load output/experiment.json --years 0.01 --output output/restored.png
-python -m pytest -q
 ```
 
 The Matplotlib observatory has a full-window overhead scene, glowing stars,
@@ -16,7 +57,7 @@ ten planet/dwarf-planet selectors. General catalog bodies and custom states are
 available through the authoring UI and Python API. A desktop backend is needed
 for interactive input; `--output` uses Agg without a display.
 
-In the desktop workspace, select a planet in the system view and choose
+In the Matplotlib workspace, select a planet in the system view and choose
 **Open planetary view**. The scene recenters on that planet and shows it with
 the moons assigned to it in the experiment; the body list follows the same
 scope. **Return to system view** restores the full system. The switch changes
@@ -79,9 +120,10 @@ Timeline scrubbing, reverse playback and comparison dashboards are not included.
 **Run live from starting setup** explicitly starts a fresh **LIVE** trajectory.
 Live Pause/Resume, one-dt **Step**, restart and insertion remain available.
 Add/population actions from RECORDED enter preparation, so recorded arrays are
-never insertion targets. The CLI `--years` path drives the same incremental
-calculator; `--sample-stride` (default 10) and `--max-recording-mib` (default 256)
-control its recording. `--years 0` still exports the initial setup directly.
+never insertion targets. On the headless CLI path, `--years` drives the same
+incremental calculator; `--sample-stride` (default 10) and `--max-recording-mib`
+(default 256) control its recording. `--years 0` still exports the initial setup
+directly. These flags are not applied when opening an interactive GUI.
 
 Python callers can use `Calculation(setup, CalculationRequest(duration_years,
 sample_stride, max_bytes))`, call `advance(max_steps)` until `done`, or `cancel()`
@@ -235,7 +277,7 @@ initial arrays are exactly equal and deterministic evolution agrees to
 no universal cross-version/platform bitwise guarantee. Use the stored version
 metadata when comparing results.
 
-`--load PATH` accepts `--years` and `--output` and uses the general renderer
+`--load PATH` accepts `--years` and `--output` (headless only) and uses the general renderer
 for arbitrary bodies, multiple stars, particles and moons. It rejects any
 explicit legacy construction flag (`--star`, `--planet`, `--population`,
 `--count`, `--inner`, `--outer`, `--seed`, `--angles`), even with a default
@@ -632,8 +674,10 @@ halted status, pause, and sample stepping.
 
 ## Sun–Jupiter perturbation experiments
 
-Open **Experiment / Save / Load...**, select **sun-jupiter-ring**, then
-**Open preset**. The common setup contains the Sun, Jupiter, and 32 mass-zero
+In the **legacy Matplotlib controller**, open **Experiment / Save / Load...**,
+select **sun-jupiter-ring**, then **Open preset**. (The Qt desktop exposes the
+same fixture through the experiment library.) The common setup contains the Sun,
+Jupiter, and 32 mass-zero
 test particles in a 3.2 AU ring with evenly spaced angles and seed 7. Its
 positions and circular initial velocity guesses use the existing population
 generator. Body/vector editors, population settings, initial saves, loading,
@@ -729,7 +773,15 @@ and multi-star lighting fixtures. The generic renderer never assumes a fixed
 star/planet prefix. Current-state capture stores explicit particle bodies with
 `population=None`, avoiding regeneration of evolved particle coordinates.
 
-## Checked outcomes
+## Historical integration logs
+
+The sections below record past integration runs and command transcripts. The
+[acceptance audit table](#final-dependency-stack-acceptance-audit) under
+**Numerical model and limits** is historical evidence, not day-to-day operating
+instructions. Use the launch table and desktop or compatibility sections above to
+get started.
+
+### Checked outcomes (integration transcripts)
 
 Windows/Python 3.14 verification uses writable ignored `output/` basetemps because
 the default Windows pytest temp directory is inaccessible in this environment.
