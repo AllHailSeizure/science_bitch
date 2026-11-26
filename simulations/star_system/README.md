@@ -365,6 +365,24 @@ Step-halving fixtures, measured on this implementation, compare dt = 0.0005 and
 Legacy tests retain isolated orbital-period relative tolerance 1e-7, Kepler-law
 2e-7, energy 1e-7, angular/linear momentum 1e-11, and multi-planet period 0.5%
 (which permits real perturbations). These tests establish their fixtures only.
+They still take their expected periods from the model constant and remain the
+integration-accuracy checks.
+
+Solar gravity is also compared with an external reference. The acceleration of
+a massless body at 1 AU from one solar mass is checked against JPL DE440's
+heliocentric gravitational constant GM_sun = 1.32712440041279419e20 m^3 s^-2
+([astrodynamic parameters](https://ssd.jpl.nasa.gov/astro_par.html)), converted
+with the IAU astronomical unit and a Julian year. Those reference constants
+are hardcoded in the test. Rounded solar mass 1.98847e30 kg leaves the model
+about 30.2 ppm high. The relative tolerance is 1e-4, which allows that
+rounding and fails a 1% change in G or a unit conversion error.
+
+Eccentric phase has a separate fixture, and the circular star/planet period
+cases stay in place. An e=0.3 test particle integrated for one orbit at
+period/1200 is compared with the position from Kepler's equation
+M = E - e sin E, using the same implemented mu as the integrator. The measured
+separation is about 2e-8 AU; the bound is 1e-6 AU.
+
 These conservation/accuracy checks apply to collision-free evolution. The optional
 nonstellar contact model below has different numerics and conservation limits.
 There are no tides, relativity, stellar evolution, 3D, or scripted capture outcomes.
