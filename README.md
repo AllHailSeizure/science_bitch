@@ -46,7 +46,14 @@ The test suite covers physics, population generation, body authoring, persistenc
 
 The [CI workflow](.github/workflows/ci.yml) runs on every pull request (including PRs targeting another feature branch), pushes to `master`, and manual dispatch. Lint runs as a separate job; any lint or test failure fails CI. The complete pytest suite runs on Linux with Python 3.10 and 3.14, plus Windows with Python 3.14. Python 3.10 is the documented minimum; the Windows job also checks the desktop development platform. GitHub installs these interpreters on its runners; you only need one supported Python locally.
 
-To enforce passing checks before merging, configure branch protection or a ruleset to require `Lint` and the three `Tests (...)` jobs after the workflow's first run.
+On `master`, a GitHub ruleset enforces this merge policy (documentation only; the workflow above is unchanged). Pull requests must be up to date with `master`, history must stay linear, force-pushes are blocked, and the default branch cannot be deleted. Merging requires these four status checks to pass:
+
+- `Lint`
+- `Tests (ubuntu-latest, Python 3.10)`
+- `Tests (ubuntu-latest, Python 3.14)`
+- `Tests (windows-latest, Python 3.14)`
+
+Repository admins can bypass the ruleset, so a broken CI run cannot permanently lock `master`.
 
 ## Adding a simulation
 
