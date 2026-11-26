@@ -52,11 +52,12 @@ results and the renderer also consume application memory.
 **Play / Pause**, **Next sample**, and **yr/sec** select already calculated
 samples forward in recorded time. Replay never calls the integrator. There is
 no interpolation: the scene clock is the displayed frame's actual timestamp.
-**Restart** in RECORDED returns to its first sample. Source name, digest,
-requested/resolved end times, actual terminal time, completion state and reason
-stay with the result. Each frame carries its own IDs, physical properties,
-parent associations and events; body membership need not stay fixed. Missing
-selected bodies/parents report removal. An explicit merge-event mapping can
+**Restart** in RECORDED returns to its first sample. Source name, setup digest,
+execution environment, solver build, requested/resolved end times, actual
+terminal time, completion state and reason stay with the result. Each frame
+carries its own IDs, physical properties, parent associations and events;
+body membership need not stay fixed. Missing selected bodies/parents report
+removal. An explicit merge-event mapping can
 transfer selection/follow to its remnant, with a visible disclosure; absorbed
 tracers stay selected as removed and have no remnant mapping.
 Ordinary samples retain the camera; fit and follow remain explicit actions.
@@ -215,7 +216,7 @@ population stores PCG64, generator version, identity, reference ID and all
 settings including seed. Catalog keys are descriptive; loading never looks
 up replacement physical values in the current catalog.
 
-The supported identities are `star-system-setup-v1`,
+The supported setup-file identities are `star-system-setup-v1`,
 `planar-newtonian-point-mass-v1`, `fixed-yoshida4-v1`, and
 `planar-circular-population-v1`. Unknown schemas, physical/model fields,
 generators/settings, invalid references, invalid types/shapes/ranges,
@@ -228,12 +229,41 @@ is used. Saves validate and encode before writing, then atomically replace
 the destination through a uniquely owned sibling temporary file; failure
 preserves an existing valid destination.
 
-Canonical JSON uses sorted keys and disallows NaN/Infinity; SHA-256 identifies
-the complete setup/provenance. On the same supported environment, restored
+`setup_digest` is the SHA-256 identity of the physical starting conditions
+and the source document that records them. Canonical JSON uses sorted keys
+and disallows NaN/Infinity. The hashed document includes units, the
+source/model/numerical version identifiers, the collision-mode encoding,
+population settings, provenance, and the source `environment` block
+(`environment.numpy`). It does not include the NumPy that last loaded the
+file, and it does not include the solver that later integrates a trajectory.
+Schema version remains 1. An existing version-1 file still loads with no
+migration: its recorded NumPy version is validated and kept on the setup.
+Saving a setup that carries that source environment writes the same
+environment back, so an unedited load/resave under a different NumPy does
+not change the document or the digest. A setup built in memory, with no
+source environment yet, still records the current interpreter when it is
+saved. Collision mode `none` therefore keeps its previous byte-for-byte
+digest for a fresh save on a given NumPy. The same starting conditions keep
+one digest for a given source document, including across loaders. A newly
+produced document records the interpreter that produced it.
+
+A produced run keeps that setup digest and records two further facts that
+are not part of it. `execution_environment` is the NumPy that integrated the
+trajectory, in the same `{"numpy": version}` shape as the setup document's
+environment block. `solver_build` (`SOLVER_BUILD` in `persistence.py`)
+identifies the integrator implementation. `numerical_version` remains the
+numerical-method contract (`fixed-yoshida4-v1`, or the collision policy's
+numerical id). Two solver builds can share a setup digest and a numerical
+version; change `SOLVER_BUILD` when solver arithmetic changes even if that
+method name stays the same. Recordings stay in memory and are not written
+into setup JSON.
+
+On the same supported environment, restored
 initial arrays are exactly equal and deterministic evolution agrees to
 `rtol=1e-12, atol=1e-12` after 50 identical steps in regression tests. There is
-no universal cross-version/platform bitwise guarantee. Use the stored version
-metadata when comparing results.
+no universal cross-version/platform bitwise guarantee. Compare results with
+the setup digest, the source environment, the run's execution environment,
+and the solver build.
 
 `--load PATH` accepts `--years` and `--output` and uses the general renderer
 for arbitrary bodies, multiple stars, particles and moons. It rejects any
@@ -718,7 +748,7 @@ C:\Python314\python.exe -m simulations.star_system --load output/sun-jupiter-con
 - `rendering.py`: `draw_system(ax, prepared, history=()) -> Scene`; retained `draw(...)` accepts the old numeric/circular arguments. `Scene.artists_by_id`, `labels_by_id`, `trails_by_id`, `origin_id`, and `origin` support identity-based integration. `Scene.update(prepared, history)` appends new artists without resetting the camera.
 - `authoring.py`: `BodyEditor` and its `reference_state`, `vectors`, `draft_body`, `commit`, `finish` draft lifecycle. `App.edit_body`, `prepare_setup`, `selected_id`, `_install_prepared`, and `_sync_painter` provide the controller integration points. Register new widget axes with sidebar visibility and the painter's overlay axes.
 - `population_editor.py`: `PopulationEditor` validates a complete candidate `InitialSetup` before Apply/Remove, using the shared `authoring.reference_ids` choices. Its separate figure owns its widgets and close/Escape lifecycle; the main scene's overlay axes retain the existing painter contract.
-- `persistence.py`: `save_setup`, `load_setup`, `setup_digest`; strict schema/model/numerical/generator versions above. Setup identity includes all configured values and provenance.
+- `persistence.py`: `save_setup`, `load_setup`, `setup_digest`; strict schema/model/numerical/generator versions above. `setup_digest` identifies the canonical starting conditions and the source-document NumPy environment, not the loading interpreter or `SOLVER_BUILD`. Produced runs record `execution_environment` and `solver_build` separately. Schema version 1 files load without migration.
 - `experiments.py`: `ExperimentSession(initial_setup)` owns `initial_setup`, `draft`, `prepared`; `begin_draft`, `update_draft`, `apply_draft`, `cancel_draft`, `select`, `restart`, `save_initial`, `save_current`, `load` provide explicit transitions. `capture_current_setup(prepared, initial_setup, name)` returns an independent validated initial epoch. `App.initial_setup`/`prepared` delegate to session ownership, and `_install_prepared` remains the scene-installation path.
 - `scenarios.py`: `get_scenario(key)` returns an independent immutable setup; `DESCRIPTIONS` holds preset descriptions. `sun-earth-jupiter` is the compatibility preset; `sun-jupiter-ring` is the checked perturbation fixture. `make_jupiter_comparison(setup)` resolves a matched explicit control, and `compare_recordings(first, second)` validates source vectors and reports Sun-relative differences only at common recorded times.
 - `frames.py`: pure `frame_transform`, `rotate_about_sun`, and `lagrange_guides` transform snapshot copies without a dynamics import. `Scene.world_to_display` and `display_to_world` compose the selected frame with compression/inversion; historical points use their own frame transform.
