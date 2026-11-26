@@ -5,9 +5,9 @@ Planning snapshot: 2026-10-30, `AllHailSeizure/science_bitch`. The user requeste
 ## Verified starting point
 
 - Fetched `origin/Master`: `2d91df9ca552cffb807c233c5ac8769a636fcf36`.
-- [PR #10](https://github.com/AllHailSeizure/science_bitch/pull/10) supplies the observatory, retained rendering, and frame pacing.
-- [PR #11](https://github.com/AllHailSeizure/science_bitch/pull/11) supplies seeded ring/disk/belt test particles.
-- [PR #12](https://github.com/AllHailSeizure/science_bitch/pull/12) **is merged**, including the population settings window. Issue #6 still describes it as open; do not repeat that work or add a merge prerequisite.
+- [PR #10](https://github.com/AllHailSeizure/sidereel/pull/10) supplies the observatory, retained rendering, and frame pacing.
+- [PR #11](https://github.com/AllHailSeizure/sidereel/pull/11) supplies seeded ring/disk/belt test particles.
+- [PR #12](https://github.com/AllHailSeizure/sidereel/pull/12) **is merged**, including the population settings window. Issue #6 still describes it as open; do not repeat that work or add a merge prerequisite.
 - The current checkout remains `feat/observatory-visuals` at `8267e62`. Plan against the fetched base, not that older implementation. The pre-existing untracked `2026-10-28-observatory-visuals.md` is historical and must be preserved.
 - The merged PR reports 105 passing tests. That is historical PR evidence; this planning session did not run the application test suite or verify native desktop interaction.
 
@@ -49,7 +49,7 @@ Keep NumPy, Matplotlib, Pillow, pytest, PyQt6, Python 3.10+, the 2D model, and t
 
 ## Judgment tasks and owner decisions
 
-1. **Collision response:** plan 8 targets perfectly inelastic merging for nonstellar massive bodies as a deliberately simplified option. Test particles are absorbed on supported nonstellar contact without mass feedback; particle/particle contacts are ignored. Contact involving a star halts clearly. The owner deferred stellar merging as the specific [binary-star merger experiment #14](https://github.com/AllHailSeizure/science_bitch/issues/14), outside this stack; do not add a generic stellar merge response. Remnant properties and numerical resolution are documented implementation judgments.
+1. **Collision response:** plan 8 targets perfectly inelastic merging for nonstellar massive bodies as a deliberately simplified option. Test particles are absorbed on supported nonstellar contact without mass feedback; particle/particle contacts are ignored. Contact involving a star halts clearly. The owner deferred stellar merging as the specific [binary-star merger experiment #14](https://github.com/AllHailSeizure/sidereel/issues/14), outside this stack; do not add a generic stellar merge response. Remnant properties and numerical resolution are documented implementation judgments.
 2. **Authoring semantics:** distinct instance IDs (including repeated catalog choices), explicit reference selection, and preparation-only edit/remove are the execution defaults. The user selected saving the original setup plus offering the current state as a separately named new setup. Restart uses the selected starting setup; live insertion does not silently rewrite it. Capturing current state creates a new initial epoch, preserving the source time as provenance. Do not mix evolved population coordinates with regenerated particles in that captured setup.
 3. **Recording policy:** plan 6 proposes user-entered duration and integer output stride, in-memory results, and forward recorded playback. These are a minimal proposal for the issue's open sampling/inspection choices; settle them before building UI. Scrubbing, reverse integration, persisted recordings, and preference saving are not presumed requirements.
 
@@ -67,11 +67,11 @@ No plan requires a human playthrough. Existing Agg event/render checks establish
 
 | Issue | Acceptance ownership |
 | --- | --- |
-| [#4](https://github.com/AllHailSeizure/science_bitch/issues/4) | Plan 1 layout/catalog entry/size/readability/live controls/docs; plan 2 multi-star rendering; plan 5 scenario name |
-| [#5](https://github.com/AllHailSeizure/science_bitch/issues/5) | Plan 2 catalog/provenance/custom bodies/placement/vectors/live insertion/multiple stars/units; plans 5–6 shared preparation/results; physical radii consumed by 4 and 8 |
-| [#6](https://github.com/AllHailSeizure/science_bitch/issues/6) | Merged #11/#12 foundation; plan 3 reference integration; plans 5–6 reproducible saves/calculation; plan 8 explicit contact limits |
-| [#7](https://github.com/AllHailSeizure/science_bitch/issues/7) | Plan 7 repeatable setup, rotating view, L4/L5 guides, rock trajectories, matched controls; uses 2–3 and 5–6 rather than duplicate subsystems |
-| [#8](https://github.com/AllHailSeizure/science_bitch/issues/8) | Plan 5 setup/presets/persistence/recovery; plan 6 calculation/replay/progress; plan 7 Jupiter preset; plan 8 collision response/settings/reproducibility |
-| [#9](https://github.com/AllHailSeizure/science_bitch/issues/9) | Plan 4 moon setup, parent-relative inspection, short-timescale checks; plans 5–6 save/replay; plan 8 stated contact model |
+| [#4](https://github.com/AllHailSeizure/sidereel/issues/4) | Plan 1 layout/catalog entry/size/readability/live controls/docs; plan 2 multi-star rendering; plan 5 scenario name |
+| [#5](https://github.com/AllHailSeizure/sidereel/issues/5) | Plan 2 catalog/provenance/custom bodies/placement/vectors/live insertion/multiple stars/units; plans 5–6 shared preparation/results; physical radii consumed by 4 and 8 |
+| [#6](https://github.com/AllHailSeizure/sidereel/issues/6) | Merged #11/#12 foundation; plan 3 reference integration; plans 5–6 reproducible saves/calculation; plan 8 explicit contact limits |
+| [#7](https://github.com/AllHailSeizure/sidereel/issues/7) | Plan 7 repeatable setup, rotating view, L4/L5 guides, rock trajectories, matched controls; uses 2–3 and 5–6 rather than duplicate subsystems |
+| [#8](https://github.com/AllHailSeizure/sidereel/issues/8) | Plan 5 setup/presets/persistence/recovery; plan 6 calculation/replay/progress; plan 7 Jupiter preset; plan 8 collision response/settings/reproducibility |
+| [#9](https://github.com/AllHailSeizure/sidereel/issues/9) | Plan 4 moon setup, parent-relative inspection, short-timescale checks; plans 5–6 save/replay; plan 8 stated contact model |
 
 At issue closeout, compare the live acceptance list against the shipped dependency stack. Do not use `Closes #6`, `Closes #8`, or `Closes #9` on partial foundation PRs. PR descriptions should identify referenced issues, applicable existing labels, test checklist, measured results, and remaining limits. Merge and issue closure remain separate from writing these plans.
