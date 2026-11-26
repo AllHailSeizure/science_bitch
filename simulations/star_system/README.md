@@ -36,8 +36,10 @@ python -m pytest -q
 
 `python -m simulations.star_system` with no arguments opens the native Qt
 **Observatory** window. **Choose experiment** lists prepared templates (Solar
-System, doubled stellar mass, added Moon, test-particle ring, and others). **Load
+System, doubled stellar mass, added Moon, test-particle ring, Sun–Jupiter ring, and others). **Load
 saved experiment** opens validated JSON starting setups from disk.
+
+**Sun–Jupiter ring** is the Sun, Jupiter, and 32 mass-zero rocks evenly spaced at 3.2 AU, seed 7. Collision mode is none. **Rotating view** keeps the current Sun–Jupiter direction on the positive horizontal axis; ordinary view uses inertial axes. Switching views does not change positions, velocities, or time. Hollow L4/L5 marks are ideal circular reference geometry, distinct from the rock markers, and they do not mean a rock is captured. Select a rock for its Jupiter separation, Jupiter-relative inertial velocity, and the trail's actual time span. **Matched no-Jupiter run** removes Jupiter and keeps the same rock vectors and fixed step. Compare only the shared recorded time; a halt or a cancelled run stays labeled and is not an equal-time result.
 
 Each experiment opens at time zero with **Run**, **Pause**, **Reset**, and
 **Edit starting setup**. The resizable sidebar has **Inspect**, **Add body**, and
@@ -793,8 +795,8 @@ halted status, pause, and sample stepping.
 ## Sun–Jupiter perturbation experiments
 
 In the **legacy Matplotlib controller**, open **Experiment / Save / Load...**,
-select **sun-jupiter-ring**, then **Open preset**. (The Qt desktop exposes the
-same fixture through the experiment library.) The common setup contains the Sun,
+select **sun-jupiter-ring**, then **Open preset**. The Qt desktop lists the same
+fixture as **Sun–Jupiter ring**, with Rotating view and Matched no-Jupiter run. The common setup contains the Sun,
 Jupiter, and 32 mass-zero
 test particles in a 3.2 AU ring with evenly spaced angles and seed 7. Its
 positions and circular initial velocity guesses use the existing population

@@ -11,7 +11,7 @@ One year of the Sun, Earth, and Jupiter, rendered by `sidereel-cli`.
 - Unsoftened Newtonian gravity in the plane. Masses pull on each other. Test particles only fall.
 - A fixed-step Yoshida integrator. A close encounter halts the run and keeps the last good state.
 - A PyQt6 window filled by the sky. Menu, or M, lays a sidebar over the scene. The view stays put.
-- Four starting experiments: the Solar System, a star at twice the Sun's mass, Earth and the Moon, 32 asteroids in a ring at 3.2 AU.
+- Five starting experiments: the Solar System, a star at twice the Sun's mass, Earth and the Moon, 32 asteroids in a ring at 3.2 AU, and a Sun–Jupiter rock ring.
 - A CLI that integrates the system and writes a PNG. No display required.
 - Starting setups saved as JSON. Calculate a recording, then play the samples.
 - An isolated planet holds its period to a relative 1e-7. At 1 AU, solar gravity sits about 30 ppm above JPL's GM, inside a 1e-4 bound.
@@ -49,6 +49,8 @@ sidereel
 ```
 
 You get the experiment list. `sidereel-cli` with no arguments opens the same window.
+
+Sun–Jupiter ring places 32 mass-zero rocks evenly around the Sun at 3.2 AU (seed 7). Rotating view keeps the Sun–Jupiter direction fixed. Hollow L4 and L5 marks are geometric guides, not rocks. Select a rock to read its separation from Jupiter and how long the drawn trail is. Matched no-Jupiter run uses the same rock starting vectors. Collision mode is none, and a halt or a shorter run is labeled as incomplete.
 
 Render the year in the picture:
 
