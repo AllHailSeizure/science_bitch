@@ -15,9 +15,9 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFontDatabase, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QStackedWidget, QVBoxLayout, QHBoxLayout,
-    QSplitter, QScrollArea, QListWidget, QListWidgetItem, QTabWidget, QLineEdit,
-    QFileDialog, QMessageBox, QFormLayout, QGroupBox, QSpinBox,
-    QProgressBar, QCheckBox,
+    QScrollArea, QListWidget, QListWidgetItem, QTabWidget, QLineEdit,
+    QFileDialog, QMessageBox, QFormLayout, QGroupBox, QSpinBox, QDoubleSpinBox,
+    QComboBox, QProgressBar, QCheckBox,
 )
 
 from .collisions import advance_prepared, mapped_selection
@@ -58,7 +58,7 @@ QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 4px; color:
 QScrollArea { border: none; }
 QScrollBar:vertical { width: 10px; background: #101c2b; }
 QScrollBar::handle:vertical { background: #355269; min-height: 30px; border-radius: 4px; }
-QSplitter::handle { background: #243a4f; width: 5px; }
+QWidget#overlaySidebar { background: #101c2c; border-right: 1px solid #31485f; }
 QProgressBar { border: 1px solid #31485f; border-radius: 4px; text-align: center; }
 QProgressBar::chunk { background: #416f75; }
 """
@@ -69,6 +69,36 @@ def scrollable(widget):
     scroll.setWidgetResizable(True)
     scroll.setWidget(widget)
     return scroll
+
+
+class FullWindowWorkspace(QWidget):
+    """Scene canvas fills the page. The sidebar and menu sit over that canvas."""
+
+    def __init__(self):
+        super().__init__()
+        self.canvas = None
+        self.sidebar = None
+        self.menu_button = None
+        self.sidebar_width = 392
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.place_overlay()
+
+    def place_overlay(self):
+        if self.canvas is None:
+            return
+        # Same rectangle when the sidebar opens or closes, so the view is not resized.
+        if self.canvas.geometry() != self.rect():
+            self.canvas.setGeometry(self.rect())
+        self.canvas.lower()
+        if self.sidebar is not None:
+            self.sidebar.setGeometry(0, 0, self.sidebar_width, max(self.height(), 1))
+            self.sidebar.raise_()
+        if self.menu_button is not None:
+            shown = self.sidebar is not None and self.sidebar.isVisible()
+            self.menu_button.setGeometry(self.sidebar_width + 10 if shown else 12, 12, 108, 36)
+            self.menu_button.raise_()
 
 
 class Observatory(QMainWindow):
@@ -117,6 +147,10 @@ class Observatory(QMainWindow):
         self.timer.start()
         QShortcut(QKeySequence('Escape'), self, activated=self.cancel_interaction)
         QShortcut(QKeySequence.StandardKey.Save, self, activated=self.save_dialog)
+        self.menu_shortcut = QShortcut(QKeySequence('M'), self)
+        self.menu_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self.menu_shortcut.activated.connect(self.toggle_sidebar)
+        QApplication.instance().focusChanged.connect(self._sync_menu_shortcut)
 
     def make_menu(self):
         page = QWidget()
@@ -183,31 +217,78 @@ class Observatory(QMainWindow):
         self.experiment_observe.setText(item.observe)
 
     def make_workspace(self):
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(12, 10, 12, 10)
-        header = QHBoxLayout()
-        header.addWidget(action('Starting menu', self.show_menu))
+        page = FullWindowWorkspace()
+        self.figure = Figure(figsize=(10, 8), facecolor=BACKGROUND)
+        self.canvas = FigureCanvasQTAgg(self.figure)
+        self.canvas.setParent(page)
+        self.canvas.setMinimumSize(0, 0)
+        self.ax = self.figure.add_axes((0, 0, 1, 1))
+        for event, callback in [('button_press_event', self.on_press), ('motion_notify_event', self.on_motion),
+                                ('button_release_event', self.on_release), ('scroll_event', self.on_scroll)]:
+            self.canvas.mpl_connect(event, callback)
+        self.canvas.mpl_connect('resize_event', lambda event: self.refresh_scene())
+
+        self.sidebar = QWidget(page)
+        self.sidebar.setObjectName('overlaySidebar')
+        self.sidebar.setAccessibleName('Observatory controls')
+        self.sidebar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        side = QVBoxLayout(self.sidebar)
+        side.setContentsMargins(0, 0, 0, 0)
+        content = QWidget()
+        form = QVBoxLayout(content)
+        form.setContentsMargins(12, 12, 12, 16)
+        form.setSpacing(8)
+        navigation = QHBoxLayout()
+        navigation.addWidget(action('Starting menu', self.show_menu))
+        self.save_button = action('Save experiment…', self.save_dialog)
+        navigation.addWidget(self.save_button)
+        form.addLayout(navigation)
+        self.heading_label = label('', 'heading')
+        self.heading_label.setAccessibleName('Scenario name')
+        form.addWidget(self.heading_label)
         self.name_field = QLineEdit()
         self.name_field.setPlaceholderText('Experiment name')
         self.name_field.editingFinished.connect(self.rename_experiment)
-        header.addWidget(self.name_field, 1)
-        self.save_button = action('Save experiment…', self.save_dialog)
-        header.addWidget(self.save_button)
-        layout.addLayout(header)
-        self.splitter = QSplitter()
-        sidebar = QWidget()
-        sidebar.setMinimumWidth(320)
-        side = QVBoxLayout(sidebar)
-        side.setContentsMargins(4, 8, 12, 8)
+        form.addWidget(self.name_field)
+        self.time_readout = label('', 'muted')
+        self.time_readout.setAccessibleName('Simulated time')
+        form.addWidget(self.time_readout)
         self.mode_label = label('Starting setup', 'subheading')
-        side.addWidget(self.mode_label)
-        side.addWidget(label('Bodies', 'muted'))
+        form.addWidget(self.mode_label)
+        self.notice = label('Choose an experiment to begin.', 'notice')
+        form.addWidget(self.notice)
+        controls = QHBoxLayout()
+        self.run_button = action('Run', self.toggle_run, primary=True)
+        self.step_button = action('Step', self.step_once)
+        self.reset_button = action('Reset', self.reset_run)
+        controls.addWidget(self.run_button)
+        controls.addWidget(self.step_button)
+        controls.addWidget(self.reset_button)
+        form.addLayout(controls)
+        speed_row = QHBoxLayout()
+        speed_row.addWidget(label('Simulated years per second', 'muted'))
+        self.speed = spin(.5, .0001, 1000, 4)
+        self.speed.valueChanged.connect(self.sync_time_readout)
+        speed_row.addWidget(self.speed)
+        form.addLayout(speed_row)
+        view_row = QHBoxLayout()
+        self.fit_button = action('Fit view', self.fit_view)
+        self.follow_button = action('Follow selected', self.toggle_follow)
+        view_row.addWidget(self.fit_button)
+        view_row.addWidget(self.follow_button)
+        form.addLayout(view_row)
+        self.system_view_button = action('Return to system view', self.open_system_view)
+        form.addWidget(self.system_view_button)
+        self.arrows_checkbox = QCheckBox('Starting velocities')
+        self.arrows_checkbox.setChecked(True)
+        self.arrows_checkbox.toggled.connect(lambda: self.refresh_scene())
+        form.addWidget(self.arrows_checkbox)
+        form.addWidget(label('Bodies', 'muted'))
         self.body_list = QListWidget()
-        self.body_list.setMinimumHeight(110)
-        self.body_list.setMaximumHeight(150)
+        self.body_list.setMinimumHeight(120)
+        self.body_list.setMaximumHeight(200)
         self.body_list.currentItemChanged.connect(self.select_list_body)
-        side.addWidget(self.body_list)
+        form.addWidget(self.body_list)
         self.tabs = QTabWidget()
         self.inspection = QWidget()
         inspection_layout = QVBoxLayout(self.inspection)
@@ -219,8 +300,6 @@ class Observatory(QMainWindow):
         inspection_layout.addWidget(self.focus_button)
         self.planetary_button = action('Open planetary view', self.open_planetary_view)
         inspection_layout.addWidget(self.planetary_button)
-        self.follow_button = action('Follow selected', self.toggle_follow)
-        inspection_layout.addWidget(self.follow_button)
         self.remove_button = action('Remove selected body', self.remove_selected)
         inspection_layout.addWidget(self.remove_button)
         inspection_layout.addStretch()
@@ -233,72 +312,44 @@ class Observatory(QMainWindow):
         for panel, button, title in [(self.catalog, self.catalog.add_button, 'Add body'),
                                       (self.properties, self.properties.apply_button, 'Edit body')]:
             tab = QWidget()
-            content = QVBoxLayout(tab)
-            content.setContentsMargins(0, 0, 0, 0)
-            content.addWidget(scrollable(panel), 1)
-            content.addWidget(button)
+            content_layout = QVBoxLayout(tab)
+            content_layout.setContentsMargins(0, 0, 0, 0)
+            content_layout.addWidget(scrollable(panel), 1)
+            content_layout.addWidget(button)
             self.tabs.addTab(tab, title)
-        side.addWidget(self.tabs, 1)
+        form.addWidget(self.tabs)
         self.edit_button = action('Edit starting setup', self.edit_starting_setup)
-        side.addWidget(self.edit_button)
+        form.addWidget(self.edit_button)
         edits = QHBoxLayout()
         self.undo_button = action('Undo edit', self.undo_edit)
         self.original_button = action('Restore original', self.restore_original)
         edits.addWidget(self.undo_button)
         edits.addWidget(self.original_button)
-        side.addLayout(edits)
-        self.splitter.addWidget(sidebar)
-        view = QWidget()
-        view_layout = QVBoxLayout(view)
-        view_layout.setContentsMargins(0, 0, 0, 0)
-        self.figure = Figure(figsize=(10, 8), facecolor=BACKGROUND)
-        self.canvas = FigureCanvasQTAgg(self.figure)
-        self.canvas.setMinimumWidth(480)
-        self.ax = self.figure.add_axes((0, 0, 1, 1))
-        view_layout.addWidget(self.canvas, 1)
-        controls = QHBoxLayout()
-        self.run_button = action('Run', self.toggle_run, primary=True)
-        self.reset_button = action('Reset', self.reset_run)
-        self.step_button = action('Step', self.step_once)
-        controls.addWidget(self.run_button)
-        controls.addWidget(self.reset_button)
-        controls.addWidget(self.step_button)
-        controls.addWidget(action('Fit view', self.fit_view))
-        self.system_view_button = action('Return to system view', self.open_system_view)
-        controls.addWidget(self.system_view_button)
-        controls.addWidget(label('Years / second', 'muted'))
-        self.speed = spin(.5, .0001, 1000, 4)
-        controls.addWidget(self.speed)
-        self.arrows_checkbox = QCheckBox('Starting velocities')
-        self.arrows_checkbox.setChecked(True)
-        self.arrows_checkbox.toggled.connect(lambda: self.refresh_scene())
-        controls.addStretch()
-        view_layout.addLayout(controls)
-        view_tools = QHBoxLayout()
-        view_tools.addWidget(self.arrows_checkbox)
-        view_tools.addStretch()
-        view_layout.addLayout(view_tools)
-        view_layout.addWidget(self.make_calculation_controls())
+        form.addLayout(edits)
+        form.addWidget(self.make_calculation_controls())
         recordings = QHBoxLayout()
         recordings.addWidget(label('Recorded results', 'muted'))
         self.result_combo = Dropdown()
-        self.result_combo.setMinimumContentsLength(20)
+        self.result_combo.setMinimumContentsLength(16)
         self.result_combo.currentIndexChanged.connect(self.select_recording)
         self.result_combo.activated.connect(self.select_recording)
         recordings.addWidget(self.result_combo, 1)
+        form.addLayout(recordings)
         self.progress = QProgressBar()
         self.progress.setVisible(False)
-        recordings.addWidget(self.progress, 1)
-        view_layout.addLayout(recordings)
-        self.splitter.addWidget(view)
-        self.splitter.setSizes([370, 1040])
-        layout.addWidget(self.splitter, 1)
-        self.notice = label('Choose an experiment to begin.', 'notice')
-        layout.addWidget(self.notice)
-        for event, callback in [('button_press_event', self.on_press), ('motion_notify_event', self.on_motion),
-                                ('button_release_event', self.on_release), ('scroll_event', self.on_scroll)]:
-            self.canvas.mpl_connect(event, callback)
-        self.canvas.mpl_connect('resize_event', lambda event: self.refresh_scene())
+        form.addWidget(self.progress)
+        self.sidebar_scroll = scrollable(content)
+        self.sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        side.addWidget(self.sidebar_scroll)
+
+        self.menu_button = action('Menu', self.toggle_sidebar)
+        self.menu_button.setParent(page)
+        self.menu_button.setAccessibleName('Menu')
+        self.menu_button.setAccessibleDescription('Hide the control sidebar')
+        page.canvas = self.canvas
+        page.sidebar = self.sidebar
+        page.menu_button = self.menu_button
+        page.place_overlay()
         return page
 
     def make_calculation_controls(self):
@@ -357,7 +408,9 @@ class Observatory(QMainWindow):
         self.stop_activity()
         self.cancel_interaction()
         self.stack.setCurrentWidget(self.menu_page)
+        self.setWindowTitle('Observatory')
         self.menu_error.setText('')
+        self._sync_menu_shortcut(None, QApplication.focusWidget())
 
     def show_library(self):
         self.stack.setCurrentWidget(self.library_page)
@@ -489,14 +542,49 @@ class Observatory(QMainWindow):
         self.save_button.setEnabled(not calculating and not placing)
         self.calculate_button.setEnabled(not placing)
         self.calculate_button.setText('Cancel calculation' if calculating else 'Calculate')
-        self.run_button.setText('Pause' if self.running else 'Play recording' if self.playback else 'Run')
+        if self.running:
+            run_text = 'Pause'
+        elif self.playback:
+            run_text = 'Play recording'
+        elif self.editing:
+            run_text = 'Run'
+        else:
+            run_text = 'Resume'
+        self.run_button.setText(run_text)
         self.step_button.setText('Next sample' if self.playback else 'Step')
+        self.follow_button.setText('Stop following' if self.following else 'Follow selected')
+        self.sync_time_readout()
         self.mode_label.setText('Calculating…' if calculating else 'Recorded result' if self.playback else
             'Starting setup · frozen' if self.editing else 'Running' if self.running else 'Paused')
         self.arrows_checkbox.setEnabled(self.editing)
         self.progress.setVisible(calculating)
         self.result_combo.setEnabled(not calculating and not placing and bool(self.session.recordings))
         self.system_view_button.setVisible(self.planetary_id is not None)
+
+    def sync_time_readout(self, *_args):
+        if not self.session:
+            return
+        self.heading_label.setText(self.setup.name)
+        if self.stack.currentWidget() is self.workspace:
+            self.setWindowTitle(self.setup.name)
+        self.time_readout.setText(
+            f'{self.prepared.system.time:,.3f} elapsed simulated years\n'
+            f'{self.speed.value():.4g} simulated years per second')
+
+    def _sync_menu_shortcut(self, _old, new):
+        if not hasattr(self, 'menu_shortcut'):
+            return
+        typing = isinstance(new, (QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox))
+        self.menu_shortcut.setEnabled(self.stack.currentWidget() is self.workspace and not typing)
+
+    def toggle_sidebar(self):
+        """Cover or reveal the existing scene. The canvas rectangle and camera stay put."""
+        if self.stack.currentWidget() is not self.workspace:
+            return
+        self.sidebar.setVisible(not self.sidebar.isVisible())
+        self.menu_button.setAccessibleDescription(
+            'Hide the control sidebar' if self.sidebar.isVisible() else 'Show the control sidebar')
+        self.workspace.place_overlay()
 
     def visible_body_ids(self):
         if self.planetary_id is None:
@@ -586,6 +674,7 @@ class Observatory(QMainWindow):
         if not self.editing:
             self.refresh_inspection(update_editor=False)
         follow_id = self.planetary_id or self.selected_id
+        self.sync_time_readout()
         if self.following and follow_id in self.prepared.body_ids:
             point = self.scene.positions[self.prepared.body_ids.index(follow_id)]
             width, height = np.ptp(self.ax.get_xlim()), np.ptp(self.ax.get_ylim())
@@ -953,7 +1042,7 @@ class Observatory(QMainWindow):
     def toggle_follow(self):
         if self.selected_id:
             self.following = not self.following
-            self.follow_button.setText('Stop following' if self.following else 'Follow selected')
+            self.sync_controls()
             self.refresh_scene()
 
     def focus_selected(self):
@@ -1074,6 +1163,12 @@ class Observatory(QMainWindow):
             return
         self.stop_activity()
         self.timer.stop()
+        app = QApplication.instance()
+        if app is not None:
+            try:
+                app.focusChanged.disconnect(self._sync_menu_shortcut)
+            except TypeError:
+                pass
         super().closeEvent(event)
 
 
