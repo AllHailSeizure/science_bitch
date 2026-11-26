@@ -1,4 +1,4 @@
-"""Default: desktop starting menu. --output: display-free PNG render."""
+"""Default: Qt desktop starting menu. Explicit flags: legacy Matplotlib GUI or headless PNG (--output)."""
 import argparse
 import math
 import sys
@@ -18,9 +18,9 @@ def main(argv=None):
     parser.add_argument('--load', type=Path, help='Load a versioned starting setup JSON')
     parser.add_argument('--planet', choices=PLANETS, action='append')
     parser.add_argument('--output', type=Path, help='Save a still image instead of opening the GUI')
-    parser.add_argument('--years', type=float, default=0., help='Evolve before rendering (nonnegative)')
-    parser.add_argument('--sample-stride', type=int, default=10, help='Recording output stride in physics steps (default 10)')
-    parser.add_argument('--max-recording-mib', type=int, default=256, help='In-memory recording budget (default 256 MiB)')
+    parser.add_argument('--years', type=float, default=0., help='With --output: evolve before saving the PNG (nonnegative; default 0)')
+    parser.add_argument('--sample-stride', type=int, default=10, help='With --output: recording output stride in physics steps (default 10)')
+    parser.add_argument('--max-recording-mib', type=int, default=256, help='With --output: in-memory recording budget (default 256 MiB)')
     parser.add_argument('--population', choices=('ring', 'disk', 'belt'))
     parser.add_argument('--count', type=int, default=200, help='Massless particles (1-2000)')
     parser.add_argument('--inner', type=float, default=2., help='Inner population radius in AU from star')
@@ -28,6 +28,12 @@ def main(argv=None):
     parser.add_argument('--seed', type=int, default=0, help='Nonnegative population seed')
     parser.add_argument('--angles', choices=('random', 'even'), default='random')
     args = parser.parse_args(arguments)
+    recording_only = ('--sample-stride', '--max-recording-mib')
+    if not args.output:
+        if args.years:
+            parser.error('--years applies only with --output; interactive GUIs open in PREP at t=0')
+        if any(argument.split('=', 1)[0] in recording_only for argument in arguments):
+            parser.error('--sample-stride and --max-recording-mib apply only with --output')
     construction = {'--star', '--planet', '--population', '--count', '--inner', '--outer', '--seed', '--angles'}
     if args.load is not None and any(argument.split('=', 1)[0] in construction for argument in arguments):
         parser.error('--load cannot be combined with explicit body/population construction flags')

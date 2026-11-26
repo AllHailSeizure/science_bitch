@@ -1,4 +1,4 @@
-# science_bitch
+# star-system
 
 Small, well-established physics simulations in Python. Each one uses an integrator suited to the problem and checks itself against a known result.
 
@@ -16,12 +16,17 @@ The dependencies are numpy, matplotlib, pillow, pytest, and PyQt6 (GUI backend).
 
 ## Run
 
-```bash
-python -m simulations.star_system  # live interactive GUI
-python -m simulations.star_system --star sun --planet earth --planet jupiter --output output/star-system.png
-```
+The star-system module has three entry points. Pass no arguments for the default Qt desktop; any explicit selector opens another path.
 
-Details, presets, and the other command-line flags are in each simulation's README:
+| Entry | Command | What you see first |
+| --- | --- | --- |
+| Qt desktop (default) | `python -m simulations.star_system` | **Choose experiment** / **Load saved experiment** |
+| Legacy Matplotlib GUI | `python -m simulations.star_system --star sun --planet earth --planet jupiter` | Overhead scene in **PREP** at t=0; **Menu [M]** toggles the sidebar |
+| Headless PNG export | `python -m simulations.star_system --star sun --output output/star-system.png` | No window; writes an image file (Agg) |
+
+Evolution flags `--years`, `--sample-stride`, and `--max-recording-mib` apply only on the headless path together with `--output`. They run the shared incremental calculator before rendering; interactive GUIs evolve through **Calculate...** or **Run live** instead.
+
+Details, presets, and the full flag list are in each simulation's README:
 
 - [Interactive star system](simulations/star_system/README.md) — tunable stars and planets with full N-body gravity
 
@@ -46,7 +51,14 @@ The test suite covers physics, population generation, body authoring, persistenc
 
 The [CI workflow](.github/workflows/ci.yml) runs on every pull request (including PRs targeting another feature branch), pushes to `master`, and manual dispatch. Lint runs as a separate job; any lint or test failure fails CI. The complete pytest suite runs on Linux with Python 3.10 and 3.14, plus Windows with Python 3.14. Python 3.10 is the documented minimum; the Windows job also checks the desktop development platform. GitHub installs these interpreters on its runners; you only need one supported Python locally.
 
-To enforce passing checks before merging, configure branch protection or a ruleset to require `Lint` and the three `Tests (...)` jobs after the workflow's first run.
+On `master`, a GitHub ruleset enforces this merge policy (documentation only; the workflow above is unchanged). Pull requests must be up to date with `master`, history must stay linear, force-pushes are blocked, and the default branch cannot be deleted. Merging requires these four status checks to pass:
+
+- `Lint`
+- `Tests (ubuntu-latest, Python 3.10)`
+- `Tests (ubuntu-latest, Python 3.14)`
+- `Tests (windows-latest, Python 3.14)`
+
+Repository admins can bypass the ruleset, so a broken CI run cannot permanently lock `master`.
 
 ## Adding a simulation
 
