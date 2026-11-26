@@ -1,7 +1,7 @@
 """No-display physics checks; all asserted tolerances documented here and README."""
 import numpy as np
 import pytest
-from simulations.star_system.core import make_system, period, G
+from simulations.star_system.core import System, make_system, period, G
 from simulations.star_system.data import STARS, PLANETS, blackbody_rgb, star_size
 
 
@@ -88,3 +88,67 @@ def test_invalid_inputs():
             make_system('sun',['earth'],distances)
     with pytest.raises(ValueError):
         make_system('sun',['earth','earth'])
+
+
+# JPL DE440 heliocentric GM (Park et al. 2021), quoted at
+# https://ssd.jpl.nasa.gov/astro_par.html. Independent of core.G.
+JPL_SOLAR_GM = 1.32712440041279419e20  # m^3 s^-2
+AU_METERS = 149597870700.  # IAU 2012 astronomical unit
+JULIAN_YEAR_SECONDS = 365.25*86400.
+# Rounded SOLAR_KG (1.98847e30 kg) leaves model GM ~30.2 ppm above JPL.
+# 1e-4 covers that rounding and fails a 1% change in G or a unit conversion.
+SOLAR_SCALE_TOLERANCE = 1e-4
+# e=0.3 test particle, one orbit, dt = period/1200. Measured error ~2e-8 AU.
+ECCENTRIC_PHASE_TOLERANCE_AU = 1e-6
+
+
+def kepler_position(mean_anomaly, semi_major, eccentricity):
+    """Periapsis-on-+x coordinates from Kepler's equation M = E - e sin E."""
+    mean = float(np.mod(mean_anomaly, 2*np.pi))
+    eccentric = mean
+    for _ in range(50):
+        residual = eccentric - eccentricity*np.sin(eccentric) - mean
+        step = residual/(1 - eccentricity*np.cos(eccentric))
+        eccentric -= step
+        if abs(step) < 1e-15:
+            break
+    else:
+        raise AssertionError('Kepler equation did not converge')
+    return np.array((
+        semi_major*(np.cos(eccentric) - eccentricity),
+        semi_major*np.sqrt(1 - eccentricity**2)*np.sin(eccentric),
+    ))
+
+
+def test_one_au_solar_acceleration_matches_jpl_gm():
+    """Acceleration at 1 AU from one solar mass, against JPL's GM."""
+    system = System(np.array([1., 0.]), np.array([[0., 0.], [1., 0.]]), np.zeros((2, 2)), 1.)
+    acceleration = system.accelerations()[1]
+    expected = -JPL_SOLAR_GM/AU_METERS**2*JULIAN_YEAR_SECONDS**2/AU_METERS
+    error = np.linalg.norm(acceleration - (expected, 0.))/abs(expected)
+    print(f'1 AU solar acceleration vs JPL GM: relative {error:.3e}')
+    assert error < SOLAR_SCALE_TOLERANCE
+
+
+def test_eccentric_orbit_phase_matches_keplers_equation():
+    """Eccentric orbit phase matches the position from Kepler's equation."""
+    eccentricity, semi_major = .3, 1.
+    mu = G  # implemented mu; the JPL scale check hardcodes its own GM
+    period_years = 2*np.pi*np.sqrt(semi_major**3/mu)
+    periapsis = semi_major*(1 - eccentricity)
+    speed = np.sqrt(mu*(1 + eccentricity)/periapsis)
+    steps = 1200  # periapsis is faster than the circular period/600 cases
+    system = System(
+        np.array([1., 0.]),
+        np.array([[0., 0.], [periapsis, 0.]]),
+        np.array([[0., 0.], [0., speed]]),
+        period_years/steps,
+    )
+    mean_motion = np.sqrt(mu/semi_major**3)
+    worst = 0.
+    for _ in range(steps):
+        system.step()
+        predicted = kepler_position(mean_motion*system.time, semi_major, eccentricity)
+        worst = max(worst, np.linalg.norm(system.r[1] - system.r[0] - predicted))
+    print(f'e={eccentricity} Kepler phase position error {worst:.3e} AU')
+    assert worst < ECCENTRIC_PHASE_TOLERANCE_AU

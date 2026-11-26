@@ -235,3 +235,15 @@ def test_version1_preset_and_control_still_pair_on_another_numpy(tmp_path, monke
     save_setup(loaded_preset, preset_path)
     save_setup(loaded_control, control_path)
     assert preset_path.read_bytes() == preset_bytes and control_path.read_bytes() == control_bytes
+
+
+@pytest.mark.parametrize('argv', [
+    ['--star', 'sun', '--years', '.5'],
+    ['--star', 'sun', '--sample-stride', '4'],
+    ['--star', 'sun', '--max-recording-mib', '128'],
+])
+def test_cli_recording_flags_require_output(argv):
+    from simulations.star_system.__main__ import main
+    with pytest.raises(SystemExit) as error:
+        main(argv)
+    assert error.value.code == 2
