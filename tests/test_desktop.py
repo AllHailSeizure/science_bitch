@@ -154,7 +154,8 @@ def test_run_step_and_reset_use_edited_starting_setup(window, qtapp):
     open_solar(window, qtapp)
     window.run_button.click()
     assert window.running and not window.editing
-    assert not window.tabs.isTabEnabled(1)
+    assert window.tabs.isTabEnabled(1)
+    assert not window.tabs.isTabEnabled(2)
     window.step_button.click()
     assert not window.running and window.prepared.system.time > 0
     window.reset_button.click()

@@ -2,6 +2,7 @@
 from collections import deque
 from dataclasses import replace
 from pathlib import Path
+from uuid import uuid4
 import sys
 import time
 
@@ -26,12 +27,32 @@ from .core import System
 from .desktop_panels import AUYR_TO_KMS, BodyCatalog, BodyInformation, BodyProperties, Dropdown, action, label, spin
 from .experiments import ExperimentSession
 from .history import MAX_HISTORY, StateFrame
-from .initialization import PreparedSystem
+from .initialization import PreparedSystem, circular_relative_velocity, insert_body
+from .model import InitialBody
 from .persistence import load_setup, save_setup, setup_digest
 from .playback import Playback
 from .recording import Calculation, CalculationRequest
 from .rendering import BACKGROUND, ACCENT, draw_system
 from .templates import EXPERIMENTS, get_experiment, place_body, remove_body, update_body
+
+
+def live_draft_body(prepared, spec, world, reference_id, *, circular, velocity, body_id):
+    """World position in AU. Stored velocity stays relative until insertion adds the reference once."""
+    if reference_id is not None and reference_id not in prepared.body_ids:
+        raise ValueError('Choose an existing body to place this relative to.')
+    parent = prepared.body_ids.index(reference_id) if reference_id is not None else None
+    relative = np.asarray(world, dtype=float) - (prepared.system.r[parent] if parent is not None else 0.)
+    if relative.shape != (2,) or not np.isfinite(relative).all():
+        raise ValueError('Placement needs a finite position in the scene.')
+    if circular:
+        if parent is None:
+            raise ValueError('Choose a body for the initial circular orbit.')
+        velocity = circular_relative_velocity(relative, prepared.system.masses[parent], spec.mass)
+    velocity = np.asarray(velocity, dtype=float)
+    if velocity.shape != (2,) or not np.isfinite(velocity).all():
+        raise ValueError('Velocity must be two finite numbers (AU/year).')
+    return InitialBody(body_id, spec, (float(relative[0]), float(relative[1])),
+                       (float(velocity[0]), float(velocity[1])), reference_id)
 
 STYLE = """
 QWidget { background: #0d1725; color: #e7eff7; font-family: 'DejaVu Sans'; font-size: 13px; }
@@ -124,6 +145,12 @@ class Observatory(QMainWindow):
         self.dirty = False
         self.saved_digest = None
         self.pending_body = None
+        self.live_draft = None
+        self.live_tip = None
+        self._live_anchor = None
+        self._live_preview_v = None
+        self._resume_on_cancel = False
+        self._refreshing_motion = False
         self.calculation = None
         self.playback = None
         self.undo_stack = []
@@ -257,6 +284,9 @@ class Observatory(QMainWindow):
         form.addWidget(self.mode_label)
         self.notice = label('Choose an experiment to begin.', 'notice')
         form.addWidget(self.notice)
+        self.confirm_insertion_button = action('Confirm insertion', self.confirm_live_insertion, primary=True)
+        self.confirm_insertion_button.setVisible(False)
+        form.addWidget(self.confirm_insertion_button)
         controls = QHBoxLayout()
         self.run_button = action('Run', self.toggle_run, primary=True)
         self.step_button = action('Step', self.step_once)
@@ -306,6 +336,14 @@ class Observatory(QMainWindow):
         self.catalog = BodyCatalog()
         self.catalog.add_requested.connect(self.begin_placement)
         self.catalog.type_combo.currentTextChanged.connect(self.sync_catalog_references)
+        self.catalog.motion_combo.currentIndexChanged.connect(self.refresh_live_motion)
+        self.catalog.reference_combo.currentIndexChanged.connect(self.refresh_live_motion)
+        self.catalog.speed.valueChanged.connect(self.refresh_live_motion)
+        self.catalog.direction.valueChanged.connect(self.refresh_live_motion)
+        self.catalog.custom_check.toggled.connect(self.refresh_live_motion)
+        self.catalog.custom_kind.currentIndexChanged.connect(self.refresh_live_motion)
+        for field in (self.catalog.custom_name, self.catalog.custom_mass, self.catalog.custom_radius, self.catalog.custom_temperature):
+            field.editingFinished.connect(self.refresh_live_motion)
         self.properties = BodyProperties()
         self.properties.apply_requested.connect(self.apply_properties)
         self.tabs.addTab(scrollable(self.inspection), 'Inspect')
@@ -430,6 +468,13 @@ class Observatory(QMainWindow):
         self.selected_id = None
         self.editing, self.dirty = True, False
         self.pending_body = None
+        self.live_draft = None
+        self.live_tip = None
+        self._live_anchor = None
+        self._live_preview_v = None
+        self._resume_on_cancel = False
+        self._refreshing_motion = False
+        self.canvas.unsetCursor()
         self.following = False
         self.planetary_id = None
         self.undo_stack.clear()
@@ -528,8 +573,10 @@ class Observatory(QMainWindow):
         placing = self.pending_body is not None
         can_edit = self.editing and not calculating and not placing
         authored = any(b.id == self.selected_id for b in self.setup.bodies)
-        self.tabs.setTabEnabled(1, can_edit)
+        # Add stays available during a live run. Property edits stay on the frozen starting setup.
+        self.tabs.setTabEnabled(1, self.playback is None and not calculating and not (placing and self.editing))
         self.tabs.setTabEnabled(2, can_edit and authored)
+        self.confirm_insertion_button.setVisible(self.live_draft is not None)
         self.remove_button.setEnabled(can_edit and authored and len(self.setup.bodies) > 1)
         self.edit_button.setEnabled(not calculating and not placing)
         self.edit_button.setText('Editing starting setup' if self.editing else 'Edit starting setup')
@@ -687,8 +734,11 @@ class Observatory(QMainWindow):
             artist.remove()
         self.velocity_artists.clear()
         self.velocity_tips = {}
-        if not self.editing or not self.arrows_checkbox.isChecked():
-            return
+        if self.editing and self.arrows_checkbox.isChecked():
+            self._draw_setup_velocities()
+        self._draw_live_arrow()
+
+    def _draw_setup_velocities(self):
         for i, (key, spec, reference) in enumerate(zip(self.prepared.body_ids, self.prepared.body_specs, self.prepared.reference_ids)):
             if key not in self.visible_body_ids():
                 continue
@@ -703,6 +753,44 @@ class Observatory(QMainWindow):
             self.ax.add_patch(arrow)
             self.velocity_artists.append(arrow)
             self.velocity_tips[key] = tip
+
+    def _draw_live_arrow(self):
+        self.live_tip = None
+        self._live_anchor = None
+        if self.live_draft is None:
+            self.catalog.draft_readout.setText('')
+            return
+        draft = self.live_draft
+        parent = self.prepared.body_ids.index(draft.reference_id) if draft.reference_id in self.prepared.body_ids else None
+        world = np.asarray(draft.r, dtype=float)+(self.prepared.system.r[parent] if parent is not None else 0.)
+        anchor = np.asarray(self.scene.world_to_display(world), dtype=float)
+        velocity = np.asarray(self._live_preview_v if self._live_preview_v is not None else draft.v, dtype=float)
+        tip = anchor if np.linalg.norm(velocity) == 0 else self.ax.transData.inverted().transform(
+            self.ax.transData.transform(anchor)+velocity*12.)
+        if np.linalg.norm(velocity) > 0:
+            arrow = FancyArrowPatch(anchor, tip, arrowstyle='->', mutation_scale=14, color=ACCENT, linewidth=1.6, zorder=21)
+            self.ax.add_patch(arrow)
+            self.velocity_artists.append(arrow)
+        self.preview_marker.set_data([anchor[0]], [anchor[1]])
+        self._live_anchor, self.live_tip = anchor, np.asarray(tip, dtype=float)
+        self._describe_live_draft(velocity)
+
+    def _describe_live_draft(self, velocity):
+        draft = self.live_draft
+        if draft.reference_id in self.prepared.body_ids:
+            index = self.prepared.body_ids.index(draft.reference_id)
+            frame = (f'Relative to {self.prepared.body_specs[index].name} [{draft.reference_id}]. '
+                     'That position and velocity are added once, at insertion.')
+        else:
+            frame = 'World frame. Position and velocity are inertial AU and AU/year.'
+        aid = ('Two-body circular aid around the reference. It does not guarantee a stable orbit.'
+               if self.pending_body and self.pending_body.get('circular') and self._live_preview_v is None
+               else 'The arrow is the velocity that will be inserted. Gravity is not held to it afterward.')
+        speed = float(np.linalg.norm(velocity))*AUYR_TO_KMS
+        self.catalog.draft_readout.setText(
+            f'{frame}\n'
+            f'vx {velocity[0]:.6g} AU/yr, vy {velocity[1]:.6g} AU/yr\n'
+            f'Speed {speed:.6g} km/s. A longer arrow is a higher speed.\n{aid}')
 
     def apply_setup(self, setup, *, preserve_definition=False):
         self.undo_stack.append(self.setup)
@@ -721,21 +809,56 @@ class Observatory(QMainWindow):
         self.sync_controls()
 
     def begin_placement(self, payload):
-        if not self.editing:
+        calculating = self.calculation is not None and not self.calculation.done
+        if self.playback is not None or calculating:
+            self.tell('Leave the recording or the calculation before adding a body.')
             return
         if payload['circular'] and payload['reference_id'] is None:
             self.tell('Choose a body for the initial orbit, or choose manual starting motion.')
             return
+        had_arrow = self.live_draft is not None
+        self.live_draft = None
+        self._live_preview_v = None
         self.pending_body = payload
-        self.tabs.setCurrentIndex(0)
+        if self.editing:
+            self._resume_on_cancel = False
+            self.tabs.setCurrentIndex(0)
+            self.tell(f'Click in the scene to place {payload["spec"].name}. Escape cancels without changing the setup.')
+        else:
+            self._resume_on_cancel = self.running
+            self.running = False
+            self.pending_time = 0.
+            self.tell(f'Evolution paused at {self.prepared.system.time:.6g} yr. '
+                      f'Click the scene to place {payload["spec"].name}. Escape cancels.')
         self.canvas.setCursor(Qt.CursorShape.CrossCursor)
-        self.tell(f'Click in the scene to place {payload["spec"].name}. Escape cancels without changing the setup.')
         self.sync_controls()
+        if had_arrow:
+            self.refresh_scene()
+
+    def refresh_live_motion(self, *_args):
+        if self.live_draft is None or self._drag or self._refreshing_motion or self.catalog.reference_combo.currentIndex() < 0:
+            return
+        self._refreshing_motion = True
+        try:
+            try:
+                payload = self.catalog.placement_payload()
+            except ValueError as exc:
+                self.tell(exc)
+                return
+            self.pending_body = payload
+            parent = self.prepared.body_ids.index(self.live_draft.reference_id) if self.live_draft.reference_id in self.prepared.body_ids else None
+            world = np.asarray(self.live_draft.r, dtype=float)+(self.prepared.system.r[parent] if parent is not None else 0.)
+            self.place_at(world)
+        finally:
+            self._refreshing_motion = False
 
     def place_at(self, world):
         if not self.pending_body:
             return
         payload = self.pending_body
+        if not self.editing:
+            self._place_live(world, payload)
+            return
         try:
             candidate = place_body(self.setup, payload['spec'], world, payload['reference_id'],
                 circular=payload['circular'], velocity=payload['velocity'])
@@ -747,6 +870,47 @@ class Observatory(QMainWindow):
             self.tell('Body added to the starting setup. Select it to edit, or press Run.')
         except (ValueError, OverflowError) as exc:
             self.tell(str(exc)+' Choose another position, or Escape to cancel.')
+
+    def _place_live(self, world, payload):
+        previous = self.live_draft
+        spec, reference = payload['spec'], payload['reference_id']
+        body_id = previous.id if previous and previous.spec == spec and previous.reference_id == reference else (
+            (spec.catalog_key or 'custom')+'-'+uuid4().hex[:10])
+        try:
+            self.live_draft = live_draft_body(self.prepared, spec, world, reference, circular=payload['circular'],
+                                              velocity=payload['velocity'], body_id=body_id)
+            self._live_preview_v = None
+        except (ValueError, OverflowError) as exc:
+            self.tell(str(exc)+' Choose another position, or Escape to cancel.')
+        else:
+            self.tell(f'{spec.name} is not in the system yet. Drag the arrow, then Confirm insertion. Escape cancels.')
+        self.sync_controls()
+        self.refresh_scene()
+
+    def confirm_live_insertion(self):
+        if self.live_draft is None or self.editing:
+            return
+        try:
+            after = insert_body(self.prepared, self.live_draft)
+        except (ValueError, OverflowError) as exc:
+            self.tell(str(exc)+' Adjust the position or the arrow, or Escape to cancel.')
+            return
+        new_id = self.live_draft.id
+        self.session.prepared = after
+        self.selected_id = new_id
+        self.live_draft = None
+        self.pending_body = None
+        self._resume_on_cancel = False
+        self._live_preview_v = None
+        self.preview_marker.set_data([], [])
+        self.canvas.unsetCursor()
+        self.history.append(StateFrame.capture(after))
+        self.refresh_bodies()
+        self.refresh_scene()
+        self.sync_controls()
+        self.tell(after.events[-1].message+' Resume continues this trajectory. '
+                  'Reset returns to the starting setup and drops this insertion. '
+                  'Save still writes that starting setup.')
 
     def apply_properties(self, payload):
         if not self.editing:
@@ -857,6 +1021,7 @@ class Observatory(QMainWindow):
     def reset_run(self):
         if not self.session:
             return
+        self._resume_on_cancel = False
         self.stop_activity()
         self.cancel_interaction()
         self.playback = None
@@ -1066,13 +1231,40 @@ class Observatory(QMainWindow):
         self.follow_button.setText('Stop following')
         self.refresh_scene()
 
+    def _near_live_handle(self, point):
+        if self.live_tip is None or self._live_anchor is None:
+            return False
+        tip = self.ax.transData.transform(self.live_tip)
+        anchor = self.ax.transData.transform(self._live_anchor)
+        if np.linalg.norm(tip-point) < 14:
+            return True
+        return np.linalg.norm(tip-anchor) <= 12 and np.linalg.norm(anchor-point) < 14
+
+    def _apply_live_pixel(self, pixel, *, commit):
+        if self.live_draft is None or self._live_anchor is None:
+            return
+        relative = (np.asarray(pixel, dtype=float)-self.ax.transData.transform(self._live_anchor))/12.
+        if relative.shape != (2,) or not np.isfinite(relative).all():
+            return
+        if commit:
+            self._live_preview_v = None
+            self.live_draft = replace(self.live_draft, v=(float(relative[0]), float(relative[1])))
+            if self.pending_body is not None:
+                self.pending_body = {**self.pending_body, 'circular': False, 'velocity': np.asarray(relative, dtype=float)}
+        else:
+            self._live_preview_v = relative
+
     def on_press(self, event):
         if not self.session or event.inaxes is not self.ax or event.button != 1 or event.xdata is None:
+            return
+        point = np.array([event.x, event.y])
+        if self.live_draft is not None and self._near_live_handle(point):
+            self._drag = ('live-velocity', None)
+            self.tell('Drag the arrow tip. Its direction is the velocity direction and its length is the speed.')
             return
         if self.pending_body:
             self.place_at(self.scene.display_to_world((event.xdata, event.ydata)))
             return
-        point = np.array([event.x, event.y])
         if (self.editing and self.arrows_checkbox.isChecked()
                 and self.selected_id in getattr(self, 'velocity_tips', {})):
             tip = self.ax.transData.transform(self.velocity_tips[self.selected_id])
@@ -1103,7 +1295,12 @@ class Observatory(QMainWindow):
     def on_motion(self, event):
         if not self.session or event.inaxes is not self.ax or event.xdata is None:
             return
-        if self.pending_body:
+        if self._drag and self._drag[0] == 'live-velocity':
+            self._drag = ('live-velocity', np.array([event.x, event.y]))
+            self._apply_live_pixel(self._drag[1], commit=False)
+            self.refresh_scene()
+            return
+        if self.pending_body and self.live_draft is None:
             self.preview_marker.set_data([event.xdata], [event.ydata])
             self.canvas.draw_idle()
         elif self._drag:
@@ -1120,6 +1317,15 @@ class Observatory(QMainWindow):
 
     def on_release(self, event):
         drag, self._drag = self._drag, None
+        if drag and drag[0] == 'live-velocity':
+            if drag[1] is not None and event.inaxes is self.ax:
+                self._apply_live_pixel(drag[1], commit=True)
+                self.tell('Velocity updated. Confirm insertion adds the body. Escape cancels.')
+            else:
+                self._live_preview_v = None
+                self.tell('Arrow drag cancelled. The previous velocity remains.')
+            self.refresh_scene()
+            return
         if not drag or drag[0] != 'velocity' or drag[2] is None:
             return
         key, tip = drag[1], drag[2]
@@ -1148,11 +1354,24 @@ class Observatory(QMainWindow):
 
     def cancel_interaction(self):
         self._drag = None
-        if self.pending_body:
+        self._live_preview_v = None
+        had_draft = self.pending_body is not None or self.live_draft is not None
+        resume = self._resume_on_cancel and had_draft
+        self._resume_on_cancel = False
+        self.live_draft = None
+        self.live_tip = None
+        self._live_anchor = None
+        if had_draft:
             self.pending_body = None
-            self.preview_marker.set_data([], [])
+            if hasattr(self, 'preview_marker'):
+                self.preview_marker.set_data([], [])
             self.canvas.unsetCursor()
-            self.tell('Placement cancelled. Starting setup unchanged.')
+            if resume:
+                self.running = True
+                self.last_tick = time.monotonic()
+                self.tell('Placement cancelled. The system is unchanged, and evolution resumes.')
+            else:
+                self.tell('Placement cancelled. Nothing was added.')
         if self.session:
             self.sync_controls()
             self.refresh_scene()

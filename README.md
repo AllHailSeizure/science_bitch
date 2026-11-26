@@ -12,6 +12,7 @@ One year of the Sun, Earth, and Jupiter, rendered by `sidereel-cli`.
 - A fixed-step Yoshida integrator. A close encounter halts the run and keeps the last good state.
 - A PyQt6 window filled by the sky. Menu, or M, lays a sidebar over the scene. The view stays put.
 - Four starting experiments: the Solar System, a star at twice the Sun's mass, Earth and the Moon, 32 asteroids in a ring at 3.2 AU.
+- Add a catalog or custom body while a run is paused. Drop it in the scene, drag the velocity arrow, then confirm. The clock and the other bodies stay put. Reset returns to the starting setup.
 - A CLI that integrates the system and writes a PNG. No display required.
 - Starting setups saved as JSON. Calculate a recording, then play the samples.
 - An isolated planet holds its period to a relative 1e-7. At 1 AU, solar gravity sits about 30 ppm above JPL's GM, inside a 1e-4 bound.
@@ -49,6 +50,8 @@ sidereel
 ```
 
 You get the experiment list. `sidereel-cli` with no arguments opens the same window.
+
+Add body works in the starting setup and during a paused run. A click drops the body, the arrow sets its speed and direction, and confirm adds it without rewinding the clock. The circular arrow is only a two-body start around the body you pick, including a second star. Reset drops a live insertion and returns to the starting setup.
 
 Render the year in the picture:
 
