@@ -19,6 +19,10 @@ SOURCE_VERSION = 'star-system-setup-v1'
 MODEL_VERSION = 'planar-newtonian-point-mass-v1'
 NUMERICAL_VERSION = 'fixed-yoshida4-v1'
 GENERATOR_VERSION = 'planar-circular-population-v1'
+# Integrator implementation that produces a trajectory. Not written into setup
+# JSON and not part of setup_digest. Bump when solver arithmetic changes even
+# if NUMERICAL_VERSION stays the same.
+SOLVER_BUILD = 'star-system-solver-build-1'
 UNITS = {'length': 'AU', 'mass': 'solar_mass', 'time': 'Julian_year',
          'velocity': 'AU/Julian_year', 'temperature': 'K'}
 
@@ -42,6 +46,20 @@ def _population(pop):
             'version': GENERATOR_VERSION, 'settings': _record(pop.settings)}
 
 
+def _current_environment():
+    """NumPy identity of this interpreter. This is not a setup digest."""
+    return {'numpy': np.__version__}
+
+
+def _recorded_environment(setup):
+    # A loaded document keeps the NumPy that produced it. A setup that has
+    # never been loaded records the interpreter that is saving it now.
+    recorded = setup.source_environment
+    if recorded is None:
+        return _current_environment()
+    return {'numpy': recorded['numpy']}
+
+
 def _document(setup):
     bodies = []
     for body in setup.bodies:
@@ -51,7 +69,7 @@ def _document(setup):
                        'reference_id': body.reference_id})
     document = {'schema_version': SCHEMA_VERSION, 'units': UNITS, 'source_version': SOURCE_VERSION,
             'model_version': MODEL_VERSION, 'numerical_version': (setup.collision_policy.numerical if setup.collision_mode == 'perfect_merge' else NUMERICAL_VERSION),
-            'environment': {'numpy': np.__version__},
+            'environment': _recorded_environment(setup),
             'setup': {'name': setup.name, 'preset_id': setup.preset_id, 'dt': setup.dt,
                       'collision_mode': setup.collision_mode, 'bodies': bodies,
                       'population': _population(setup.population), 'provenance': _plain(setup.provenance)}}
@@ -181,7 +199,8 @@ def _decode(document):
                                   _vector(body['r'], 'Position'), _vector(body['v'], 'Velocity'),
                                   _string(body['reference_id'], 'Body reference', nullable=True)))
     setup = InitialSetup(value['name'], tuple(bodies), value['dt'], value['preset_id'],
-                         _decode_population(value['population']), value['collision_mode'], value['provenance'], policy)
+                         _decode_population(value['population']), value['collision_mode'], value['provenance'], policy,
+                         source_environment={'numpy': document['environment']['numpy']})
     # Validate references, overlap, known masses and numerical resolution before install.
     build_system(setup)
     return setup
@@ -196,7 +215,12 @@ def _canonical(setup):
 
 
 def setup_digest(setup):
-    """Stable SHA-256 identity for the full configured epoch and its provenance."""
+    """SHA-256 of the canonical starting conditions and their source environment.
+
+    This identifies the physical setup document. It does not include the
+    interpreter that merely loaded the file, or the solver build that later
+    integrates a trajectory.
+    """
     return hashlib.sha256(_canonical(setup).encode('utf-8')).hexdigest()
 
 

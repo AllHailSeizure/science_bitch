@@ -4,13 +4,14 @@ import math
 import sys
 import time
 from collections.abc import Mapping
+from types import MappingProxyType
 
 import numpy as np
 
 from .core import System
 from .history import StateFrame
 from .initialization import build_system
-from .persistence import setup_digest
+from .persistence import SOLVER_BUILD, _current_environment, setup_digest
 from .model import InitialSetup
 from .collisions import advance_prepared
 
@@ -38,6 +39,13 @@ class CalculationRequest:
 
 @dataclass(frozen=True)
 class RecordedRun:
+    """One produced trajectory.
+
+    setup_digest identifies the source document's starting conditions.
+    execution_environment is the NumPy that integrated this run, and
+    solver_build identifies the integrator implementation. Neither is part
+    of the setup digest.
+    """
     setup_digest: str
     source_name: str
     requested_end_time: float
@@ -49,6 +57,8 @@ class RecordedRun:
     completed_steps: int = 0
     sample_stride: int = 1
     source_setup: InitialSetup | None = None
+    execution_environment: Mapping[str, str] | None = None
+    solver_build: str = ''
 
     def __post_init__(self):
         object.__setattr__(self, 'frames', tuple(self.frames))
@@ -56,6 +66,12 @@ class RecordedRun:
             raise ValueError('A recording needs frames and an explicit terminal status.')
         if any(b.time < a.time for a, b in zip(self.frames, self.frames[1:])):
             raise ValueError('Recorded sample times must be nondecreasing.')
+        if self.execution_environment is not None:
+            if not isinstance(self.execution_environment, Mapping):
+                raise ValueError('Execution environment must be a mapping.')
+            object.__setattr__(self, 'execution_environment', MappingProxyType(dict(self.execution_environment)))
+        if type(self.solver_build) is not str:
+            raise ValueError('Solver build must be a string.')
 
     @property
     def actual_end_time(self):
@@ -100,6 +116,10 @@ class Calculation:
         self.source_setup = setup
         self.prepared = build_system(setup)
         self.source_name, self.setup_digest = setup.name, setup_digest(setup)
+        # The machine and build that integrate this run. Distinct from the
+        # source document's environment and from setup_digest.
+        self.execution_environment = MappingProxyType(_current_environment())
+        self.solver_build = SOLVER_BUILD
         ratio = request.duration_years / self.prepared.system.dt
         if not math.isfinite(ratio):
             raise ValueError('Duration exceeds the supported step count; reduce duration or increase output stride.')
@@ -133,7 +153,8 @@ class Calculation:
             return None
         return RecordedRun(self.setup_digest, self.source_name, self.request.duration_years,
                            self.resolved_end_time, tuple(self._frames), self.status, self.reason,
-                           self.total_steps, self.completed_steps, self.request.sample_stride, self.source_setup)
+                           self.total_steps, self.completed_steps, self.request.sample_stride, self.source_setup,
+                           self.execution_environment, self.solver_build)
 
     def _finish(self, status, reason=''):
         if self._frames[-1] is not self._checkpoint:
