@@ -1,72 +1,79 @@
-# star-system
+# Sidereel
 
-Small, well-established physics simulations in Python. Each one uses an integrator suited to the problem and checks itself against a known result.
+A planar N-body sandbox. Build a system, watch gravity work, keep the picture.
 
-## Install
+![Sun, Earth, and Jupiter through one year](docs/orbit.gif)
 
-From the repository root, with Python 3.10 or newer:
+One year of the Sun, Earth, and Jupiter, rendered by `sidereel-cli`.
 
-```bash
-python3 -m venv ../venv
-source ../venv/bin/activate
-pip install -r requirements.txt
-```
+## Features
 
-The dependencies are numpy, matplotlib, pillow, pytest, and PyQt6 (GUI backend). The tests and the headless render need no display.
+- Unsoftened Newtonian gravity in the plane. Masses pull on each other. Test particles only fall.
+- A fixed-step Yoshida integrator. A close encounter halts the run and keeps the last good state.
+- A PyQt6 window filled by the sky. Menu, or M, lays a sidebar over the scene. The view stays put.
+- Four starting experiments: the Solar System, a star at twice the Sun's mass, Earth and the Moon, 32 asteroids in a ring at 3.2 AU.
+- A CLI that integrates the system and writes a PNG. No display required.
+- Starting setups saved as JSON. Calculate a recording, then play the samples.
+- An isolated planet holds its period to a relative 1e-7. At 1 AU, solar gravity sits about 30 ppm above JPL's GM, inside a 1e-4 bound.
 
-## Run
+## Prerequisites and installation
 
-The star-system module has three entry points. Pass no arguments for the default Qt desktop; any explicit selector opens another path.
-
-| Entry | Command | What you see first |
-| --- | --- | --- |
-| Qt desktop (default) | `python -m simulations.star_system` | **Choose experiment** / **Load saved experiment** |
-| Legacy Matplotlib GUI | `python -m simulations.star_system --star sun --planet earth --planet jupiter` | Overhead scene in **PREP** at t=0; **Menu [M]** toggles the sidebar |
-| Headless PNG export | `python -m simulations.star_system --star sun --output output/star-system.png` | No window; writes an image file (Agg) |
-
-Evolution flags `--years`, `--sample-stride`, and `--max-recording-mib` apply only on the headless path together with `--output`. They run the shared incremental calculator before rendering; interactive GUIs evolve through **Calculate...** or **Run live** instead.
-
-Details, presets, and the full flag list are in each simulation's README:
-
-- [Interactive star system](simulations/star_system/README.md) — tunable stars and planets with full N-body gravity
-
-## Development checks
-
-Install the development tools in your virtual environment:
+Python 3.10 or newer.
 
 ```bash
-python -m pip install -r requirements-dev.txt
+pipx install sidereel
 ```
 
-Run both checks from the repository root before opening a pull request:
+`sidereel` opens the desktop. `sidereel-cli` renders.
+
+The project is not on PyPI yet. Until the first release, install from git:
 
 ```bash
-python -m ruff check .
-python -m pytest -q
+pipx install git+https://github.com/AllHailSeizure/sidereel
 ```
 
-The test suite covers physics, population generation, body authoring, persistence, recorded playback, collisions, controls, and rendering. Physics tolerances are listed in the [star system README](simulations/star_system/README.md). Tests select Matplotlib's Agg backend and need no display.
+From a checkout:
 
-[Ruff](https://docs.astral.sh/ruff/) checks application and test code using the rules in `ruff.toml`: Python errors, undefined/unused names, and ambiguous statements. Its version is pinned in `requirements-dev.txt` so local checks and CI use the same rules. To apply supported automatic fixes, run `python -m ruff check . --fix`, review the diff, and rerun both checks. Formatting is not enforced.
+```bash
+pip install -e .
+```
 
-The [CI workflow](.github/workflows/ci.yml) runs on every pull request (including PRs targeting another feature branch), pushes to `master`, and manual dispatch. Lint runs as a separate job; any lint or test failure fails CI. The complete pytest suite runs on Linux with Python 3.10 and 3.14, plus Windows with Python 3.14. Python 3.10 is the documented minimum; the Windows job also checks the desktop development platform. GitHub installs these interpreters on its runners; you only need one supported Python locally.
+On Debian and Ubuntu the desktop also needs `libegl1` and `libopengl0`.
 
-On `master`, a GitHub ruleset enforces this merge policy (documentation only; the workflow above is unchanged). Pull requests must be up to date with `master`, history must stay linear, force-pushes are blocked, and the default branch cannot be deleted. Merging requires these four status checks to pass:
+## Usage
 
-- `Lint`
-- `Tests (ubuntu-latest, Python 3.10)`
-- `Tests (ubuntu-latest, Python 3.14)`
-- `Tests (windows-latest, Python 3.14)`
+Open the GUI:
 
-Repository admins can bypass the ruleset, so a broken CI run cannot permanently lock `master`.
+```bash
+sidereel
+```
 
-## Adding a simulation
+You get the experiment list. `sidereel-cli` with no arguments opens the same window.
 
-Create `simulations/<name>/` with:
+Render the year in the picture:
 
-- `core.py` — the equations and the integrator, importable without Matplotlib
-- `__main__.py` — the command-line entry (`python -m simulations.<name>`)
-- `plotting.py` — figures and the animation
-- `README.md` — the equation, how to run it, and what is checked
+```bash
+sidereel-cli --star sun --planet earth --planet jupiter --years 1 --output output/sidereel.png
+```
 
-Add the checks under `tests/`. Keep new packages in `requirements.txt` only when a simulation needs them.
+Starting positions only. The default is the Sun, Earth, and Jupiter:
+
+```bash
+sidereel-cli --output output/start.png
+```
+
+Inner planets, half a year:
+
+```bash
+sidereel-cli --star sun --planet mercury --planet venus --planet earth --years 0.5 --output output/inner.png
+```
+
+`--star` is `proxima`, `sun`, `sirius`, or `rigel`. Repeat `--planet` for each body: `mercury`, `venus`, `earth`, `mars`, `jupiter`, `saturn`, `uranus`, `neptune`, `pluto`, `ceres`.
+
+`--years` works only with `--output`. So do `--sample-stride` and `--max-recording-mib`. Name bodies without `--output` and the Matplotlib window opens instead.
+
+In a checkout, `python -m simulations.star_system` is the same program. `sidereel-cli --help` lists every flag.
+
+## License
+
+MIT. Copyright 2026 Nate Bosma. See [LICENSE](LICENSE).
