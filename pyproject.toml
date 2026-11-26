@@ -3,9 +3,9 @@ requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "star-system"
+name = "sidereel"
 version = "0.1.0"
-description = "Interactive N-body star-system sandbox with a Qt Observatory desktop."
+description = "Sidereel, an interactive N-body sandbox with a Qt desktop."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -37,17 +37,18 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/AllHailSeizure/star-system"
-Repository = "https://github.com/AllHailSeizure/star-system"
-Issues = "https://github.com/AllHailSeizure/star-system/issues"
+Homepage = "https://github.com/AllHailSeizure/sidereel"
+Repository = "https://github.com/AllHailSeizure/sidereel"
+Issues = "https://github.com/AllHailSeizure/sidereel/issues"
 
-# star-system is a GUI script so Windows launches it with pythonw (no console).
-# star-system-cli keeps the full command line, including headless --output.
+# sidereel is a GUI script so Windows launches it with pythonw (no console).
+# sidereel-cli keeps the full command line, including headless --output.
+# The import package remains simulations.star_system.
 [project.gui-scripts]
-star-system = "simulations.star_system.desktop:main"
+sidereel = "simulations.star_system.desktop:main"
 
 [project.scripts]
-star-system-cli = "simulations.star_system.__main__:main"
+sidereel-cli = "simulations.star_system.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["simulations*"]

@@ -94,8 +94,8 @@ jobs:
           assert "simulations/star_system/catalog-sources.json" in names, names
           entry = next(name for name in names if name.endswith(".dist-info/entry_points.txt"))
           text = zipfile.ZipFile(wheels[0]).read(entry).decode()
-          assert "[gui_scripts]" in text and "star-system = simulations.star_system.desktop:main" in text
-          assert "star-system-cli = simulations.star_system.__main__:main" in text
+          assert "[gui_scripts]" in text and "sidereel = simulations.star_system.desktop:main" in text
+          assert "sidereel-cli = simulations.star_system.__main__:main" in text
           PY
       - name: Install the wheel into a clean virtual environment
         run: |
@@ -107,9 +107,9 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: |
           cd "$RUNNER_TEMP"
-          /tmp/wheel-venv/bin/star-system-cli --help
-          /tmp/wheel-venv/bin/star-system-cli --star sun --planet earth --output "$RUNNER_TEMP/star-system.png"
-          test -x /tmp/wheel-venv/bin/star-system
+          /tmp/wheel-venv/bin/sidereel-cli --help
+          /tmp/wheel-venv/bin/sidereel-cli --star sun --planet earth --output "$RUNNER_TEMP/sidereel.png"
+          test -x /tmp/wheel-venv/bin/sidereel
           /tmp/wheel-venv/bin/python - <<'PY'
           import importlib.metadata as metadata
           import os
@@ -117,14 +117,14 @@ jobs:
           from pathlib import Path
           gui = {ep.name: ep.value for ep in metadata.entry_points(group="gui_scripts")}
           cli = {ep.name: ep.value for ep in metadata.entry_points(group="console_scripts")}
-          assert gui["star-system"] == "simulations.star_system.desktop:main"
-          assert "star-system" not in cli
-          assert cli["star-system-cli"] == "simulations.star_system.__main__:main"
+          assert gui["sidereel"] == "simulations.star_system.desktop:main"
+          assert "sidereel" not in cli
+          assert cli["sidereel-cli"] == "simulations.star_system.__main__:main"
           text = files("simulations.star_system").joinpath("catalog-sources.json").read_text(encoding="utf-8")
           assert '"sun"' in text
           from simulations.star_system.data import CATALOG
           assert CATALOG["sun"].name == "Sun"
-          image = Path(os.environ["RUNNER_TEMP"]) / "star-system.png"
+          image = Path(os.environ["RUNNER_TEMP"]) / "sidereel.png"
           data = image.read_bytes()
           assert data.startswith(b"\x89PNG") and len(data) > 1000
           PY

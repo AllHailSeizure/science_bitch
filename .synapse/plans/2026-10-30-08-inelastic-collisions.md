@@ -10,7 +10,7 @@
 
 - “Contact and its resulting response use declared physical properties/radii supplied by #5; illustrative marker overlap and numerical close-encounter limits are distinguishable from physical collision.”
 - “Define the supported collision settings, interaction pairs, and response before claiming collision behavior is complete; preserve those choices in reproducible starting setups.”
-- The user selected simplified inelastic merging, then explicitly deferred stellar mergers to the dedicated [binary-star merger experiment #14](https://github.com/AllHailSeizure/science_bitch/issues/14). This plan supports nonstellar merging only; contact involving a star halts with a clear unsupported-contact message. It must not implement #14 or a generic stellar touch-and-merge rule.
+- The user selected simplified inelastic merging, then explicitly deferred stellar mergers to the dedicated [binary-star merger experiment #14](https://github.com/AllHailSeizure/sidereel/issues/14). This plan supports nonstellar merging only; contact involving a star halts with a clear unsupported-contact message. It must not implement #14 or a generic stellar touch-and-merge rule.
 - Requires plans 2, 5, 6; sequence after 7 because shared history/controller/renderer files overlap. Collision-free work does not wait on this plan.
 
 ## Scientific interpretation

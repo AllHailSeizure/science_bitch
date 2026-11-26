@@ -1,22 +1,22 @@
-# science_bitch
+# Sidereel
 
 Small, well-established physics simulations in Python. Each one uses an integrator suited to the problem and checks itself against a known result.
 
 ## Install
 
-Python 3.10 or newer. Install the Observatory and open it:
+Python 3.10 or newer. Install Sidereel and open it:
 
 ```bash
-pipx install star-system
-star-system
+pipx install sidereel
+sidereel
 ```
 
-`star-system` launches the Qt Observatory. It is registered as a GUI script, so on Windows the launcher uses `pythonw` and does not leave a console window open. `star-system-cli` is the full command line, including flags and a headless `--output` render.
+`sidereel` launches the Qt desktop. It is registered as a GUI script, so on Windows the launcher uses `pythonw` and does not leave a console window open. `sidereel-cli` is the full command line, including flags and a headless `--output` render.
 
 Until the package is on PyPI, the same commands install from this repository:
 
 ```bash
-pipx install git+https://github.com/AllHailSeizure/star-system
+pipx install git+https://github.com/AllHailSeizure/sidereel
 ```
 
 For development, from the repository root:
@@ -40,17 +40,17 @@ The tests and the headless render need no display.
 ## Run
 
 ```bash
-star-system
-star-system-cli --star sun --planet earth --planet jupiter --output output/star-system.png
+sidereel
+sidereel-cli --star sun --planet earth --planet jupiter --output output/sidereel.png
 python -m simulations.star_system  # live interactive GUI
-python -m simulations.star_system --star sun --planet earth --planet jupiter --output output/star-system.png
+python -m simulations.star_system --star sun --planet earth --planet jupiter --output output/sidereel.png
 ```
 
-With no arguments, `python -m simulations.star_system` and `star-system-cli` open the Qt Observatory. Explicit flags open the legacy Matplotlib UI, and `--output` saves a still image without a display.
+With no arguments, `python -m simulations.star_system` and `sidereel-cli` open the Qt desktop. Explicit flags open the legacy Matplotlib UI, and `--output` saves a still image without a display. The import package is still `simulations.star_system`.
 
 Details, presets, and the other command-line flags are in each simulation's README:
 
-- [Interactive star system](simulations/star_system/README.md) — tunable stars and planets with full N-body gravity
+- [Sidereel](simulations/star_system/README.md) — tunable stars and planets with full N-body gravity
 
 ## Development checks
 
@@ -68,13 +68,13 @@ python -m ruff check .
 python -m pytest -q
 ```
 
-The test suite covers physics, population generation, body authoring, persistence, recorded playback, collisions, controls, and rendering. Physics tolerances are listed in the [star system README](simulations/star_system/README.md). Tests select Matplotlib's Agg backend and need no display.
+The test suite covers physics, population generation, body authoring, persistence, recorded playback, collisions, controls, and rendering. Physics tolerances are listed in the [Sidereel README](simulations/star_system/README.md). Tests select Matplotlib's Agg backend and need no display.
 
 [Ruff](https://docs.astral.sh/ruff/) checks application and test code using the rules in `ruff.toml`: Python errors, undefined/unused names, and ambiguous statements. Its version is pinned in `requirements-dev.txt` so local checks and CI use the same rules. To apply supported automatic fixes, run `python -m ruff check . --fix`, review the diff, and rerun both checks. Formatting is not enforced.
 
 The [CI workflow](.github/workflows/ci.yml) runs on every pull request (including PRs targeting another feature branch), pushes to `master`, and manual dispatch. Lint runs as a separate job; any lint or test failure fails CI. The complete pytest suite runs on Linux with Python 3.10 and 3.14, plus Windows with Python 3.14. Python 3.10 is the documented minimum; the Windows job also checks the desktop development platform. GitHub installs these interpreters on its runners; you only need one supported Python locally.
 
-The `Wheel` job builds the sdist and wheel, installs that wheel into a clean virtual environment, and smoke-tests `star-system-cli --help` plus a short headless `--output` render. Its check name is separate from the four jobs below.
+The `Wheel` job builds the sdist and wheel, installs that wheel into a clean virtual environment, and smoke-tests `sidereel-cli --help` plus a short headless `--output` render. Its check name is separate from the four jobs below.
 
 To enforce passing checks before merging, configure branch protection or a ruleset to require `Lint` and the three `Tests (...)` jobs after the workflow's first run. The `Wheel` job can be required as well; it does not replace those names.
 
@@ -84,11 +84,11 @@ To enforce passing checks before merging, configure branch protection or a rules
 
 One-time setup, before the first tag:
 
-1. Sign in to PyPI as the account that should own the project name `star-system`.
+1. Sign in to PyPI as the account that should own the project name `sidereel`.
 2. The project is not on PyPI yet, so add a **pending publisher** (Account settings → Publishing):
-   - PyPI project name: `star-system`
+   - PyPI project name: `sidereel`
    - Owner: `AllHailSeizure`
-   - Repository name: `star-system`
+   - Repository name: `sidereel`
    - Workflow name: `release.yml`
    - Environment name: `pypi`
 3. In this GitHub repository, create an environment named `pypi` (Settings → Environments). No secret is required. Optional protection rules can limit who is allowed to publish.

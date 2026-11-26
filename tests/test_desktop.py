@@ -412,3 +412,11 @@ def test_desktop_labels_l4_ahead_of_motion_and_omits_it_without_revolution(windo
     note = window.context_note.get_text()
     assert 'no direction of revolution' in note
     assert 'L4' not in note and 'L5' not in note
+
+
+def test_desktop_identifies_itself_as_sidereel(window, qtapp):
+    from PyQt6.QtWidgets import QLabel
+    assert window.windowTitle() == 'Sidereel'
+    assert qtapp.applicationName() == 'Sidereel'
+    assert qtapp.organizationName() == 'Sidereel'
+    assert any(label.text() == 'Sidereel' for label in window.findChildren(QLabel))

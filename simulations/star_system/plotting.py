@@ -54,7 +54,7 @@ class App:
         self._drag = None
         self.fig = plt.figure(figsize=(14.8, 9.2), facecolor=BACKGROUND)
         if self.fig.canvas.manager is not None:
-            self.fig.canvas.manager.set_window_title('Star system | Observatory')
+            self.fig.canvas.manager.set_window_title('Sidereel')
         self.ax = self.fig.add_axes((0, 0, 1, 1), zorder=0)
         self._viewport_size = (self.fig.bbox.width, self.fig.bbox.height)
         self.sidebar = Sidebar(self)

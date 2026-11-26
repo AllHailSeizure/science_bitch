@@ -1,15 +1,16 @@
-# Interactive star system
+# Sidereel
 
 Run from the repository root with `requirements.txt` installed, or from an
-install of this package. `star-system` opens the Qt Observatory (on Windows
+install of this package. `sidereel` opens the Qt desktop (on Windows
 that launcher uses `pythonw`, so no console window stays open).
-`star-system-cli` is the command line below, including headless `--output`.
+`sidereel-cli` is the command line below, including headless `--output`.
+`python -m simulations.star_system` is the same program; the import package name is unchanged.
 
 ```powershell
-star-system
-star-system-cli --star sun --planet earth --planet jupiter --years 1 --output output/star-system.png
+sidereel
+sidereel-cli --star sun --planet earth --planet jupiter --years 1 --output output/sidereel.png
 python -m simulations.star_system
-python -m simulations.star_system --star sun --planet earth --planet jupiter --years 1 --output output/star-system.png
+python -m simulations.star_system --star sun --planet earth --planet jupiter --years 1 --output output/sidereel.png
 python -m simulations.star_system --load output/experiment.json --years 0.01 --output output/restored.png
 python -m pytest -q
 ```

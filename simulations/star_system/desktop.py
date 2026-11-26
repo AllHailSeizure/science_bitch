@@ -74,11 +74,15 @@ def scrollable(widget):
 class Observatory(QMainWindow):
     def __init__(self):
         super().__init__()
+        application = QApplication.instance()
+        if application is not None:
+            application.setApplicationName('Sidereel')
+            application.setOrganizationName('Sidereel')
         # Matplotlib already ships this font, including in the frozen bundle.
         # Loading it explicitly also supports machines without system fonts.
         if 'DejaVu Sans' not in QFontDatabase.families():
             QFontDatabase.addApplicationFont(str(Path(get_data_path())/'fonts/ttf/DejaVuSans.ttf'))
-        self.setWindowTitle('Observatory')
+        self.setWindowTitle('Sidereel')
         self.resize(1440, 940)
         self.setMinimumSize(960, 680)
         self.setStyleSheet(STYLE)
@@ -124,7 +128,7 @@ class Observatory(QMainWindow):
         layout = QVBoxLayout(card)
         layout.setSpacing(20)
         layout.addWidget(label('PHYSICS EXPERIMENTS', 'muted'))
-        layout.addWidget(label('Observatory', 'title'))
+        layout.addWidget(label('Sidereel', 'title'))
         layout.addWidget(label('Choose a prepared experiment. Run it, change it, and see what happens.', 'subheading'))
         layout.addSpacing(12)
         self.choose_button = action('Choose experiment', self.show_library, primary=True)
@@ -1075,8 +1079,8 @@ class Observatory(QMainWindow):
 
 def main():
     application = QApplication.instance() or QApplication(sys.argv)
-    application.setApplicationName('Observatory')
-    application.setOrganizationName('Science Bitch')
+    application.setApplicationName('Sidereel')
+    application.setOrganizationName('Sidereel')
     window = Observatory()
     window.show()
     return application.exec()
