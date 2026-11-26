@@ -11,7 +11,7 @@ One year of the Sun, Earth, and Jupiter, rendered by `sidereel-cli`.
 - Unsoftened Newtonian gravity in the plane. Masses pull on each other. Test particles only fall.
 - A fixed-step Yoshida integrator. A close encounter halts the run and keeps the last good state.
 - A PyQt6 window filled by the sky. Menu, or M, lays a sidebar over the scene. The view stays put.
-- Four starting experiments: the Solar System, a star at twice the Sun's mass, Earth and the Moon, 32 asteroids in a ring at 3.2 AU.
+- Five starting experiments: the Solar System, a star at twice the Sun's mass, Earth and the Moon, 32 asteroids in a ring at 3.2 AU, and a head-on merger of two solar-type stars.
 - A CLI that integrates the system and writes a PNG. No display required.
 - Starting setups saved as JSON. Calculate a recording, then play the samples.
 - An isolated planet holds its period to a relative 1e-7. At 1 AU, solar gravity sits about 30 ppm above JPL's GM, inside a 1e-4 bound.
