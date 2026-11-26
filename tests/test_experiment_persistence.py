@@ -147,3 +147,15 @@ def test_cli_load_rejects_explicit_construction_defaults(flag):
     with pytest.raises(SystemExit) as error:
         main(['--load', 'irrelevant.json', flag, '--output', 'irrelevant.png'])
     assert error.value.code == 2
+
+
+@pytest.mark.parametrize('argv', [
+    ['--star', 'sun', '--years', '.5'],
+    ['--star', 'sun', '--sample-stride', '4'],
+    ['--star', 'sun', '--max-recording-mib', '128'],
+])
+def test_cli_recording_flags_require_output(argv):
+    from simulations.star_system.__main__ import main
+    with pytest.raises(SystemExit) as error:
+        main(argv)
+    assert error.value.code == 2
