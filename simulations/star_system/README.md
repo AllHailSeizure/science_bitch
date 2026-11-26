@@ -12,23 +12,128 @@ sidereel-cli --star sun --planet earth --planet jupiter --years 1 --output outpu
 python -m simulations.star_system
 python -m simulations.star_system --star sun --planet earth --planet jupiter --years 1 --output output/sidereel.png
 python -m simulations.star_system --load output/experiment.json --years 0.01 --output output/restored.png
+```
+
+Dispatch is argument-dependent: no flags opens the Qt desktop; any explicit selector uses the
+legacy Matplotlib controller or headless export described below.
+
+| Entry | Example | First screen |
+| --- | --- | --- |
+| Qt desktop (default) | `python -m simulations.star_system` | **Choose experiment** / **Load saved experiment** |
+| Legacy Matplotlib GUI | `python -m simulations.star_system --star sun --planet earth --planet jupiter` | Overhead scene in **PREP** at t=0; **Menu [M]** toggles the sidebar |
+| Headless PNG | `python -m simulations.star_system --load output/experiment.json --years 0.01 --output output/restored.png` | No window; Agg writes the file |
+
+`--years`, `--sample-stride`, and `--max-recording-mib` take effect only with
+`--output`. They drive the shared incremental calculator before the PNG is saved.
+Passing them without `--output` is rejected. Interactive GUIs open frozen at t=0 and
+evolve through **Calculate...** (Qt or Matplotlib) or **Run live**.
+
+```bash
 python -m pytest -q
 ```
 
-The Matplotlib observatory has a full-window overhead scene, glowing stars,
-illuminated bodies, trails, and a sidebar. **Menu [M]** hides the overlay without
-changing the camera or simulation. The CLI retains its original four star and
-ten planet/dwarf-planet selectors. General catalog bodies and custom states are
+## Qt desktop (default)
+
+`python -m simulations.star_system` with no arguments opens the native Qt
+**Observatory** window. **Choose experiment** lists prepared templates (Solar
+System, doubled stellar mass, added Moon, test-particle ring, and others). **Load
+saved experiment** opens validated JSON starting setups from disk.
+
+Each experiment opens at time zero with **Run**, **Pause**, **Reset**, and
+**Edit starting setup**. The resizable sidebar has **Inspect**, **Add body**, and
+**Edit body** tabs. **Add body** uses type/body dropdowns, information, **Add**,
+then a scene click; Escape cancels. **Calculate a recording** uses the shared
+bounded calculator; completed recordings appear under **Recorded results**.
+Native file dialogs save and load the existing validated JSON format.
+
+**Focus selected and its orbiting bodies** zooms to a planet's local system;
+**Fit view** returns to the full system. Select a body to see L4/L5 guides and
+estimated orbit curves for its orbiting bodies. These templates use the
+illustrative planar circular initializer, not current astronomical ephemerides.
+
+## Legacy Matplotlib controller and headless export
+
+Any explicit CLI selector (`--star`, `--planet`, `--load`, `--population`, and
+related construction flags) skips the Qt menu and opens the compatibility
+Matplotlib **App** in **PREP** at t=0, unless `--output` requests a headless PNG.
+
+```bash
+python -m simulations.star_system --star sun --planet earth --planet jupiter
+python -m simulations.star_system --star sun --planet earth --planet jupiter --years 1 --output output/star-system.png
+python -m simulations.star_system --load output/experiment.json --years 0.01 --output output/restored.png
+```
+
+With no arguments, the Qt Observatory opens. Its overhead scene fills the
+window. **Menu** (keyboard **M**, unless a text field is focused) opens and
+closes a sidebar drawn over that scene. Opening or closing the sidebar does
+not resize the canvas or move the camera. The sidebar heading is the current
+experiment name, such as **Solar System**. Passing selectors without `--output`
+opens the legacy Matplotlib controller, which has the same full-window scene
+and a **Menu [M]** overlay. The CLI retains its original four star and ten
+planet/dwarf-planet selectors. General catalog bodies and custom states are
 available through the authoring UI and Python API. A desktop backend is needed
 for interactive input; `--output` uses Agg without a display.
 
-In the desktop workspace, select a planet in the system view and choose
-**Open planetary view**. The scene recenters on that planet and shows it with
-the moons assigned to it in the experiment; the body list follows the same
-scope. **Return to system view** restores the full system. The switch changes
-only the display; gravity still includes every body in the experiment.
+## Desktop observatory
+
+The sidebar shows elapsed simulated years, the requested simulated years per
+second, the bodies currently in view, and the playback and inspection controls.
+
+| Control | Action |
+| --- | --- |
+| Menu, `M` outside text fields | Show or hide the sidebar. The scene rectangle and camera stay as they are |
+| Run | Start live evolution from the starting setup |
+| Pause | Freeze simulated time and positions |
+| Resume | Continue that same live trajectory without returning to the start |
+| Step | Advance exactly one physics timestep and leave playback paused |
+| Reset | Return to the edited starting setup at time zero |
+| Simulated years per second | Change wall-clock pacing only. The integrator step stays fixed |
+| Fit view | Frame the current bodies and stop following |
+| Follow selected / Stop following | Keep the selected body centered at the current zoom, or leave the camera where it is |
+| Mouse wheel over the scene | Zoom around the cursor |
+| Left drag on empty space | Pan |
+| Click a body, or a row in Bodies | Show that body's mass, radius, and other physical information |
+| Add body | Open catalog choices. They are not listed on the main sidebar |
+| Open planetary view | Show the selected planet and the moons assigned to it |
+
+**Add body** is where catalog choices appear. Placement and starting-velocity
+editing stay on that existing path. A long body list scrolls inside the sidebar,
+so Run, Pause, Resume, and Step remain on screen.
+
+Select a planet and choose **Open planetary view**. The scene recenters on that
+planet and shows it with the moons assigned to it; the body list follows the
+same scope. **Return to system view** restores the full system. The switch
+changes only the display; gravity still includes every body in the experiment.
+
+Screen distances are compressed by `q = r * asinh(|r| / 0.05 AU) / |r|`. Marker
+diameters stay larger than those compressed distances so bodies remain visible,
+and they grow only logarithmically with physical radius. In the Sun/Jupiter
+view, Jupiter's marker stays substantially smaller than the Sun's luminous
+disk. Zooming in and selecting a body shows surface detail in the inspector.
+Planet shading faces the illuminating star. Stars are drawn as luminous disks.
+The background, labels, colors, and fading trails are illustrative: they are
+not a measured sky, a surface map, or a photometric model. The scene caption
+states the same limit: compressed distances, exaggerated body sizes, and
+illustrative lighting.
+
+Qt checks for this window use the offscreen platform. They click widgets and
+deliver scene events in-process. They do not open a native window, move a
+physical pointer, or judge smoothness. Passing them is not a manual playthrough.
+Agg checks of the legacy controller are a separate headless path, not desktop
+input.
+
+## Legacy Matplotlib controller
+
+Command-line selectors without `--output` open this controller. **Menu [M]**
+hides its overlay without changing the camera or simulation. Its controls are
+listed under Navigation and evolution.
 
 ## Calculate first, then inspect
+
+In the Qt observatory, open **Calculate a recording** in the sidebar, then
+**Calculate**. Playback of a finished recording uses **Play recording**,
+**Pause**, and **Next sample**. The legacy Matplotlib controller uses the
+control names in the rest of this section.
 
 The primary flow is **PREP → CALCULATING → RECORDED**. Prepare bodies,
 populations and moons with the same editors, then choose **Calculate...**.
@@ -58,11 +163,12 @@ results and the renderer also consume application memory.
 **Play / Pause**, **Next sample**, and **yr/sec** select already calculated
 samples forward in recorded time. Replay never calls the integrator. There is
 no interpolation: the scene clock is the displayed frame's actual timestamp.
-**Restart** in RECORDED returns to its first sample. Source name, digest,
-requested/resolved end times, actual terminal time, completion state and reason
-stay with the result. Each frame carries its own IDs, physical properties,
-parent associations and events; body membership need not stay fixed. Missing
-selected bodies/parents report removal. An explicit merge-event mapping can
+**Restart** in RECORDED returns to its first sample. Source name, setup digest,
+execution environment, solver build, requested/resolved end times, actual
+terminal time, completion state and reason stay with the result. Each frame
+carries its own IDs, physical properties, parent associations and events;
+body membership need not stay fixed. Missing selected bodies/parents report
+removal. An explicit merge-event mapping can
 transfer selection/follow to its remnant, with a visible disclosure; absorbed
 tracers stay selected as removed and have no remnant mapping.
 Ordinary samples retain the camera; fit and follow remain explicit actions.
@@ -85,9 +191,10 @@ Timeline scrubbing, reverse playback and comparison dashboards are not included.
 **Run live from starting setup** explicitly starts a fresh **LIVE** trajectory.
 Live Pause/Resume, one-dt **Step**, restart and insertion remain available.
 Add/population actions from RECORDED enter preparation, so recorded arrays are
-never insertion targets. The CLI `--years` path drives the same incremental
-calculator; `--sample-stride` (default 10) and `--max-recording-mib` (default 256)
-control its recording. `--years 0` still exports the initial setup directly.
+never insertion targets. On the headless CLI path, `--years` drives the same
+incremental calculator; `--sample-stride` (default 10) and `--max-recording-mib`
+(default 256) control its recording. `--years 0` still exports the initial setup
+directly. These flags are not applied when opening an interactive GUI.
 
 Python callers can use `Calculation(setup, CalculationRequest(duration_years,
 sample_stride, max_bytes))`, call `advance(max_steps)` until `done`, or `cancel()`
@@ -221,7 +328,7 @@ population stores PCG64, generator version, identity, reference ID and all
 settings including seed. Catalog keys are descriptive; loading never looks
 up replacement physical values in the current catalog.
 
-The supported identities are `star-system-setup-v1`,
+The supported setup-file identities are `star-system-setup-v1`,
 `planar-newtonian-point-mass-v1`, `fixed-yoshida4-v1`, and
 `planar-circular-population-v1`. Unknown schemas, physical/model fields,
 generators/settings, invalid references, invalid types/shapes/ranges,
@@ -234,14 +341,43 @@ is used. Saves validate and encode before writing, then atomically replace
 the destination through a uniquely owned sibling temporary file; failure
 preserves an existing valid destination.
 
-Canonical JSON uses sorted keys and disallows NaN/Infinity; SHA-256 identifies
-the complete setup/provenance. On the same supported environment, restored
+`setup_digest` is the SHA-256 identity of the physical starting conditions
+and the source document that records them. Canonical JSON uses sorted keys
+and disallows NaN/Infinity. The hashed document includes units, the
+source/model/numerical version identifiers, the collision-mode encoding,
+population settings, provenance, and the source `environment` block
+(`environment.numpy`). It does not include the NumPy that last loaded the
+file, and it does not include the solver that later integrates a trajectory.
+Schema version remains 1. An existing version-1 file still loads with no
+migration: its recorded NumPy version is validated and kept on the setup.
+Saving a setup that carries that source environment writes the same
+environment back, so an unedited load/resave under a different NumPy does
+not change the document or the digest. A setup built in memory, with no
+source environment yet, still records the current interpreter when it is
+saved. Collision mode `none` therefore keeps its previous byte-for-byte
+digest for a fresh save on a given NumPy. The same starting conditions keep
+one digest for a given source document, including across loaders. A newly
+produced document records the interpreter that produced it.
+
+A produced run keeps that setup digest and records two further facts that
+are not part of it. `execution_environment` is the NumPy that integrated the
+trajectory, in the same `{"numpy": version}` shape as the setup document's
+environment block. `solver_build` (`SOLVER_BUILD` in `persistence.py`)
+identifies the integrator implementation. `numerical_version` remains the
+numerical-method contract (`fixed-yoshida4-v1`, or the collision policy's
+numerical id). Two solver builds can share a setup digest and a numerical
+version; change `SOLVER_BUILD` when solver arithmetic changes even if that
+method name stays the same. Recordings stay in memory and are not written
+into setup JSON.
+
+On the same supported environment, restored
 initial arrays are exactly equal and deterministic evolution agrees to
 `rtol=1e-12, atol=1e-12` after 50 identical steps in regression tests. There is
-no universal cross-version/platform bitwise guarantee. Use the stored version
-metadata when comparing results.
+no universal cross-version/platform bitwise guarantee. Compare results with
+the setup digest, the source environment, the run's execution environment,
+and the solver build.
 
-`--load PATH` accepts `--years` and `--output` and uses the general renderer
+`--load PATH` accepts `--years` and `--output` (headless only) and uses the general renderer
 for arbitrary bodies, multiple stars, particles and moons. It rejects any
 explicit legacy construction flag (`--star`, `--planet`, `--population`,
 `--count`, `--inner`, `--outer`, `--seed`, `--angles`), even with a default
@@ -329,6 +465,24 @@ Step-halving fixtures, measured on this implementation, compare dt = 0.0005 and
 Legacy tests retain isolated orbital-period relative tolerance 1e-7, Kepler-law
 2e-7, energy 1e-7, angular/linear momentum 1e-11, and multi-planet period 0.5%
 (which permits real perturbations). These tests establish their fixtures only.
+They still take their expected periods from the model constant and remain the
+integration-accuracy checks.
+
+Solar gravity is also compared with an external reference. The acceleration of
+a massless body at 1 AU from one solar mass is checked against JPL DE440's
+heliocentric gravitational constant GM_sun = 1.32712440041279419e20 m^3 s^-2
+([astrodynamic parameters](https://ssd.jpl.nasa.gov/astro_par.html)), converted
+with the IAU astronomical unit and a Julian year. Those reference constants
+are hardcoded in the test. Rounded solar mass 1.98847e30 kg leaves the model
+about 30.2 ppm high. The relative tolerance is 1e-4, which allows that
+rounding and fails a 1% change in G or a unit conversion error.
+
+Eccentric phase has a separate fixture, and the circular star/planet period
+cases stay in place. An e=0.3 test particle integrated for one orbit at
+period/1200 is compared with the position from Kepler's equation
+M = E - e sin E, using the same implemented mu as the integrator. The measured
+separation is about 2e-8 AU; the bound is 1e-6 AU.
+
 These conservation/accuracy checks apply to collision-free evolution. The optional
 nonstellar contact model below has different numerics and conservation limits.
 There are no tides, relativity, stellar evolution, 3D, or scripted capture outcomes.
@@ -446,7 +600,7 @@ does not merge PRs or close issues. #6 is already closed externally and remains 
 
 | Issue / plans | Implemented integration and acceptance evidence |
 | --- | --- |
-| #4 / 1 | Full-window overlay, camera/input controls, physical inspection, retained rendering and scenario naming; display/control regressions and normal App exports. Native desktop interaction remains unverified. |
+| #4 / 1 | Full-window scene and overlay sidebar in the default Qt observatory and the legacy Matplotlib controller; camera/input controls, physical inspection, retained rendering, and the current experiment name as the heading. Offscreen Qt and Agg checks cover those controls. Native desktop interaction remains unverified. |
 | #5 / 2 | Sourced/custom bodies, relative placement/velocity vectors, repeated identities, multi-star gravity and preserved live insertion; authoring/catalog/physics tests. Physical radii feed contact, never marker sizes. |
 | #6 / 3,5,6,8 | Seeded reference-relative populations save/reload/calculate/replay with stable IDs. Point-tracer absorption has no feedback; particle/particle interactions remain omitted. |
 | #9 / 4,5,6,8 | Planet-relative initial states and timescale limits, live insertion, separation inspection, save/replay; contact uses the same nonstellar response and explicit remnant-parent mapping. No forced binding or tides. |
@@ -638,8 +792,10 @@ halted status, pause, and sample stepping.
 
 ## Sun–Jupiter perturbation experiments
 
-Open **Experiment / Save / Load...**, select **sun-jupiter-ring**, then
-**Open preset**. The common setup contains the Sun, Jupiter, and 32 mass-zero
+In the **legacy Matplotlib controller**, open **Experiment / Save / Load...**,
+select **sun-jupiter-ring**, then **Open preset**. (The Qt desktop exposes the
+same fixture through the experiment library.) The common setup contains the Sun,
+Jupiter, and 32 mass-zero
 test particles in a 3.2 AU ring with evenly spaced angles and seed 7. Its
 positions and circular initial velocity guesses use the existing population
 generator. Body/vector editors, population settings, initial saves, loading,
@@ -724,7 +880,7 @@ C:\Python314\python.exe -m simulations.star_system --load output/sun-jupiter-con
 - `rendering.py`: `draw_system(ax, prepared, history=()) -> Scene`; retained `draw(...)` accepts the old numeric/circular arguments. `Scene.artists_by_id`, `labels_by_id`, `trails_by_id`, `origin_id`, and `origin` support identity-based integration. `Scene.update(prepared, history)` appends new artists without resetting the camera.
 - `authoring.py`: `BodyEditor` and its `reference_state`, `vectors`, `draft_body`, `commit`, `finish` draft lifecycle. `App.edit_body`, `prepare_setup`, `selected_id`, `_install_prepared`, and `_sync_painter` provide the controller integration points. Register new widget axes with sidebar visibility and the painter's overlay axes.
 - `population_editor.py`: `PopulationEditor` validates a complete candidate `InitialSetup` before Apply/Remove, using the shared `authoring.reference_ids` choices. Its separate figure owns its widgets and close/Escape lifecycle; the main scene's overlay axes retain the existing painter contract.
-- `persistence.py`: `save_setup`, `load_setup`, `setup_digest`; strict schema/model/numerical/generator versions above. Setup identity includes all configured values and provenance.
+- `persistence.py`: `save_setup`, `load_setup`, `setup_digest`; strict schema/model/numerical/generator versions above. `setup_digest` identifies the canonical starting conditions and the source-document NumPy environment, not the loading interpreter or `SOLVER_BUILD`. Produced runs record `execution_environment` and `solver_build` separately. Schema version 1 files load without migration.
 - `experiments.py`: `ExperimentSession(initial_setup)` owns `initial_setup`, `draft`, `prepared`; `begin_draft`, `update_draft`, `apply_draft`, `cancel_draft`, `select`, `restart`, `save_initial`, `save_current`, `load` provide explicit transitions. `capture_current_setup(prepared, initial_setup, name)` returns an independent validated initial epoch. `App.initial_setup`/`prepared` delegate to session ownership, and `_install_prepared` remains the scene-installation path.
 - `scenarios.py`: `get_scenario(key)` returns an independent immutable setup; `DESCRIPTIONS` holds preset descriptions. `sun-earth-jupiter` is the compatibility preset; `sun-jupiter-ring` is the checked perturbation fixture. `make_jupiter_comparison(setup)` resolves a matched explicit control, and `compare_recordings(first, second)` validates source vectors and reports Sun-relative differences only at common recorded times.
 - `frames.py`: pure `frame_transform`, `rotate_about_sun`, and `lagrange_guides` transform snapshot copies without a dynamics import. `Scene.world_to_display` and `display_to_world` compose the selected frame with compression/inversion; historical points use their own frame transform.
@@ -735,7 +891,15 @@ and multi-star lighting fixtures. The generic renderer never assumes a fixed
 star/planet prefix. Current-state capture stores explicit particle bodies with
 `population=None`, avoiding regeneration of evolved particle coordinates.
 
-## Checked outcomes
+## Historical integration logs
+
+The sections below record past integration runs and command transcripts. The
+[acceptance audit table](#final-dependency-stack-acceptance-audit) under
+**Numerical model and limits** is historical evidence, not day-to-day operating
+instructions. Use the launch table and desktop or compatibility sections above to
+get started.
+
+### Checked outcomes (integration transcripts)
 
 Windows/Python 3.14 verification uses writable ignored `output/` basetemps because
 the default Windows pytest temp directory is inaccessible in this environment.

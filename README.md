@@ -1,108 +1,79 @@
 # Sidereel
 
-Small, well-established physics simulations in Python. Each one uses an integrator suited to the problem and checks itself against a known result.
+A planar N-body sandbox. Build a system, watch gravity work, keep the picture.
 
-## Install
+![Sun, Earth, and Jupiter through one year](docs/orbit.gif)
 
-Python 3.10 or newer. Install Sidereel and open it:
+One year of the Sun, Earth, and Jupiter, rendered by `sidereel-cli`.
+
+## Features
+
+- Unsoftened Newtonian gravity in the plane. Masses pull on each other. Test particles only fall.
+- A fixed-step Yoshida integrator. A close encounter halts the run and keeps the last good state.
+- A PyQt6 window filled by the sky. Menu, or M, lays a sidebar over the scene. The view stays put.
+- Four starting experiments: the Solar System, a star at twice the Sun's mass, Earth and the Moon, 32 asteroids in a ring at 3.2 AU.
+- A CLI that integrates the system and writes a PNG. No display required.
+- Starting setups saved as JSON. Calculate a recording, then play the samples.
+- An isolated planet holds its period to a relative 1e-7. At 1 AU, solar gravity sits about 30 ppm above JPL's GM, inside a 1e-4 bound.
+
+## Prerequisites and installation
+
+Python 3.10 or newer.
 
 ```bash
 pipx install sidereel
-sidereel
 ```
 
-`sidereel` launches the Qt desktop. It is registered as a GUI script, so on Windows the launcher uses `pythonw` and does not leave a console window open. `sidereel-cli` is the full command line, including flags and a headless `--output` render.
+`sidereel` opens the desktop. `sidereel-cli` renders.
 
-Until the package is on PyPI, the same commands install from this repository:
+The project is not on PyPI yet. Until the first release, install from git:
 
 ```bash
 pipx install git+https://github.com/AllHailSeizure/sidereel
 ```
 
-For development, from the repository root:
+From a checkout:
 
 ```bash
-pip install -e ".[dev]"
+pip install -e .
 ```
 
-That install provides numpy, matplotlib, pillow, and PyQt6, plus the development tools pytest and ruff.
+On Debian and Ubuntu the desktop also needs `libegl1` and `libopengl0`.
 
-A checkout can still use a virtual environment and the requirements files. `requirements.txt` is runtime only; tests need `requirements-dev.txt`:
+## Usage
 
-```bash
-python3 -m venv ../venv
-source ../venv/bin/activate
-pip install -r requirements.txt
-```
-
-The tests and the headless render need no display.
-
-## Run
+Open the GUI:
 
 ```bash
 sidereel
-sidereel-cli --star sun --planet earth --planet jupiter --output output/sidereel.png
-python -m simulations.star_system  # live interactive GUI
-python -m simulations.star_system --star sun --planet earth --planet jupiter --output output/sidereel.png
 ```
 
-With no arguments, `python -m simulations.star_system` and `sidereel-cli` open the Qt desktop. Explicit flags open the legacy Matplotlib UI, and `--output` saves a still image without a display. The import package is still `simulations.star_system`.
+You get the experiment list. `sidereel-cli` with no arguments opens the same window.
 
-Details, presets, and the other command-line flags are in each simulation's README:
-
-- [Sidereel](simulations/star_system/README.md) — tunable stars and planets with full N-body gravity
-
-## Development checks
-
-Install the development tools in your virtual environment. Either command is enough:
+Render the year in the picture:
 
 ```bash
-pip install -e ".[dev]"
-python -m pip install -r requirements-dev.txt
+sidereel-cli --star sun --planet earth --planet jupiter --years 1 --output output/sidereel.png
 ```
 
-Run both checks from the repository root before opening a pull request:
+Starting positions only. The default is the Sun, Earth, and Jupiter:
 
 ```bash
-python -m ruff check .
-python -m pytest -q
+sidereel-cli --output output/start.png
 ```
 
-The test suite covers physics, population generation, body authoring, persistence, recorded playback, collisions, controls, and rendering. Physics tolerances are listed in the [Sidereel README](simulations/star_system/README.md). Tests select Matplotlib's Agg backend and need no display.
+Inner planets, half a year:
 
-[Ruff](https://docs.astral.sh/ruff/) checks application and test code using the rules in `ruff.toml`: Python errors, undefined/unused names, and ambiguous statements. Its version is pinned in `requirements-dev.txt` so local checks and CI use the same rules. To apply supported automatic fixes, run `python -m ruff check . --fix`, review the diff, and rerun both checks. Formatting is not enforced.
+```bash
+sidereel-cli --star sun --planet mercury --planet venus --planet earth --years 0.5 --output output/inner.png
+```
 
-The [CI workflow](.github/workflows/ci.yml) runs on every pull request (including PRs targeting another feature branch), pushes to `master`, and manual dispatch. Lint runs as a separate job; any lint or test failure fails CI. The complete pytest suite runs on Linux with Python 3.10 and 3.14, plus Windows with Python 3.14. Python 3.10 is the documented minimum; the Windows job also checks the desktop development platform. GitHub installs these interpreters on its runners; you only need one supported Python locally.
+`--star` is `proxima`, `sun`, `sirius`, or `rigel`. Repeat `--planet` for each body: `mercury`, `venus`, `earth`, `mars`, `jupiter`, `saturn`, `uranus`, `neptune`, `pluto`, `ceres`.
 
-The `Wheel` job builds the sdist and wheel, installs that wheel into a clean virtual environment, and smoke-tests `sidereel-cli --help` plus a short headless `--output` render. Its check name is separate from the four jobs below.
+`--years` works only with `--output`. So do `--sample-stride` and `--max-recording-mib`. Name bodies without `--output` and the Matplotlib window opens instead.
 
-To enforce passing checks before merging, configure branch protection or a ruleset to require `Lint` and the three `Tests (...)` jobs after the workflow's first run. The `Wheel` job can be required as well; it does not replace those names.
+In a checkout, `python -m simulations.star_system` is the same program. `sidereel-cli --help` lists every flag.
 
-## Publishing
+## License
 
-[`.github/workflows/release.yml`](.github/workflows/release.yml) publishes to PyPI when a `v*` tag is pushed. It uses [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishers/) (OpenID Connect) and does not read a stored API token.
-
-One-time setup, before the first tag:
-
-1. Sign in to PyPI as the account that should own the project name `sidereel`.
-2. The project is not on PyPI yet, so add a **pending publisher** (Account settings → Publishing):
-   - PyPI project name: `sidereel`
-   - Owner: `AllHailSeizure`
-   - Repository name: `sidereel`
-   - Workflow name: `release.yml`
-   - Environment name: `pypi`
-3. In this GitHub repository, create an environment named `pypi` (Settings → Environments). No secret is required. Optional protection rules can limit who is allowed to publish.
-4. Bump `version` in `pyproject.toml` and merge that change to `master`. Push a tag whose name is `v` plus that version exactly, for example version `0.1.0` and tag `v0.1.0`.
-
-The workflow checks that the tag matches `version`, builds the sdist and wheel, smoke-tests the wheel, then publishes those files. A tag that does not match the version fails before upload.
-
-## Adding a simulation
-
-Create `simulations/<name>/` with:
-
-- `core.py` — the equations and the integrator, importable without Matplotlib
-- `__main__.py` — the command-line entry (`python -m simulations.<name>`)
-- `plotting.py` — figures and the animation
-- `README.md` — the equation, how to run it, and what is checked
-
-Add the checks under `tests/`. Keep new runtime dependencies in `requirements.txt` and `pyproject.toml` only when a simulation needs them.
+MIT. Copyright 2026 Nate Bosma. See [LICENSE](LICENSE).

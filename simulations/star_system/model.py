@@ -129,6 +129,10 @@ class InitialSetup:
     collision_mode: str = 'none'
     provenance: Mapping[str, object] = field(default_factory=dict, compare=False, hash=False)
     collision_policy: CollisionPolicy = field(default_factory=CollisionPolicy)
+    # NumPy provenance of the document that produced this setup. Absent on a
+    # setup built in memory; load_setup copies it from the file. Not physical
+    # state, so equality ignores it.
+    source_environment: Mapping[str, str] | None = field(default=None, compare=False, hash=False)
 
     def __post_init__(self):
         object.__setattr__(self, 'bodies', tuple(self.bodies))
@@ -143,3 +147,11 @@ class InitialSetup:
         if not isinstance(self.provenance, Mapping):
             raise ValueError('Setup provenance must be an object.')
         object.__setattr__(self, 'provenance', freeze_metadata(self.provenance))
+        if self.source_environment is not None:
+            environment = self.source_environment
+            if not isinstance(environment, Mapping) or set(environment) != {'numpy'}:
+                raise ValueError('Source environment must record exactly a NumPy version.')
+            numpy_version = environment['numpy']
+            if type(numpy_version) is not str or not numpy_version.strip():
+                raise ValueError('Source environment NumPy version must be a nonempty string.')
+            object.__setattr__(self, 'source_environment', MappingProxyType({'numpy': numpy_version}))

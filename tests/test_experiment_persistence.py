@@ -12,7 +12,10 @@ from simulations.star_system.data import CATALOG, AU_KM
 from simulations.star_system.initialization import build_system, legacy_setup, circular_relative_velocity
 from simulations.star_system.model import InitialBody, InitialSetup, PopulationSpec
 from simulations.star_system.populations import Population
-from simulations.star_system.persistence import save_setup, load_setup, setup_digest
+from simulations.star_system.persistence import (
+    NUMERICAL_VERSION, SOLVER_BUILD, load_setup, save_setup, setup_digest)
+from simulations.star_system.recording import Calculation, CalculationRequest
+from simulations.star_system.scenarios import compare_recordings, get_scenario, make_jupiter_comparison
 
 
 def fixtures():
@@ -146,4 +149,101 @@ def test_cli_load_rejects_explicit_construction_defaults(flag):
     from simulations.star_system.__main__ import main
     with pytest.raises(SystemExit) as error:
         main(['--load', 'irrelevant.json', flag, '--output', 'irrelevant.png'])
+    assert error.value.code == 2
+
+
+def _one_step(setup):
+    calc = Calculation(setup, CalculationRequest(setup.dt))
+    calc.advance(1)
+    return calc.result
+
+
+def test_unedited_load_resave_preserves_source_environment_and_digest(tmp_path, monkeypatch):
+    monkeypatch.setattr(np, '__version__', '2.3.5')
+    setup = get_scenario('sun-jupiter-ring')
+    path = tmp_path/'sun-jupiter-ring.json'
+    save_setup(setup, path)
+    original = path.read_bytes()
+    digest = setup_digest(setup)
+    document = json.loads(original)
+    assert document['schema_version'] == 1 and document['environment'] == {'numpy': '2.3.5'}
+    assert 'collision_policy' not in document['setup'] and SOLVER_BUILD not in original.decode()
+    monkeypatch.setattr(np, '__version__', '2.1.3')
+    loaded = load_setup(path)
+    assert loaded.source_environment['numpy'] == '2.3.5'
+    assert setup_digest(loaded) == digest
+    save_setup(loaded, path)
+    assert path.read_bytes() == original
+    assert setup_digest(load_setup(path)) == digest
+
+
+def test_setup_digest_is_stable_for_the_same_starting_conditions(tmp_path, monkeypatch):
+    first, second = get_scenario('sun-jupiter-ring'), get_scenario('sun-jupiter-ring')
+    assert first.source_environment is None and second.source_environment is None
+    assert setup_digest(first) == setup_digest(second)
+    path = tmp_path/'setup.json'
+    save_setup(first, path)
+    source = setup_digest(first)
+    assert setup_digest(load_setup(path)) == source
+    monkeypatch.setattr(np, '__version__', '2.1.3')
+    reloaded = load_setup(path)
+    assert setup_digest(reloaded) == source
+    assert reloaded.source_environment['numpy'] != np.__version__
+    produced_here = get_scenario('sun-jupiter-ring')
+    assert produced_here.source_environment is None
+    assert setup_digest(produced_here) != source
+
+
+def test_produced_run_records_execution_environment_and_solver_build_separately(tmp_path, monkeypatch):
+    path = tmp_path/'sun-jupiter-ring.json'
+    save_setup(get_scenario('sun-jupiter-ring'), path)
+    source_numpy = json.loads(path.read_text())['environment']['numpy']
+    monkeypatch.setattr(np, '__version__', '2.1.3')
+    loaded = load_setup(path)
+    run = _one_step(loaded)
+    assert run.status == 'complete' and run.setup_digest == setup_digest(loaded)
+    assert dict(run.execution_environment) == {'numpy': '2.1.3'}
+    assert run.execution_environment['numpy'] != source_numpy
+    assert run.solver_build == SOLVER_BUILD
+    assert run.solver_build != NUMERICAL_VERSION and run.solver_build != run.setup_digest
+    save_setup(loaded, path)
+    document = json.loads(path.read_text())
+    assert document['schema_version'] == 1 and document['environment'] == {'numpy': source_numpy}
+    assert 'solver_build' not in document and SOLVER_BUILD not in path.read_text()
+
+
+def test_version1_preset_and_control_still_pair_on_another_numpy(tmp_path, monkeypatch):
+    preset = get_scenario('sun-jupiter-ring')
+    _, control = make_jupiter_comparison(preset)
+    preset_path, control_path = tmp_path/'preset.json', tmp_path/'control.json'
+    save_setup(preset, preset_path)
+    save_setup(control, control_path)
+    preset_bytes, control_bytes = preset_path.read_bytes(), control_path.read_bytes()
+    document = json.loads(preset_bytes)
+    assert document['schema_version'] == 1
+    assert set(document) == {'schema_version', 'units', 'source_version', 'model_version',
+                             'numerical_version', 'environment', 'setup'}
+    assert set(document['environment']) == {'numpy'} and 'collision_policy' not in document['setup']
+    source = setup_digest(preset)
+    assert json.loads(control_bytes)['setup']['provenance']['comparison_source'] == source
+    monkeypatch.setattr(np, '__version__', '2.1.3')
+    loaded_preset, loaded_control = load_setup(preset_path), load_setup(control_path)
+    assert setup_digest(loaded_preset) == source
+    assert loaded_control.provenance['comparison_source'] == setup_digest(loaded_preset)
+    summary = compare_recordings(_one_step(loaded_preset), _one_step(loaded_control))
+    assert summary.end_time > 0 and len(summary.particle_ids) == 32
+    save_setup(loaded_preset, preset_path)
+    save_setup(loaded_control, control_path)
+    assert preset_path.read_bytes() == preset_bytes and control_path.read_bytes() == control_bytes
+
+
+@pytest.mark.parametrize('argv', [
+    ['--star', 'sun', '--years', '.5'],
+    ['--star', 'sun', '--sample-stride', '4'],
+    ['--star', 'sun', '--max-recording-mib', '128'],
+])
+def test_cli_recording_flags_require_output(argv):
+    from simulations.star_system.__main__ import main
+    with pytest.raises(SystemExit) as error:
+        main(argv)
     assert error.value.code == 2
