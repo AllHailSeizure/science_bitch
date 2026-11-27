@@ -1,0 +1,31 @@
+# Opt in to the shared AllHailSeizure automerge gate.
+# Squash-merges an open, non-draft, same-repo PR labelled `automerge`
+# once the required CI checks succeeded on the head SHA.
+name: Automerge
+
+on:
+  pull_request_target:
+    types: [labeled, ready_for_review]
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+  checks: read
+
+jobs:
+  automerge:
+    uses: AllHailSeizure/.github/.github/workflows/automerge.yml@master
+    with:
+      event_name: ${{ github.event_name }}
+      pull_number: ${{ github.event.pull_request.number || 0 }}
+      head_sha: ${{ github.event.workflow_run.head_sha || '' }}
+      required_checks: |
+        Lint
+        Tests (ubuntu-latest, Python 3.10)
+        Tests (ubuntu-latest, Python 3.14)
+        Tests (windows-latest, Python 3.14)
+        Wheel
