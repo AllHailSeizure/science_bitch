@@ -16,7 +16,7 @@ The questions this prototype can answer are:
 - Do mass, parcel totals, and linear momentum follow the perfect-merge and ejection rules, and does the kinetic-energy drop at a merge match the recorded loss?
 - How much does the first merger time move when the fixed step changes, while the remnant mass stays the combined parcel mass?
 
-Outside this slice: a gas disk and drag, grain growth, a rule for turning a swarm into one body, the full Stewart and Leinhardt strength map, three-dimensional orbits, relativity, and stellar mergers. The speed-and-angle rule is a smaller disclosed map with tracked fragments and recorded losses. The gas-and-dust stage is a separate prototype, `simulations.star_system.gas_dust`, written up in `docs/gas-dust-formation.md`. It does not change this late-stage run. Optional close-pass tidal dissipation is a separate experiment choice and is not turned on here.
+Outside this slice: a gas disk and drag, grain growth, a rule for turning a swarm into one body, the full Stewart and Leinhardt strength map, three-dimensional orbits, relativity, and stellar mergers. The speed-and-angle rule is a smaller disclosed map with tracked fragments and recorded losses. The gas-and-dust stage is a separate prototype, `simulations.star_system.gas_dust`, written up in `docs/gas-dust-formation.md`. It does not change this late-stage run. Optional close-pass tidal dissipation is a separate experiment choice and is not turned on here. Three-dimensional state, rocky radii, and the adaptive macro step are recorded separately in [formation-numerics.md](formation-numerics.md). This page is the inflated planar prototype.
 
 ## Benchmark
 

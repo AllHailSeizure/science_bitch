@@ -6,6 +6,11 @@ setup: perfect merge, or the speed-and-angle merge/graze/fragment rule.
 The earlier gas-and-dust stage lives in ``gas_dust`` and does not change this
 integrator. Stellar mergers are outside this prototype. Ejection is checked at
 macro steps. A collision does not end the run.
+
+Planar two-component state and the authored fixed step remain the default.
+A run may instead store three components, use a constant-density rocky
+radius, and shrink the macro step during a close pass. The overhead
+observatory still draws the plane. Tree gravity is not used.
 """
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
@@ -23,7 +28,8 @@ import tracemalloc
 import numpy as np
 
 from .collisions import CollisionEvent, advance_prepared
-from .core import G, SOLAR_RADIUS_AU, System
+from .core import G, SOLAR_RADIUS_AU, System, kepler_period
+from .data import AU_KM, PLANETS
 from .history import StateFrame
 from .initialization import PreparedSystem, build_system
 from .model import SPEED_ANGLE_VERSION, BodySpec, InitialBody, InitialSetup
@@ -50,6 +56,14 @@ BENCHMARK_OUTER = 3.2
 BENCHMARK_EMBRYO_MASS = 2e-6
 BENCHMARK_EMBRYO_RADIUS = 0.04
 BENCHMARK_ECCENTRICITY = 0.12
+# Below this floor a close pass is not stepped. The positive Verlet solver
+# stays in place; REBOUND is the documented candidate if a run reaches it.
+ADAPTIVE_DT_MIN = 1e-10
+ADAPTIVE_GROWTH = 2.
+PHYSICAL_PROBE_COUNT = 8
+PHYSICAL_PROBE_SEED = 70
+PHYSICAL_PROBE_DURATION_YEARS = 0.25
+PHYSICAL_PROBE_INCLINATION = 0.1
 
 _ASSUMPTIONS = (
     'Late-stage assembly: one star already exists, and every other body is a massive rocky embryo.',
@@ -60,7 +74,8 @@ _ASSUMPTIONS = (
     'A nonstellar body is ejected when its two-body specific energy about the star is positive and its star-centric distance has reached the ejection radius. The check runs at macro steps. The body is removed from the active set and its last state is kept.',
     'Ejection is a bookkeeping cut. After it, the frozen body no longer exchanges gravity with the active set.',
     'Stellar contact is logged as unmodeled and the run continues. This prototype does not merge stars.',
-    'Gravity is planar and the fixed step is the setup dt. During an unmodeled stellar overlap that pair is evaluated at the contact separation so the step can cross it.',
+    'Gravity is unsoftened Newtonian gravity. A run is planar unless its positions have a third component. The authored dt is the fixed step, or the maximum step when adaptive control is on. During an unmodeled stellar overlap that pair is evaluated at the contact separation so the step can cross it.',
+    'The overhead observatory draws planar motion. A third component is integrated and recorded, and it is not projected into that view.',
 )
 _QUESTIONS = (
     'Which initial parcels make up a surviving body, and how much mass came from each?',
@@ -68,18 +83,20 @@ _QUESTIONS = (
     'If two runs share a checkpoint and one embryo velocity changes, how do their histories differ at the same simulated time?',
     'Do mass, parcel totals, and linear momentum follow the perfect-merge and ejection rules, and does the kinetic-energy drop at a merge match the recorded loss?',
     'How much does the first merger time move when the fixed step changes, while the remnant mass stays the combined parcel mass?',
+    'For a disclosed three-dimensional initial state, does vertical motion survive part of an orbit, and does the macro step shrink during a close miss and grow again afterward?',
 )
 _NOT_MODELED = (
     'A gas disk, gas drag, and dust as a population.',
     'Grain growth and any rule that turns a swarm into one body.',
-    'Tree-code grouping of distant mass.',
+    'Tree-code grouping of distant mass. Direct summation stays in use, and a grouped force would still have to keep parcel identity.',
     'Partial accretion and erosion beyond the disclosed speed-angle lost-mass fraction.',
-    'Three-dimensional orbits and relativity. Optional close-pass tidal dissipation is a separate experiment choice and stays off in this prototype.',
-    'Stellar mergers and stellar internal structure.',
+    'An overhead drawing of the third dimension. The observatory remains a planar view.',
+    'Relativity and stellar internal structure. A dedicated stellar merger stays in its own scenario.',
+    'Optional close-pass tidal dissipation. It is a separate experiment choice and stays off in this prototype.',
 )
 _SCOPE = (
     'Keep late-stage embryos, one parcel per body, a stored collision rule, ejection records, ancestry amounts, and checkpoint branching. Perfect merge remains available.',
-    'Calculate a run to completion, then scrub and compare it. The same setup can be rerun under each stored rule. Inflated encounter radii make contacts inspectable; they are not rocky surfaces, and this fixed step is not an interactive solver for realistic radii.',
+    'Calculate a run to completion, then scrub and compare it. The same setup can be rerun under each stored rule. Inflated encounter radii make contacts inspectable; they are not rocky surfaces, and the fixed step is not an interactive solver for realistic radii. Rocky radii and an adaptive macro step are a separate schedule and do not replace the stored collision rule.',
     'Log stellar contact and continue. A dedicated stellar-merger model stays in its own scenario.',
 )
 _GAS = (
@@ -97,6 +114,7 @@ _CHANGE_KEYS = ('kind', 'body_id', 'delta_v', 'note')
 _DOCUMENT_KEYS = ('schema', 'id', 'model', 'name', 'time', 'dt', 'ejection_radius', 'sample_stride',
                   'status', 'reason', 'completed_steps', 'assumptions', 'provenance', 'active',
                   'removed', 'events', 'samples')
+_OPTIONAL_DOCUMENT_KEYS = ('adaptive', 'dt_max', 'dt_min', 'dimensions')
 
 
 @dataclass(frozen=True)
@@ -137,8 +155,8 @@ class SampleBody:
     kind: str
     mass: float
     radius: float
-    r: tuple[float, float]
-    v: tuple[float, float]
+    r: tuple[float, ...]
+    v: tuple[float, ...]
     contributions: tuple[Contribution, ...]
     status: str = 'active'
     reference_id: str | None = None
@@ -161,7 +179,7 @@ class FormationEvent:
     descendant_ids: tuple[str, ...]
     lost_relative_kinetic: float
     unmodeled_spin: float
-    location: tuple[float, float]
+    location: tuple[float, ...]
     message: str
     lost_contributions: tuple[Contribution, ...] = ()
 
@@ -170,7 +188,7 @@ class FormationEvent:
 class VelocityChange:
     """One disclosed change applied when a run branches from a checkpoint."""
     body_id: str
-    delta_v: tuple[float, float]
+    delta_v: tuple[float, ...]
     note: str
 
     def __post_init__(self):
@@ -179,13 +197,13 @@ class VelocityChange:
         try:
             components = tuple(self.delta_v)
         except TypeError as exc:
-            raise ValueError('delta_v must be two finite AU/yr components.') from exc
-        if len(components) != 2:
-            raise ValueError('delta_v must be two finite AU/yr components.')
+            raise ValueError('delta_v must be two or three finite AU/yr components.') from exc
+        if len(components) not in (2, 3):
+            raise ValueError('delta_v must be two or three finite AU/yr components.')
         vector = tuple(float(component) for component in components)
         if not all(math.isfinite(component) for component in vector):
-            raise ValueError('delta_v must be two finite AU/yr components.')
-        if vector == (0.0, 0.0):
+            raise ValueError('delta_v must be two or three finite AU/yr components.')
+        if all(component == 0.0 for component in vector):
             raise ValueError('A branch needs a nonzero velocity change.')
         if not isinstance(self.note, str) or not self.note.strip():
             raise ValueError('Describe the disclosed change in note.')
@@ -257,6 +275,25 @@ class BenchmarkReport:
 
 
 @dataclass(frozen=True)
+class PhysicalProbeReport:
+    """One short rocky-radius run. It does not replace the inflated benchmark."""
+    hardware: str
+    body_count: int
+    embryo_count: int
+    requested_years: float
+    simulated_years: float
+    calculation_seconds: float
+    status: str
+    reason: str
+    merge_count: int
+    minimum_step: float
+    maximum_step: float
+    rocky_radius: float
+    encounter_radius: float
+    notes: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class SyncedFrame:
     time: float
     left: StateFrame
@@ -265,9 +302,26 @@ class SyncedFrame:
     common_end: float
 
 
-def _star_body():
+def rocky_radius(mass):
+    """Volume-equivalent radius at the fact-sheet Earth density.
+
+    Earth mass and the 6371 km radius are the rounded values in ``PLANETS['earth']``.
+    This is a constant-density comparison, not an interior model. At the benchmark
+    embryo mass it is about a thousand times smaller than the 0.04 AU encounter radius.
+    """
+    mass = _positive('Mass', mass)
+    earth = PLANETS['earth']
+    return float(earth.radius/AU_KM*(mass/earth.mass)**(1./3.))
+
+
+def _components(vector):
+    return tuple(float(component) for component in np.asarray(vector, dtype=float).reshape(-1))
+
+
+def _star_body(spatial=False):
+    zero = (0., 0., 0.) if spatial else (0., 0.)
     return InitialBody('star', BodySpec('Star', 'star', 1., STAR_RADIUS, temperature=5772., color='#ffe2b0',
-                                         provenance='formation prototype'), (0., 0.), (0., 0.))
+                                         provenance='formation prototype'), zero, zero)
 
 
 def _embryo(body_id, name, mass, radius, position, velocity):
@@ -300,6 +354,20 @@ def make_merger_probe(dt):
                         provenance={'formation_model': FORMATION_MODEL, 'scenario': 'merger-probe'})
 
 
+def _rotate_orbit(position, velocity, inclination, node):
+    """Tilt a planar orbit about x, then rotate the line of nodes about z."""
+    cosine_i, sine_i = math.cos(inclination), math.sin(inclination)
+    cosine_n, sine_n = math.cos(node), math.sin(node)
+
+    def turn(vector):
+        x, y = float(vector[0]), float(vector[1])
+        y_tilted = y*cosine_i
+        z_tilted = y*sine_i
+        return (x*cosine_n-y_tilted*sine_n, x*sine_n+y_tilted*cosine_n, z_tilted)
+
+    return turn(position), turn(velocity)
+
+
 def _ellipse_state(semi_major, eccentricity, periapsis, anomaly, star_mass):
     mu = G*star_mass
     h = math.sqrt(mu*semi_major*(1-eccentricity*eccentricity))
@@ -323,16 +391,21 @@ def _clear(position, radius, placed):
 def make_late_stage_setup(*, count=BENCHMARK_EMBRYO_COUNT, seed=BENCHMARK_SEED, inner=BENCHMARK_INNER,
                           outer=BENCHMARK_OUTER, embryo_mass=BENCHMARK_EMBRYO_MASS,
                           embryo_radius=BENCHMARK_EMBRYO_RADIUS, eccentricity=BENCHMARK_ECCENTRICITY,
-                          dt=BENCHMARK_DT, include_unbound=True):
+                          dt=BENCHMARK_DT, include_unbound=True, radii='encounter', inclination=0.):
     """Seeded annulus of massive embryos, plus one disclosed unbound body when requested.
 
     Angles and true anomalies come from PCG64. The initial velocities are
-    star-centric ellipses. Embryo radii are encounter radii supplied by the caller.
+    star-centric ellipses. ``radii='encounter'`` keeps the supplied encounter
+    radius and planar vectors. ``radii='rocky'`` uses :func:`rocky_radius`.
+    A positive ``inclination`` is the maximum tilt in radians; zero leaves
+    every vector two-dimensional so the planar seed is unchanged.
     """
     if type(count) is not int or isinstance(count, bool) or not 1 <= count <= 200:
         raise ValueError('Embryo count must be an integer from 1 to 200.')
     if type(seed) is not int or isinstance(seed, bool) or seed < 0:
         raise ValueError('Formation seed must be a nonnegative integer.')
+    if radii not in ('encounter', 'rocky'):
+        raise ValueError("radii must be 'encounter' or 'rocky'.")
     _positive('Inner radius', inner)
     _positive('Outer radius', outer)
     if inner >= outer:
@@ -342,36 +415,85 @@ def make_late_stage_setup(*, count=BENCHMARK_EMBRYO_COUNT, seed=BENCHMARK_SEED, 
     _positive('Fixed dt', dt)
     if not math.isfinite(eccentricity) or not 0 <= eccentricity < 1:
         raise ValueError('Eccentricity must be finite and in [0, 1).')
+    if not math.isfinite(inclination) or inclination < 0 or inclination > math.pi/2:
+        raise ValueError('Inclination must be finite and in [0, pi/2] radians.')
+    if radii == 'rocky':
+        embryo_radius = rocky_radius(embryo_mass)
     if inner*(1-eccentricity) <= STAR_RADIUS+embryo_radius:
         raise ValueError('Annulus periapses intersect the star or an embryo surface.')
+    spatial = inclination > 0
     rng = np.random.Generator(np.random.PCG64(seed))
-    star = _star_body()
-    placed = [(np.zeros(2), star.spec.radius)]
+    star = _star_body(spatial)
+    placed = [(np.zeros(3 if spatial else 2), star.spec.radius)]
     bodies = [star]
     for index in range(count):
         semi_major = inner+(outer-inner)*index/max(count-1, 1)
         ecc = eccentricity*(.75+.25*float(rng.random()))
+        tilt = inclination*float(rng.random()) if spatial else 0.
+        node = float(rng.random())*2*math.pi if spatial else 0.
         body = None
         for _attempt in range(80):
             position, velocity = _ellipse_state(semi_major, ecc, float(rng.random())*2*math.pi,
                                                 float(rng.random())*2*math.pi, 1.)
+            if spatial:
+                position, velocity = _rotate_orbit(position, velocity, tilt, node)
             if _clear(position, embryo_radius, placed):
                 body = _embryo(f'embryo-{index:03d}', f'Embryo {index}', embryo_mass, embryo_radius,
-                               (float(position[0]), float(position[1])), (float(velocity[0]), float(velocity[1])))
+                               _components(position), _components(velocity))
                 placed.append((np.array(position, dtype=float), embryo_radius))
                 break
         if body is None:
             raise ValueError('Embryos overlap. Reduce count or radius, or widen the annulus.')
         bodies.append(body)
     if include_unbound:
-        position = np.array([outer+1.5, 0.])
+        position = np.array([outer+1.5, 0., 0.] if spatial else [outer+1.5, 0.])
+        step = np.array([.5, 0., 0.] if spatial else [.5, 0.])
         while not _clear(position, embryo_radius, placed):
-            position = position+np.array([.5, 0.])
-        bodies.append(_embryo('unbound', 'Unbound', embryo_mass, embryo_radius,
-                              (float(position[0]), float(position[1])), (12., .4)))
+            position = position+step
+        velocity = (12., .4, 0.) if spatial else (12., .4)
+        bodies.append(_embryo('unbound', 'Unbound', embryo_mass, embryo_radius, _components(position), velocity))
     return InitialSetup('Late-stage assembly', tuple(bodies), dt, collision_mode='perfect_merge',
                         provenance={'formation_model': FORMATION_MODEL, 'scenario': 'late-stage', 'seed': seed,
-                                    'generator': 'PCG64', 'embryo_count': count, 'include_unbound': bool(include_unbound)})
+                                    'generator': 'PCG64', 'embryo_count': count, 'include_unbound': bool(include_unbound),
+                                    'radius_model': radii, 'inclination': float(inclination)})
+
+
+def make_inclined_circular_setup(*, semi_major=1., inclination=math.pi/6, mass=1e-6, dt=None):
+    """One embryo on a circular orbit tilted out of the plane."""
+    _positive('Semi-major axis', semi_major)
+    _positive('Embryo mass', mass)
+    if not math.isfinite(inclination) or not 0 < inclination <= math.pi/2:
+        raise ValueError('Inclination must be finite and in (0, pi/2] radians.')
+    if dt is None:
+        dt = kepler_period(semi_major, G*(1.+mass))/600.
+    _positive('Fixed dt', dt)
+    position, velocity = _rotate_orbit(*_ellipse_state(semi_major, 0., 0., 0., 1.), inclination, 0.)
+    bodies = (
+        _star_body(spatial=True),
+        _embryo('embryo', 'Embryo', mass, rocky_radius(mass), position, velocity),
+    )
+    return InitialSetup('Inclined circular embryo', bodies, dt, collision_mode='perfect_merge',
+                        provenance={'formation_model': FORMATION_MODEL, 'scenario': 'inclined-circular',
+                                    'inclination': float(inclination), 'radius_model': 'rocky'})
+
+
+def make_close_pass_setup(*, dt=0.02, mass=BENCHMARK_EMBRYO_MASS):
+    """Two rocky embryos on a fast miss, far enough from the star that the pair sets the step.
+
+    The impact parameter is 0.01 AU and the relative speed is 6 AU/yr. The sum of
+    the rocky radii is far below that miss, so perfect merge should not fire.
+    """
+    _positive('Fixed dt', dt)
+    _positive('Embryo mass', mass)
+    radius = rocky_radius(mass)
+    bodies = (
+        _star_body(spatial=True),
+        _embryo('alpha', 'Alpha', mass, radius, (40., 0., 0.), (0., 0., 0.)),
+        _embryo('beta', 'Beta', mass, radius, (40.01, -0.5, 0.), (0., 6., 0.)),
+    )
+    return InitialSetup('Physical-radius close miss', bodies, dt, collision_mode='perfect_merge',
+                        provenance={'formation_model': FORMATION_MODEL, 'scenario': 'close-pass',
+                                    'radius_model': 'rocky'})
 
 
 def _positive(label, value):
@@ -411,6 +533,13 @@ def _contributions(mapping):
     return tuple(Contribution(key, float(mapping[key])) for key in sorted(mapping) if mapping[key] > 0)
 
 
+def _weighted_location(bodies, parent_ids):
+    chosen = [next(body for body in bodies if body.id == parent) for parent in parent_ids]
+    total = sum(body.mass for body in chosen)
+    width = len(chosen[0].r)
+    return tuple(sum(body.mass*body.r[axis] for body in chosen)/total for axis in range(width))
+
+
 def _split_composition(composition, shares):
     """Split parcel masses across descendants and a recorded loss. Amounts sum to the parents."""
     total = sum(mass for _key, mass in shares)
@@ -442,14 +571,15 @@ def _num(value):
 
 
 def _momentum(bodies):
-    total = np.zeros(2)
+    width = len(bodies[0].v) if bodies else 2
+    total = np.zeros(width)
     for body in bodies:
-        total += body.mass*np.array(body.v)
+        total += body.mass*np.asarray(body.v, dtype=float)
     return total
 
 
 def _kinetic(bodies):
-    return sum(.5*body.mass*(body.v[0]*body.v[0]+body.v[1]*body.v[1]) for body in bodies)
+    return sum(.5*body.mass*float(np.dot(body.v, body.v)) for body in bodies)
 
 
 def _max_abs(vector):
@@ -479,7 +609,7 @@ def _new_provenance(setup, seed):
 class FormationExperiment:
     """One formation integration with a parcel ledger and recorded samples."""
 
-    def __init__(self, setup, *, ejection_radius, sample_stride=1, seed=None, composition=None):
+    def __init__(self, setup, *, ejection_radius, sample_stride=1, seed=None, adaptive=False, dt_min=None, composition=None):
         if not isinstance(setup, InitialSetup):
             raise TypeError('Formation starts from an InitialSetup.')
         if setup.collision_mode not in ('perfect_merge', 'speed_angle'):
@@ -488,8 +618,11 @@ class FormationExperiment:
             raise ValueError('Formation seed must be a nonnegative integer or omitted.')
         if type(sample_stride) is not int or isinstance(sample_stride, bool) or sample_stride < 1:
             raise ValueError('sample_stride must be a positive integer.')
+        if not isinstance(adaptive, bool):
+            raise ValueError('adaptive must be a boolean.')
         self.ejection_radius = _positive('Ejection radius', ejection_radius)
         self.sample_stride = sample_stride
+        self.adaptive = adaptive
         stars = [body for body in setup.bodies if body.spec.kind == 'star']
         if len(stars) != 1:
             raise ValueError('The formation prototype follows embryos around exactly one star.')
@@ -512,8 +645,29 @@ class FormationExperiment:
         self.reason = ''
         self.completed_steps = 0
         self._applied_outcomes = 0
+        self.accepted_steps = []
+        self.dimensions = int(self.prepared.system.r.shape[1])
+        self.dt_max = float(self.prepared.system.dt)
+        if self.adaptive:
+            self.dt_min = ADAPTIVE_DT_MIN if dt_min is None else _positive('Adaptive floor', dt_min)
+            if self.dt_min > self.dt_max:
+                raise ValueError('The adaptive floor must be at most the authored maximum step.')
+        elif dt_min is not None:
+            raise ValueError('dt_min applies only when adaptive control is on.')
+        else:
+            self.dt_min = self.dt_max
         self.provenance = _new_provenance(setup, seed)
         extras = [f'Ejection radius is {self.ejection_radius:.6g} AU and is evaluated at macro steps.']
+        if self.dimensions == 2:
+            extras.append('This run is planar: every position and velocity has two components.')
+        else:
+            extras.append('This run is three-dimensional. The overhead observatory does not draw the third component.')
+        if self.adaptive:
+            extras.append(
+                f'Adaptive macro step: at most {self.dt_max:.6g} yr, shrinking to the pair resolution limit, '
+                f'and never below {self.dt_min:.6g} yr. It grows by at most a factor of {ADAPTIVE_GROWTH:.0f} after the pass.')
+        else:
+            extras.append(f'The fixed step is {self.dt_max:.6g} yr.')
         radii = [body.spec.radius for body in setup.bodies if body.spec.kind != 'star']
         if radii and max(radii) > .001:
             extras.append('At least one embryo radius exceeds 0.001 AU. Treat a radius this large as an inflated encounter radius, not a rocky surface.')
@@ -539,7 +693,9 @@ class FormationExperiment:
         years = _positive('Duration', years)
         target = self.time+years
         guard = 0
-        limit = math.ceil(years/self.prepared.system.dt)+2
+        nominal = self.dt_max if self.adaptive else self.prepared.system.dt
+        floor = self.dt_min if self.adaptive else nominal
+        limit = min(math.ceil(years/floor)+2, math.ceil(years/nominal)*50000+2)
         while self.status == 'running' and self.time < target-1e-12*max(1., abs(target)):
             self.advance(1)
             guard += 1
@@ -557,9 +713,22 @@ class FormationExperiment:
             raise ValueError(f'Cannot integrate a {self.status} run. Branch from a checkpoint to calculate a new future.')
         done = 0
         while done < max_steps and self.status == 'running':
+            scheduled = self._scheduled_dt()
+            if scheduled is None:
+                self.status = 'halted'
+                limit = self.prepared.system.resolution_limit()
+                self.reason = (
+                    'Adaptive timestep halt: the pair resolution limit '
+                    f'{limit:.6g} yr is below the floor of {self.dt_min:.6g} yr. '
+                    'The state was not advanced. A close-encounter integrator such as REBOUND '
+                    'remains the candidate if a physical-radius run reaches this floor.')
+                break
+            previous = float(self.prepared.system.dt)
+            self.prepared.system.dt = scheduled
             try:
                 outcome = advance_prepared(self.prepared)
             except ValueError as exc:
+                self.prepared.system.dt = previous
                 self.status = 'halted'
                 self.reason = str(exc)
                 break
@@ -577,6 +746,7 @@ class FormationExperiment:
                     self._record_passive(event)
             self.prepared = outcome.prepared
             self._eject()
+            self.accepted_steps.append(float(self.prepared.system.dt))
             self.completed_steps += 1
             done += 1
             if self.completed_steps % self.sample_stride == 0:
@@ -664,7 +834,7 @@ class FormationExperiment:
                 batch.append(self.events[index])
                 index += 1
             merge_count += sum(event.kind == 'merge' for event in batch)
-            lost_momentum = np.zeros(2)
+            lost_momentum = np.zeros(len(sample.bodies[0].v))
             carried_kinetic = 0.
             for event in batch:
                 lost = sum(item.mass for item in event.lost_contributions)
@@ -713,9 +883,11 @@ class FormationExperiment:
         if self.prepared.body_specs[index].kind == 'star':
             raise ValueError('The disclosed change must name an embryo, not the star.')
         system = self.prepared.system
+        if len(change.delta_v) != system.v.shape[1]:
+            raise ValueError(
+                f'delta_v has {len(change.delta_v)} components; this run stores {system.v.shape[1]}.')
         velocity = system.v.copy()
-        velocity[index, 0] += change.delta_v[0]
-        velocity[index, 1] += change.delta_v[1]
+        velocity[index] = velocity[index]+np.asarray(change.delta_v, dtype=float)
         updated = System(system.masses.copy(), system.r.copy(), velocity, system.dt, system.time)
         self.prepared = replace(self.prepared, system=updated)
         stored = {'kind': 'velocity', 'body_id': change.body_id, 'delta_v': change.delta_v, 'note': change.note}
@@ -751,11 +923,10 @@ class FormationExperiment:
         if event.remnant_id in self.composition or event.remnant_id in self.removed:
             raise ValueError('Remnant id collides with an existing formation identity.')
         self.composition[event.remnant_id] = composition
-        total = sum(next(body.mass for body in pre.bodies if body.id == parent) for parent in event.parent_ids)
-        location = (
-            sum(next(body.mass*body.r[0] for body in pre.bodies if body.id == parent) for parent in event.parent_ids)/total,
-            sum(next(body.mass*body.r[1] for body in pre.bodies if body.id == parent) for parent in event.parent_ids)/total,
-        )
+        parents = [next(body for body in pre.bodies if body.id == parent) for parent in event.parent_ids]
+        total = sum(body.mass for body in parents)
+        width = len(parents[0].r)
+        location = tuple(sum(body.mass*body.r[axis] for body in parents)/total for axis in range(width))
         self.events.append(FormationEvent(float(event.time), 'merge', tuple(event.parent_ids), event.remnant_id,
                                           _contributions(composition), (event.remnant_id,), float(event.lost_relative_kinetic),
                                           float(event.unmodeled_spin), location, event.message))
@@ -780,11 +951,7 @@ class FormationExperiment:
             if descendant in self.composition or descendant in self.removed:
                 raise ValueError('Fragment id collides with an existing formation identity.')
             self.composition[descendant] = assigned[descendant]
-        total = sum(next(body.mass for body in pre.bodies if body.id == parent) for parent in event.parent_ids)
-        location = event.location or (
-            sum(next(body.mass*body.r[0] for body in pre.bodies if body.id == parent) for parent in event.parent_ids)/total,
-            sum(next(body.mass*body.r[1] for body in pre.bodies if body.id == parent) for parent in event.parent_ids)/total,
-        )
+        location = event.location or _weighted_location(pre.bodies, event.parent_ids)
         self.events.append(FormationEvent(float(event.time), 'fragment', tuple(event.parent_ids), event.remnant_id,
                                           _contributions(composition), tuple(event.descendant_ids),
                                           float(event.lost_relative_kinetic), float(event.unmodeled_spin), location,
@@ -797,13 +964,7 @@ class FormationExperiment:
         contributions = []
         for parent in event.parent_ids:
             contributions.extend(_contributions(self.composition[parent]))
-        location = event.location
-        if location is None:
-            total = sum(next(body.mass for body in pre.bodies if body.id == parent) for parent in event.parent_ids)
-            location = (
-                sum(next(body.mass*body.r[0] for body in pre.bodies if body.id == parent) for parent in event.parent_ids)/total,
-                sum(next(body.mass*body.r[1] for body in pre.bodies if body.id == parent) for parent in event.parent_ids)/total,
-            )
+        location = event.location if event.location is not None else _weighted_location(pre.bodies, event.parent_ids)
         descendants = tuple(event.descendant_ids) or tuple(event.parent_ids)
         self.events.append(FormationEvent(float(event.time), event.kind, tuple(event.parent_ids), None,
                                           tuple(contributions), descendants, float(event.lost_relative_kinetic),
@@ -816,7 +977,7 @@ class FormationExperiment:
                 contributions.extend(_contributions(self.composition[parent]))
             elif parent in self.removed:
                 contributions.extend(self.removed[parent].contributions)
-        location = event.location or (0., 0.)
+        location = event.location if event.location is not None else tuple(0. for _ in range(self.dimensions))
         self.events.append(FormationEvent(float(event.time), event.kind, tuple(event.parent_ids), None,
                                           tuple(contributions), tuple(event.descendant_ids) or tuple(event.parent_ids),
                                           0., 0., location, event.message))
@@ -883,8 +1044,8 @@ class FormationExperiment:
             spec = frame.body_specs[index]
             bodies.append(SampleBody(
                 body_id, spec.name, spec.kind, _num(frame.masses[index]), _num(spec.radius),
-                (_num(frame.r[index, 0]), _num(frame.r[index, 1])),
-                (_num(frame.v[index, 0]), _num(frame.v[index, 1])),
+                tuple(_num(component) for component in frame.r[index]),
+                tuple(_num(component) for component in frame.v[index]),
                 _contributions(self.composition[body_id]), 'active', frame.reference_ids[index]))
         return Sample(_num(frame.time), phase, tuple(bodies))
 
@@ -910,7 +1071,7 @@ class FormationExperiment:
         return tuple(self.removed[key] for key in self.removed)
 
     def _payload(self):
-        return {
+        payload = {
             'schema': CHECKPOINT_SCHEMA, 'model': FORMATION_MODEL, 'name': self.name, 'time': _num(self.time),
             'dt': _num(self.prepared.system.dt), 'ejection_radius': _num(self.ejection_radius),
             'sample_stride': self.sample_stride, 'status': self.status, 'reason': self.reason,
@@ -921,6 +1082,34 @@ class FormationExperiment:
             'events': [_event_document(event) for event in self.events],
             'samples': [_sample_document(sample) for sample in self.samples],
         }
+        payload.update(self._numerics_fields())
+        return payload
+
+    def _numerics_fields(self):
+        if not self.adaptive and self.dimensions == 2:
+            return {}
+        fields = {'adaptive': bool(self.adaptive), 'dimensions': int(self.dimensions), 'dt_max': _num(self.dt_max)}
+        if self.adaptive:
+            fields['dt_min'] = _num(self.dt_min)
+        return fields
+
+    def _scheduled_dt(self):
+        """Authored step, or a smaller one while a pair is unresolved."""
+        if not self.adaptive:
+            return float(self.prepared.system.dt)
+        limit = float(self.prepared.system.resolution_limit())
+        if not math.isfinite(limit) or limit >= self.dt_max:
+            target = self.dt_max
+        elif limit < self.dt_min:
+            return None
+        else:
+            target = limit
+        previous = float(self.prepared.system.dt)
+        if target > previous*ADAPTIVE_GROWTH:
+            target = previous*ADAPTIVE_GROWTH
+        if target > self.dt_max:
+            target = self.dt_max
+        return float(target)
 
 
 def _carriers(sample, parcels):
@@ -934,7 +1123,8 @@ def _same_state(left, right):
 
 def _body_document(body):
     return {'id': body.id, 'name': body.name, 'kind': body.kind, 'mass': _num(body.mass), 'radius': _num(body.radius),
-            'status': body.status, 'r': [_num(body.r[0]), _num(body.r[1])], 'v': [_num(body.v[0]), _num(body.v[1])],
+            'status': body.status, 'r': [_num(component) for component in body.r],
+            'v': [_num(component) for component in body.v],
             'contributions': [{'parcel_id': item.parcel_id, 'mass': _num(item.mass)}
                               for item in sorted(body.contributions, key=lambda item: item.parcel_id)],
             'reference_id': body.reference_id}
@@ -946,7 +1136,7 @@ def _event_document(event):
             'contributions': [{'parcel_id': item.parcel_id, 'mass': _num(item.mass)}
                               for item in sorted(event.contributions, key=lambda item: item.parcel_id)],
             'lost_relative_kinetic': _num(event.lost_relative_kinetic), 'unmodeled_spin': _num(event.unmodeled_spin),
-            'location': [_num(event.location[0]), _num(event.location[1])], 'message': event.message,
+            'location': [_num(component) for component in event.location], 'message': event.message,
             'lost_contributions': [{'parcel_id': item.parcel_id, 'mass': _num(item.mass)}
                                    for item in sorted(event.lost_contributions, key=lambda item: item.parcel_id)]}
 
@@ -1035,7 +1225,9 @@ def _experiment_from_document(document):
         raise ValueError(f'Unsupported formation checkpoint schema; expected {CHECKPOINT_SCHEMA}.')
     if document.get('model') != FORMATION_MODEL:
         raise ValueError(f'Unsupported formation model; expected {FORMATION_MODEL}.')
-    _object(document, _DOCUMENT_KEYS, 'Formation checkpoint')
+    allowed = set(_DOCUMENT_KEYS) | set(_OPTIONAL_DOCUMENT_KEYS)
+    if not set(_DOCUMENT_KEYS) <= set(document) <= allowed:
+        raise ValueError('Formation checkpoint must contain exactly '+', '.join(_DOCUMENT_KEYS)+'.')
     payload = {key: document[key] for key in document if key != 'id'}
     canonical = json.dumps(payload, sort_keys=True, separators=(',', ':'), allow_nan=False)
     identity = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
@@ -1109,6 +1301,40 @@ def _experiment_from_document(document):
     experiment.reason = reason
     experiment.completed_steps = document['completed_steps']
     experiment._applied_outcomes = sum(event.kind in ('merge', 'fragment') for event in collision_events)
+    experiment.accepted_steps = []
+    widths = {len(body.r) for body in (*active, *removed_list)}
+    widths.update(len(body.v) for body in (*active, *removed_list))
+    for sample in samples:
+        widths.update(len(body.r) for body in sample.bodies)
+        widths.update(len(body.v) for body in sample.bodies)
+    widths.update(len(event.location) for event in events)
+    if len(widths) != 1:
+        raise ValueError('Checkpoint vectors must share one dimension.')
+    dimension = widths.pop()
+    if 'dimensions' in document:
+        stated = document['dimensions']
+        if type(stated) is not int or isinstance(stated, bool) or stated != dimension:
+            raise ValueError('dimensions must match the stored vectors.')
+    adaptive = document.get('adaptive', False)
+    if type(adaptive) is not bool:
+        raise ValueError('adaptive must be a boolean.')
+    dt_max = _positive('Maximum dt', document['dt_max']) if 'dt_max' in document else dt
+    if dt_max+1e-12*max(1., dt_max) < dt:
+        raise ValueError('dt_max must be at least the stored step.')
+    if 'dt_min' in document:
+        dt_min = _positive('Adaptive floor', document['dt_min'])
+    else:
+        dt_min = ADAPTIVE_DT_MIN if adaptive else dt_max
+    if adaptive and dt_min > dt_max:
+        raise ValueError('The adaptive floor must be at most the maximum step.')
+    if not adaptive and 'dt_min' in document:
+        raise ValueError('dt_min applies only when adaptive control is on.')
+    if provenance['change'] is not None and len(provenance['change']['delta_v']) != dimension:
+        raise ValueError('delta_v must match the checkpoint dimension.')
+    experiment.adaptive = adaptive
+    experiment.dimensions = dimension
+    experiment.dt_max = dt_max
+    experiment.dt_min = dt_min
     if experiment.checkpoint_id != identity:
         raise ValueError('Checkpoint did not round-trip.')
     return experiment
@@ -1134,10 +1360,10 @@ def _provenance_from_document(value):
         if change['kind'] != 'velocity':
             raise ValueError('The only disclosed branch change is velocity.')
         delta = change['delta_v']
-        if type(delta) is not list or len(delta) != 2:
-            raise ValueError('delta_v must contain two components.')
+        if type(delta) is not list or len(delta) not in (2, 3):
+            raise ValueError('delta_v must contain two or three components.')
         change = {'kind': 'velocity', 'body_id': _string(change['body_id'], 'Changed body'),
-                  'delta_v': (_finite_number(delta[0], 'delta_v'), _finite_number(delta[1], 'delta_v')),
+                  'delta_v': tuple(_finite_number(item, 'delta_v') for item in delta),
                   'note': _string(change['note'], 'Change note')}
     return {'run_id': _string(value['run_id'], 'Run id', hex_length=16), 'model': value['model'],
             'representation': value['representation'], 'collision_model': value['collision_model'], 'seed': seed,
@@ -1220,9 +1446,9 @@ def _string_list(value, label):
 
 
 def _vector(value, label):
-    if type(value) is not list or len(value) != 2:
-        raise ValueError(f'{label} must contain two components.')
-    return (_finite_number(value[0], label), _finite_number(value[1], label))
+    if type(value) is not list or len(value) not in (2, 3):
+        raise ValueError(f'{label} must contain two or three components.')
+    return tuple(_finite_number(item, label) for item in value)
 
 
 def _finite_number(value, label):
@@ -1400,3 +1626,41 @@ def run_benchmark():
         BENCHMARK_DURATION_YEARS, experiment.time, seconds, peak, len(recording.encode('utf-8')), len(experiment.samples),
         len(merges), len(ejections), merges, ejections, experiment.status, experiment.reason,
         tuple(body.id for body in experiment._active_records() if body.kind != 'star'), tuple(notes))
+
+
+def run_physical_probe():
+    """Time a short rocky, mildly inclined annulus with the adaptive macro step.
+
+    This is not the inflated 80-embryo benchmark. It reports whether a physical
+    radius and a shrinking step stay practical on a small seeded run. Tree
+    gravity is not used. Perfect merge is unchanged, so a contact still has
+    one descendant.
+    """
+    radius = rocky_radius(BENCHMARK_EMBRYO_MASS)
+    clock = time.perf_counter()
+    setup = make_late_stage_setup(
+        count=PHYSICAL_PROBE_COUNT, seed=PHYSICAL_PROBE_SEED, include_unbound=False,
+        radii='rocky', inclination=PHYSICAL_PROBE_INCLINATION, dt=BENCHMARK_DT)
+    experiment = FormationExperiment(
+        setup, ejection_radius=BENCHMARK_EJECTION_RADIUS, sample_stride=BENCHMARK_SAMPLE_STRIDE,
+        seed=PHYSICAL_PROBE_SEED, adaptive=True)
+    experiment.integrate(PHYSICAL_PROBE_DURATION_YEARS, finish=True)
+    seconds = time.perf_counter()-clock
+    steps = tuple(experiment.accepted_steps) or (experiment.dt_max,)
+    ratio = BENCHMARK_EMBRYO_RADIUS/radius
+    notes = [
+        f'Rocky radius {radius:.6g} AU is {ratio:.0f} times smaller than the {BENCHMARK_EMBRYO_RADIUS} AU encounter radius at the benchmark mass.',
+        'Geometric cross section is smaller by about the square of that factor, so contacts are much rarer than in the inflated prototype.',
+        'The macro step is the pair resolution limit during a close pass and returns toward the authored 0.025 yr step afterward.',
+        'Direct summation is used. Tree gravity remains deferred and would still have to keep parcel identity.',
+        'No permanent capture is claimed. Fragmenting collisions beyond the stored speed-angle map are #69 and gas drag is #71. Optional close-pass tides (#79) stay off on this perfect-merge path.',
+    ]
+    if experiment.status != 'complete':
+        notes.append('The run stopped before the requested time: '+experiment.reason)
+    else:
+        notes.append(f'{sum(event.kind == "merge" for event in experiment.events)} perfect merges were recorded.')
+    return PhysicalProbeReport(
+        hardware_description(), len(experiment.samples[0].bodies), PHYSICAL_PROBE_COUNT,
+        PHYSICAL_PROBE_DURATION_YEARS, experiment.time, seconds, experiment.status, experiment.reason,
+        sum(event.kind == 'merge' for event in experiment.events), min(steps), max(steps), radius,
+        BENCHMARK_EMBRYO_RADIUS, tuple(notes))

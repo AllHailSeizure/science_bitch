@@ -72,8 +72,8 @@ class InitialBody:
             raise ValueError('Body IDs must be nonempty strings.')
         for key in ('r', 'v'):
             vector = np.asarray(getattr(self, key), dtype=float)
-            if vector.shape != (2,) or not np.isfinite(vector).all():
-                raise ValueError('Position and velocity must each contain two finite numbers.')
+            if vector.shape not in ((2,), (3,)) or not np.isfinite(vector).all():
+                raise ValueError('Position and velocity must each contain two or three finite numbers.')
             object.__setattr__(self, key, tuple(float(x) for x in vector))
 
 @dataclass(frozen=True)
