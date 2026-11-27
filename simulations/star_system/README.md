@@ -46,6 +46,10 @@ Each experiment opens at time zero with **Run**, **Pause**, **Reset**, and
 **Edit body** tabs. **Add body** uses type/body dropdowns, information, **Add**,
 then a scene click; Escape cancels. **Calculate a recording** uses the shared
 bounded calculator; completed recordings appear under **Recorded results**.
+**Save initial setup** writes that beginning, including population seeds and the collision mode.
+**Save current state as new setup** writes evolved positions and velocities as a new named epoch and leaves the open experiment in place.
+Choose `none` or `perfect_merge`, then **Apply collisions + reset**, to rebuild the starting setup.
+Perfect merge joins nonstellar bodies, absorbs point tracers with no mass feedback, ignores tracer–tracer contact, and halts if a star is involved.
 Native file dialogs save and load the existing validated JSON format.
 
 **Focus selected and its orbiting bodies** zooms to a planet's local system;

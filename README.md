@@ -13,7 +13,8 @@ One year of the Sun, Earth, and Jupiter, rendered by `sidereel-cli`.
 - A PyQt6 window filled by the sky. Menu, or M, lays a sidebar over the scene. The view stays put.
 - Five starting experiments: the Solar System, a star at twice the Sun's mass, Earth and the Moon, 32 asteroids in a ring at 3.2 AU, and a Sun–Jupiter rock ring.
 - A CLI that integrates the system and writes a PNG. No display required.
-- Starting setups saved as JSON. Calculate a recording, then play the samples.
+- Save the initial setup, or save the current state as a new setup. Calculate a recording, then play the samples. Playback speed does not recalculate the motion.
+- Optional perfect merge for nonstellar contact. Point tracers are absorbed with no mass feedback. Contact with a star halts. The default still halts on a close encounter and does not merge.
 - An isolated planet holds its period to a relative 1e-7. At 1 AU, solar gravity sits about 30 ppm above JPL's GM, inside a 1e-4 bound.
 
 ## Prerequisites and installation
@@ -48,7 +49,7 @@ Open the GUI:
 sidereel
 ```
 
-You get the experiment list. `sidereel-cli` with no arguments opens the same window.
+You get the experiment list, including the Solar System and a Sun–Jupiter ring. Save initial setup stores the beginning. Save current state as new setup stores the evolved system under a new name. `sidereel-cli` with no arguments opens the same window.
 
 Sun–Jupiter ring places 32 mass-zero rocks evenly around the Sun at 3.2 AU (seed 7). Rotating view keeps the Sun–Jupiter direction fixed. Hollow L4 and L5 marks are geometric guides, not rocks. Select a rock to read its separation from Jupiter and how long the drawn trail is. Matched no-Jupiter run uses the same rock starting vectors. Collision mode is none, and a halt or a shorter run is labeled as incomplete.
 
