@@ -2,9 +2,12 @@
 
 The physical stage is rocky embryos around one existing star. Each embryo
 starts as one material parcel. Contacts use the disclosed perfect-merge
-solver already in this package. Gas, dust, fragmentation, and stellar
-mergers are outside this prototype. Ejection is checked at macro steps.
+solver already in this package. Fragmentation and stellar mergers are
+outside this prototype. The earlier gas-and-dust stage lives in
+``gas_dust`` and does not change this integrator. Ejection is checked at
+macro steps.
 """
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from bisect import bisect_right
 import hashlib
@@ -79,7 +82,7 @@ _SCOPE = (
     'Leave stellar contact as a halt.',
 )
 _GAS = (
-    'An earlier gas-and-dust start needs a fluid disk, drag between gas and dust, and an explicit rule for when a swarm becomes one body without dropping mass, momentum, origin, or the internal state the collision model needs.',
+    'An earlier gas-and-dust start needs a fluid disk, drag between gas and dust, and an explicit rule for when a swarm becomes one body without dropping mass, momentum, origin, or the internal state the collision model needs. That stage is simulations.star_system.gas_dust; this late-stage prototype does not run it.',
     'Partial accretion, erosion, hit-and-run, and fragmentation need an outcome map such as Stewart and Leinhardt, because perfect merge cannot send mass to more than one descendant.',
     'Tree gravity is a later optimization. At a few hundred bodies the measured cost is direct summation, and grouping would have to preserve parcel identity to be usable here.',
 )
@@ -375,6 +378,33 @@ def _positive(label, value):
     return float(value)
 
 
+def _validated_composition(composition, prepared):
+    """Optional starting ledger. The default is one parcel named for each body."""
+    if not isinstance(composition, Mapping):
+        raise ValueError('Composition must map body ids to parcel masses.')
+    if set(composition) != set(prepared.body_ids):
+        raise ValueError('Composition must name every active body and no other id.')
+    result = {}
+    for body_id in prepared.body_ids:
+        parcels = composition[body_id]
+        if not isinstance(parcels, Mapping) or not parcels:
+            raise ValueError(f'{body_id} needs at least one parcel.')
+        cleaned = {}
+        for parcel_id, mass in parcels.items():
+            if not isinstance(parcel_id, str) or not parcel_id.strip():
+                raise ValueError('Parcel ids must be nonempty strings.')
+            if parcel_id in cleaned:
+                raise ValueError(f'{body_id} repeats parcel {parcel_id}.')
+            cleaned[parcel_id.strip()] = _positive('Parcel mass', mass)
+        total = sum(cleaned.values())
+        index = prepared.body_ids.index(body_id)
+        body_mass = float(prepared.system.masses[index])
+        if abs(total-body_mass) > 1e-9*max(1., abs(body_mass)):
+            raise ValueError(f'Parcels for {body_id} must add up to its mass.')
+        result[body_id] = cleaned
+    return result
+
+
 def _contributions(mapping):
     return tuple(Contribution(key, float(mapping[key])) for key in sorted(mapping))
 
@@ -426,7 +456,7 @@ def _new_provenance(setup, seed):
 class FormationExperiment:
     """One formation integration with a parcel ledger and recorded samples."""
 
-    def __init__(self, setup, *, ejection_radius, sample_stride=1, seed=None):
+    def __init__(self, setup, *, ejection_radius, sample_stride=1, seed=None, composition=None):
         if not isinstance(setup, InitialSetup):
             raise TypeError('Formation starts from an InitialSetup.')
         if setup.collision_mode != 'perfect_merge':
@@ -447,8 +477,11 @@ class FormationExperiment:
                 raise ValueError(f'{body.spec.name} needs a radius in AU.')
         self.name = setup.name
         self.prepared = build_system(setup)
-        self.composition = {body_id: {body_id: float(mass)}
-                            for body_id, mass in zip(self.prepared.body_ids, self.prepared.system.masses)}
+        if composition is None:
+            self.composition = {body_id: {body_id: float(mass)}
+                                for body_id, mass in zip(self.prepared.body_ids, self.prepared.system.masses)}
+        else:
+            self.composition = _validated_composition(composition, self.prepared)
         self.removed = {}
         self.events = []
         self.samples = []

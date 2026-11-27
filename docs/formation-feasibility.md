@@ -16,7 +16,7 @@ The questions this prototype can answer are:
 - Do mass, parcel totals, and linear momentum follow the perfect-merge and ejection rules, and does the kinetic-energy drop at a merge match the recorded loss?
 - How much does the first merger time move when the fixed step changes, while the remnant mass stays the combined parcel mass?
 
-Outside this slice: a gas disk and drag, grain growth, a rule for turning a swarm into one body, fragmentation and hit-and-run, three-dimensional orbits, relativity, and stellar mergers. Optional close-pass tidal dissipation is a separate experiment choice and is not turned on here.
+Outside this slice: a gas disk and drag, grain growth, a rule for turning a swarm into one body, fragmentation and hit-and-run, three-dimensional orbits, relativity, and stellar mergers. The gas-and-dust stage is a separate prototype, `simulations.star_system.gas_dust`, written up in `docs/gas-dust-formation.md`. It does not change this late-stage run. Optional close-pass tidal dissipation is a separate experiment choice and is not turned on here.
 
 ## Benchmark
 
@@ -67,7 +67,7 @@ The contact times differ by 3.03e-8 yr. The remnant mass is the sum of the two p
 
 Keep the first implementation on late-stage embryos, one parcel per body, perfect merge, ejection records, ancestry amounts, and checkpoint branching. Calculate a run to completion, then scrub and compare it. Leave stellar contact as a halt.
 
-An earlier gas-and-dust start needs a fluid disk, drag between gas and dust, and an explicit rule for when a swarm becomes one body without dropping mass, momentum, origin, or the internal state the collision model needs. Partial accretion, erosion, hit-and-run, and fragmentation need an outcome map such as Stewart and Leinhardt, because perfect merge cannot send mass to more than one descendant. Tree gravity is a later optimization: at 200 bodies the measured cost was a few seconds of direct summation, and a grouped force would still have to keep parcel identity.
+That earlier gas-and-dust start is the annular isothermal prototype in `docs/gas-dust-formation.md`. It keeps a fluid disk, drag between gas and dust, grain growth, and a swarm-to-body rule that holds onto mass, momentum, origin, and the radius and ancestry the collision model needs. This late-stage run still does not include them. Partial accretion, erosion, hit-and-run, and fragmentation need an outcome map such as Stewart and Leinhardt, because perfect merge cannot send mass to more than one descendant. Tree gravity is a later optimization: at 200 bodies the measured cost was a few seconds of direct summation, and a grouped force would still have to keep parcel identity.
 
 The in-repo Verlet contact solver was enough for these inflated-radius runs. A close-encounter integrator such as REBOUND is the piece to revisit if the radii become physical and the fixed step starts halting. It is not required for the questions above.
 
