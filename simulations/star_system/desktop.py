@@ -29,6 +29,7 @@ from .desktop_panels import AUYR_TO_KMS, BodyCatalog, BodyInformation, BodyPrope
 from .experiments import ExperimentSession, capture_current_setup, custom_copy
 from .history import MAX_HISTORY, StateFrame, relative_state
 from .initialization import PreparedSystem, circular_relative_velocity, insert_body
+from .jupiter_experiment import assumptions_text, comparison_readout, is_jupiter_experiment, matched_control, rock_report
 from .model import InitialBody
 from .persistence import load_setup, save_setup, setup_digest
 from .playback import Playback
@@ -326,6 +327,15 @@ class Observatory(QMainWindow):
         view_row.addWidget(self.fit_button)
         view_row.addWidget(self.follow_button)
         form.addLayout(view_row)
+        self.rotating_button = action('Rotating view', self.toggle_rotating_view)
+        self.control_button = action('Matched no-Jupiter run', self.prepare_matched_control)
+        form.addWidget(self.rotating_button)
+        form.addWidget(self.control_button)
+        self.assumptions = label('', 'muted')
+        self.assumptions.setVisible(False)
+        self.rotating_button.setVisible(False)
+        self.control_button.setVisible(False)
+        form.addWidget(self.assumptions)
         self.system_view_button = action('Return to system view', self.open_system_view)
         form.addWidget(self.system_view_button)
         self.arrows_checkbox = QCheckBox('Starting velocities')
@@ -407,6 +417,9 @@ class Observatory(QMainWindow):
         self.result_combo.activated.connect(self.select_recording)
         recordings.addWidget(self.result_combo, 1)
         form.addLayout(recordings)
+        self.comparison_label = label('', 'muted')
+        self.comparison_label.setAccessibleName('Matched comparison')
+        form.addWidget(self.comparison_label)
         self.progress = QProgressBar()
         self.progress.setVisible(False)
         form.addWidget(self.progress)
@@ -662,6 +675,18 @@ class Observatory(QMainWindow):
         self.progress.setVisible(calculating)
         self.result_combo.setEnabled(not calculating and not placing and bool(self.session.recordings))
         self.system_view_button.setVisible(self.planetary_id is not None)
+        ring = is_jupiter_experiment(self.setup)
+        self.rotating_button.setVisible(ring)
+        self.control_button.setVisible(ring)
+        self.assumptions.setVisible(ring)
+        self.comparison_label.setText(self._matched_summary())
+        if ring:
+            self.assumptions.setText(assumptions_text(self.setup))
+            reason = self.scene.rotating_reason
+            self.rotating_button.setEnabled(not calculating and not placing and not reason)
+            self.rotating_button.setText('Rotating unavailable' if reason else
+                'Ordinary view' if self.scene.frame_mode == 'rotating' else 'Rotating view')
+            self.control_button.setEnabled(not calculating and not placing and not reason)
 
     def sync_time_readout(self, *_args):
         if not self.session:
@@ -743,17 +768,20 @@ class Observatory(QMainWindow):
                          if spec.kind == 'particle' and key in visible]
         self.scene.particles.set_offsets(self.scene.positions[particle_rows] if particle_rows else np.empty((0, 2)))
         self.scene.particles.set_visible(bool(particle_rows))
-        # The legacy controller retains its compatibility guides. The desktop
-        # deliberately replaces them with generic, selection-scoped overlays.
-        self.scene.reference_guides.set_visible(False)
-        self.scene.guide_note.set_visible(False)
-        for item in self.scene.guide_labels:
-            item.set_visible(False)
+        # Other experiments keep selection-scoped guides. The Sun–Jupiter ring
+        # also draws hollow equilateral guides so rocks can be seen against them.
+        show_ring = is_jupiter_experiment(self.setup) and self.planetary_id is None
+        if not show_ring:
+            self.scene.reference_guides.set_visible(False)
+            self.scene.guide_note.set_visible(False)
+            for item in self.scene.guide_labels:
+                item.set_visible(False)
         frame = StateFrame.capture(self.prepared)
         context = selection_context(frame, self.planetary_id or self.selected_id)
         self.context_orbits.set_segments([self.scene.world_to_display(curve) for curve in context.orbits.values()])
+        ring_guides = show_ring and self.scene.reference_guides.get_visible()
         points = (self.scene.world_to_display(context.guides)
-                  if self.planetary_id is None and len(context.guides) else np.empty((0, 2)))
+                  if self.planetary_id is None and len(context.guides) and not ring_guides else np.empty((0, 2)))
         self.context_points.set_offsets(points)
         self.context_points.set_visible(bool(len(points)))
         for index, item in enumerate(self.context_names):
@@ -784,6 +812,13 @@ class Observatory(QMainWindow):
             width, height = np.ptp(self.ax.get_xlim()), np.ptp(self.ax.get_ylim())
             self.ax.set_xlim(point[0]-width/2, point[0]+width/2)
             self.ax.set_ylim(point[1]-height/2, point[1]+height/2)
+        report = rock_report(self.setup, self.prepared, self.selected_id, self.scene)
+        if report and report not in self.context_label.text():
+            self.context_label.setText(self.context_label.text()+'\n'+report)
+        summary = self._matched_summary()
+        self.comparison_label.setText(summary)
+        if summary and self.playback is not None and summary not in self.scene.result_info.get_text():
+            self.scene.result_info.set_text(self.scene.result_info.get_text()+'\n'+summary)
         self.canvas.draw_idle()
 
     def draw_starting_velocities(self):
@@ -803,8 +838,9 @@ class Observatory(QMainWindow):
                 continue
             parent = self.prepared.body_ids.index(reference) if reference in self.prepared.body_ids else None
             velocity = self.prepared.system.v[i]-(self.prepared.system.v[parent] if parent is not None else 0)
+            displayed = np.asarray(self.scene.transform.vectors(velocity), dtype=float)
             anchor = self.scene.positions[i]
-            tip = self.ax.transData.inverted().transform(self.ax.transData.transform(anchor)+velocity*12)
+            tip = self.ax.transData.inverted().transform(self.ax.transData.transform(anchor)+displayed*12)
             arrow = FancyArrowPatch(anchor, tip, arrowstyle='->', mutation_scale=11,
                 color=ACCENT if key == self.selected_id else '#6593a5', linewidth=1.1, zorder=9)
             self.ax.add_patch(arrow)
@@ -1412,6 +1448,42 @@ class Observatory(QMainWindow):
             f'Recorded through {run.actual_end_time:.6g} yr\nSource {run.setup_digest[:12]}')
         self.refresh_scene()
 
+    def _matched_summary(self):
+        recordings = self.session.recordings if self.session else ()
+        if getattr(self, '_comparison_key', None) is not recordings:
+            self._comparison_key = recordings
+            self._comparison_text = comparison_readout(recordings)
+        return self._comparison_text
+
+    def toggle_rotating_view(self):
+        if not self.session or self.pending_body or self.scene.rotating_reason:
+            if self.session and self.scene.rotating_reason:
+                self.tell(self.scene.rotating_reason)
+            return
+        mode = 'sun-relative' if self.scene.frame_mode == 'rotating' else 'rotating'
+        self.scene.set_frame_mode(mode)
+        if self.following:
+            self.refresh_scene()
+        else:
+            self.fit_view()
+        self.sync_controls()
+        self.tell(self.scene.heading.get_text().replace('\n', ' '))
+
+    def prepare_matched_control(self):
+        if not self.session or self.pending_body:
+            return
+        try:
+            control = matched_control(self.setup)
+        except ValueError as exc:
+            self.tell(exc)
+            return
+        self.stop_activity()
+        self.apply_setup(control)
+        self.tell('Matched no-Jupiter control. Rock vectors and the fixed step match the Sun–Jupiter setup; '
+                  'Jupiter is removed and its gravity is absent. Rotating view is unavailable. '
+                  'Calculate the same duration to compare the shared recorded time. '
+                  'A halt or a shorter run is not an equal-time result.')
+
     def fit_view(self):
         if self.session:
             self.following = False
@@ -1560,7 +1632,8 @@ class Observatory(QMainWindow):
         i = self.prepared.body_ids.index(key)
         reference = self.prepared.reference_ids[i]
         parent = self.prepared.body_ids.index(reference) if reference in self.prepared.body_ids else None
-        velocity = (tip-self.ax.transData.transform(self.scene.positions[i]))/12
+        displayed = (tip-self.ax.transData.transform(self.scene.positions[i]))/12
+        velocity = np.asarray(self.scene.transform.inverse_vectors(displayed), dtype=float)
         world_velocity = velocity+(self.prepared.system.v[parent] if parent is not None else 0)
         try:
             self.apply_setup(update_body(self.setup, key, velocity=world_velocity))

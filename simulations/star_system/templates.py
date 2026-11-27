@@ -38,6 +38,12 @@ EXPERIMENTS = (
         'The Solar System with 32 massless test particles in a ring at 3.2 AU.',
         'Watch the initially circular ring change under planetary gravity. '
         'This demonstrates perturbations; it does not promise asteroid capture.'),
+    ExperimentTemplate('sun-jupiter-ring', 'Sun–Jupiter ring',
+        'The Sun and Jupiter, with 32 mass-zero rocks evenly spaced at 3.2 AU (seed 7). '
+        'Collision mode is none. Rocks feel Newtonian gravity and attract nothing.',
+        'Use Rotating view to hold the Sun–Jupiter direction fixed. Hollow L4 and L5 marks are guides, not rocks. '
+        'Select a rock to read its separation from Jupiter and the trail duration. '
+        'Matched no-Jupiter run keeps the same rock vectors. These starts do not promise capture.'),
     ExperimentTemplate(SCENARIO_KEY, MERGER_TITLE, MERGER_DESCRIPTION, MERGER_OBSERVE),
 )
 
@@ -56,6 +62,11 @@ def get_experiment(key='solar-system'):
     definition = next((item for item in EXPERIMENTS if item.key == key), None)
     if definition is None:
         raise ValueError(f'Unknown experiment: {key}.')
+    if key == 'sun-jupiter-ring':
+        from .jupiter_experiment import ring_setup
+        result = ring_setup()
+        build_system(result)
+        return result
     if key == SCENARIO_KEY:
         result = binary_star_merger_setup()
         build_system(result)

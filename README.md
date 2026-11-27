@@ -11,7 +11,7 @@ One year of the Sun, Earth, and Jupiter, rendered by `sidereel-cli`.
 - Unsoftened Newtonian gravity in the plane. Masses pull on each other. Test particles only fall.
 - A fixed-step Yoshida integrator. A close encounter halts the run and keeps the last good state.
 - A PyQt6 window filled by the sky. Menu, or M, lays a sidebar over the scene. The view stays put.
-- Six starting experiments: the Solar System, a star at twice the Sun's mass, Earth and the Moon, 32 asteroids in a ring at 3.2 AU, a Sun–Jupiter ring with seed 7, and a head-on merger of two solar-type stars.
+- Six starting experiments: the Solar System, a star at twice the Sun's mass, Earth and the Moon, 32 asteroids in a ring at 3.2 AU, a Sun–Jupiter rock ring with seed 7, and a head-on merger of two solar-type stars.
 - Add a moon by choosing its planet and a center-to-center distance in kilometers. Gravity moves the moon after that; the planet does not hold it in place.
 - Add a catalog or custom body while a run is paused. Drop it in the scene, drag the velocity arrow, then confirm. The clock and the other bodies stay put. Reset returns to the starting setup.
 - A CLI that integrates the system and writes a PNG. No display required.
@@ -53,6 +53,8 @@ sidereel
 ```
 
 You get the experiment list, including the Solar System and a Sun–Jupiter ring. Save initial setup stores the beginning. Save current state as new setup stores the evolved system under a new name. `sidereel-cli` with no arguments opens the same window.
+
+Sun–Jupiter ring places 32 mass-zero rocks evenly around the Sun at 3.2 AU (seed 7). Rotating view keeps the Sun–Jupiter direction fixed. Hollow L4 and L5 marks are geometric guides, not rocks. Select a rock to read its separation from Jupiter and how long the drawn trail is. Matched no-Jupiter run uses the same rock starting vectors. Collision mode is none, and a halt or a shorter run is labeled as incomplete.
 
 Add body works in the starting setup and during a paused run. A click drops the body, the arrow sets its speed and direction, and confirm adds it without rewinding the clock. The circular arrow is only a two-body start around the body you pick, including a second star. Reset drops a live insertion and returns to the starting setup.
 
