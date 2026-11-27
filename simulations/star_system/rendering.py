@@ -355,7 +355,9 @@ class Scene:
         label = LABELS[self.frame_mode]
         if self.frame_mode == 'sun-relative':
             label = prepared.body_specs[origin_index].name+'-relative / inertial axes'
-        self.heading.set_text(label+('\nModel: perfect_merge' if prepared.setup is not None and prepared.setup.collision_mode == 'perfect_merge' else ''))
+        mode = prepared.setup.collision_mode if prepared.setup is not None else 'none'
+        model = f'\nModel: {mode}' if mode in ('perfect_merge', 'binary_star_merger') else ''
+        self.heading.set_text(label+model)
         self._update_reference_guides()
         for i, (key, spec) in enumerate(zip(prepared.body_ids, prepared.body_specs)):
             if spec.kind == 'particle' or key not in self.artists_by_id:

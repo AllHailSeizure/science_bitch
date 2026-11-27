@@ -42,6 +42,11 @@ def capture_current_setup(prepared, initial_setup, name):
         provenance['capture_note'] += ' Smaller fixed dt required by current moon period / 600.'
     if initial_setup.preset_id or initial_setup.provenance.get('origin_preset'):
         provenance['origin_preset'] = initial_setup.preset_id or initial_setup.provenance['origin_preset']
+    # A captured epoch of the published stellar merger keeps that model id.
+    # It does not become a general stellar-contact rule.
+    merger_model = initial_setup.provenance.get('merger_model')
+    if isinstance(merger_model, str):
+        provenance['merger_model'] = merger_model
     from .collisions import CollisionEvent
     inherited = initial_setup.provenance.get('collision_events', ())
     if not isinstance(inherited, (tuple, list)):
