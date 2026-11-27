@@ -580,3 +580,172 @@ def test_playback_stays_reachable_with_a_long_body_list(window, qtapp):
     assert window.run_button.isEnabled()
     assert window.sidebar.isAncestorOf(window.catalog)
     assert window.tabs.currentIndex() == 0
+
+
+def _open_lunar_catalog(window, qtapp):
+    open_solar(window, qtapp)
+    window.select_body('earth')
+    window.tabs.setCurrentIndex(1)
+    window.catalog.type_combo.setCurrentText('Lunar')
+    window.catalog.body_combo.setCurrentIndex(window.catalog.body_combo.findData('moon'))
+    qtapp.processEvents()
+
+
+def test_adding_a_catalog_moon_uses_an_explicit_parent_and_kilometer_distance(window, qtapp):
+    from simulations.star_system.data import AU_KM
+    _open_lunar_catalog(window, qtapp)
+    names = [window.catalog.body_combo.itemData(i) for i in range(window.catalog.body_combo.count())]
+    assert {'moon', 'io', 'europa', 'ganymede', 'callisto', 'titan'} <= set(names)
+    assert window.catalog.distance_box.isVisible()
+    assert window.catalog.reference_label.text() == 'Parent planet'
+    parents = [window.catalog.reference_combo.itemData(i) for i in range(window.catalog.reference_combo.count())]
+    assert parents and 'sun' not in parents and None not in parents and 'earth' in parents
+    assert window.catalog.reference_combo.currentData() == 'earth'
+    assert 'kilometer' in window.catalog.note.text().lower()
+    assert 'not' in window.catalog.note.text().lower() and 'star' in window.catalog.note.text().lower()
+
+    before = setup_digest(window.setup)
+    window.catalog.add_button.click()
+    assert window.pending_body is None and setup_digest(window.setup) == before
+    assert 'kilometer' in window.notice.text().lower()
+
+    window.catalog.distance.setValue(384400)
+    earth = window.prepared.body_ids.index('earth')
+    earth_r = window.prepared.system.r[earth].copy()
+    saved_r, saved_v = window.prepared.system.r.copy(), window.prepared.system.v.copy()
+    window.catalog.add_button.click()
+    assert window.pending_body is not None and window.pending_body['distance_km'] == 384400
+    notice = window.notice.text()
+    assert '384,400 km' in notice
+    assert f'{earth_r[0]:.4g}' in notice and 'AU' in notice
+    assert 'not' in notice.lower()
+
+    direction = np.array([1.0, 0.5])
+    window.place_at(earth_r+direction)
+    moon = window.prepared.body_ids.index(window.selected_id)
+    relative = window.prepared.system.r[moon]-window.prepared.system.r[earth]
+    expected = direction/np.linalg.norm(direction)*384400/AU_KM
+    np.testing.assert_allclose(relative, expected, rtol=0, atol=1e-12)
+    assert window.prepared.reference_ids[moon] == 'earth'
+    assert window.setup.bodies[-1].spec.kind == 'moon'
+    assert np.linalg.norm(window.setup.bodies[-1].r) == pytest.approx(384400/AU_KM)
+    np.testing.assert_array_equal(window.prepared.system.r[:-1], saved_r)
+    np.testing.assert_array_equal(window.prepared.system.v[:-1], saved_v)
+    assert window.prepared.system.time == 0
+    text = window.context_label.text()
+    assert 'Parent: Earth [earth]' in text
+    assert 'Current separation:' in text and 'km' in text and 'AU' in text
+    assert f'{earth_r[0]:.4g}' in text
+    assert 'does not pin' in text
+
+
+def test_invalid_moon_parent_or_distance_leaves_the_setup_unchanged(window, qtapp):
+    from simulations.star_system.data import CATALOG
+    _open_lunar_catalog(window, qtapp)
+    before = setup_digest(window.setup)
+    window.begin_placement({'spec': CATALOG['moon'], 'reference_id': 'sun', 'circular': True,
+                            'velocity': np.zeros(2), 'distance_km': 384400})
+    assert window.pending_body is None
+    assert 'planet' in window.notice.text().lower()
+    assert setup_digest(window.setup) == before
+
+    window.catalog.distance.setValue(100)
+    window.catalog.add_button.click()
+    window.place_at(window.prepared.system.r[window.prepared.body_ids.index('earth')]+(1, 0))
+    assert setup_digest(window.setup) == before
+    assert 'overlap' in window.notice.text().lower()
+    assert window.pending_body is not None
+
+
+def test_authored_moon_velocity_and_parent_survive_an_edit(window, qtapp):
+    window.open_experiment('earth-moon')
+    qtapp.processEvents()
+    window.select_body('moon')
+    window.tabs.setCurrentIndex(2)
+    note = window.properties.note.text()
+    assert 'km' in note and 'not' in note.lower() and 'star' in note.lower()
+    window.properties.name.setText('Custom satellite')
+    window.properties.fields['mass'].setText('1e20')
+    window.properties.fields['vx'].setText('4')
+    window.properties.apply_button.click()
+    from simulations.star_system.data import SOLAR_KG
+    moon = window.prepared.body_ids.index('moon')
+    assert window.prepared.body_specs[moon].name == 'Custom satellite'
+    assert window.prepared.body_specs[moon].kind == 'moon'
+    assert window.prepared.reference_ids[moon] == 'earth'
+    assert window.prepared.system.masses[moon]*SOLAR_KG == pytest.approx(1e20, rel=1e-6)
+    relative = window.prepared.system.v[moon]-window.prepared.system.v[window.prepared.body_ids.index('earth')]
+    from simulations.star_system.desktop_panels import AUYR_TO_KMS
+    assert relative[0]*AUYR_TO_KMS == pytest.approx(4)
+
+
+def test_moon_separation_stays_current_while_running_paused_stepping_and_recorded(window, qtapp):
+    window.open_experiment('earth-moon')
+    qtapp.processEvents()
+    window.select_body('moon')
+    earth = window.prepared.body_ids.index('earth')
+    moon = window.prepared.body_ids.index('moon')
+
+    def separation_text_matches_world():
+        distance = np.linalg.norm(window.prepared.system.r[moon]-window.prepared.system.r[earth])
+        from simulations.star_system.data import AU_KM
+        text = window.context_label.text()
+        assert f'Current separation: {distance*AU_KM:,.6g} km' in text
+        assert f'({distance:.6g} AU)' in text
+        assert 'Parent: Earth [earth]' in text
+        return distance
+
+    initial = window.prepared.system.r[moon]-window.prepared.system.r[earth]
+    separation_text_matches_world()
+    window.run_button.click()
+    assert window.running and window.run_button.text() == 'Pause'
+    window.advance_live(2)
+    window.run_button.click()
+    assert not window.running and window.run_button.text() == 'Resume'
+    moved = window.prepared.system.r[moon]-window.prepared.system.r[earth]
+    assert not np.allclose(moved, initial)
+    assert window.prepared.reference_ids[moon] == 'earth'
+    separation_text_matches_world()
+
+    window.toggle_follow()
+    width = np.ptp(window.ax.get_xlim())
+    center = window.scene.positions[moon]
+    assert abs(np.mean(window.ax.get_xlim())-center[0]) < 1e-6
+    window.on_scroll(SimpleNamespace(inaxes=window.ax, xdata=center[0], ydata=center[1], step=1))
+    assert np.ptp(window.ax.get_xlim()) < width
+    window.step_button.click()
+    assert not window.running
+    center = window.scene.positions[moon]
+    assert abs(np.mean(window.ax.get_xlim())-center[0]) < 1e-6
+    assert abs(np.mean(window.ax.get_ylim())-center[1]) < 1e-6
+    separation_text_matches_world()
+
+    window.duration.setValue(window.prepared.system.dt*3)
+    window.stride.setValue(1)
+    window.start_calculation()
+    for _ in range(20):
+        if window.calculation is None or window.calculation.done:
+            break
+        window.tick()
+    assert window.playback is not None and window.calculation.done
+    separation_text_matches_world()
+    window.step_button.click()
+    assert window.prepared.system.time > window.playback.recording.frames[0].time
+    separation_text_matches_world()
+    center = window.scene.positions[moon]
+    assert abs(np.mean(window.ax.get_xlim())-center[0]) < 1e-6
+
+
+def test_missing_moon_parent_is_reported_without_a_substitute(window, qtapp):
+    from dataclasses import replace
+    window.open_experiment('earth-moon')
+    qtapp.processEvents()
+    window.select_body('moon')
+    refs = list(window.prepared.reference_ids)
+    refs[window.prepared.body_ids.index('moon')] = 'removed-parent'
+    window.session.prepared = replace(window.prepared, reference_ids=tuple(refs))
+    window.refresh_inspection()
+    text = window.context_label.text()
+    assert 'removed-parent' in text
+    assert 'missing' in text.lower()
+    assert 'Earth' not in text.split('Parent', 1)[-1]

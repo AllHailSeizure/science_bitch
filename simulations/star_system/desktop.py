@@ -24,9 +24,10 @@ from PyQt6.QtWidgets import (
 from .collisions import advance_prepared, mapped_selection
 from .context import selection_context
 from .core import System
+from .data import AU_KM
 from .desktop_panels import AUYR_TO_KMS, BodyCatalog, BodyInformation, BodyProperties, Dropdown, action, label, spin
 from .experiments import ExperimentSession, capture_current_setup, custom_copy
-from .history import MAX_HISTORY, StateFrame
+from .history import MAX_HISTORY, StateFrame, relative_state
 from .initialization import PreparedSystem, circular_relative_velocity, insert_body
 from .jupiter_experiment import assumptions_text, comparison_readout, is_jupiter_experiment, matched_control, rock_report
 from .model import InitialBody
@@ -606,12 +607,15 @@ class Observatory(QMainWindow):
         spec = self.prepared.body_specs[i]
         self.body_information.set_spec(spec)
         reference = self.prepared.reference_ids[i]
-        text = 'No parent is assigned.'
-        if reference in self.prepared.body_ids:
-            j = self.prepared.body_ids.index(reference)
-            distance = np.linalg.norm(self.prepared.system.r[i]-self.prepared.system.r[j])
-            speed = np.linalg.norm(self.prepared.system.v[i]-self.prepared.system.v[j])*AUYR_TO_KMS
-            text = f'Relative to {self.prepared.body_specs[j].name}\nSeparation: {distance:,.6g} AU\nSpeed: {speed:,.6g} km/s'
+        if spec.kind == 'moon':
+            text = self._moon_inspection(self.selected_id)
+        else:
+            text = 'No parent is assigned.'
+            if reference in self.prepared.body_ids:
+                j = self.prepared.body_ids.index(reference)
+                distance = np.linalg.norm(self.prepared.system.r[i]-self.prepared.system.r[j])
+                speed = np.linalg.norm(self.prepared.system.v[i]-self.prepared.system.v[j])*AUYR_TO_KMS
+                text = f'Relative to {self.prepared.body_specs[j].name}\nSeparation: {distance:,.6g} AU\nSpeed: {speed:,.6g} km/s'
         children = sum(ref == self.selected_id for ref in self.prepared.reference_ids)
         text += f'\nOrbiting bodies in this setup: {children}'
         text += '\nOrbit curves are instantaneous two-body estimates.'
@@ -898,14 +902,56 @@ class Observatory(QMainWindow):
         self.refresh_scene()
         self.sync_controls()
 
+    def _moon_parent_index(self, payload):
+        reference = payload.get('reference_id')
+        if reference not in self.prepared.body_ids:
+            return None
+        index = self.prepared.body_ids.index(reference)
+        spec = self.prepared.body_specs[index]
+        if spec.kind != 'planet' or not spec.mass or spec.mass <= 0:
+            return None
+        return index
+
+    def _moon_inspection(self, body_id):
+        relative = relative_state(StateFrame.capture(self.prepared), body_id)
+        if relative is None:
+            return 'Parent: none. This moon is not assigned to a planet and is not held in place.'
+        if relative.missing:
+            return (f'Parent {relative.reference_id}: missing or removed. '
+                    'No other body is substituted, and the moon is not held in place.')
+        parent = self.prepared.body_ids.index(relative.reference_id)
+        position = self.prepared.system.r[parent]
+        return (f'Parent: {relative.reference_name} [{relative.reference_id}]\n'
+                f'Current separation: {relative.separation*AU_KM:,.6g} km ({relative.separation:.6g} AU)\n'
+                f'Parent system position: ({position[0]:.4g}, {position[1]:.4g}) AU\n'
+                'Separation is the current center-to-center distance. The parent does not pin the moon.')
+
     def begin_placement(self, payload):
         calculating = self.calculation is not None and not self.calculation.done
         if self.playback is not None or calculating:
             self.tell('Leave the recording or the calculation before adding a body.')
             return
-        if payload['circular'] and payload['reference_id'] is None:
+        if payload['spec'].kind == 'moon':
+            if self._moon_parent_index(payload) is None:
+                self.tell('Choose a planet as the moon parent. Stars, particles, and world coordinates are not moon parents.')
+                return
+            distance = payload.get('distance_km') or 0
+            if not np.isfinite(distance) or distance <= 0:
+                self.tell('Enter the moon\'s distance from its parent planet in kilometers. '
+                          'That distance is center-to-center, not the planet\'s position from its star.')
+                return
+            index = self._moon_parent_index(payload)
+            parent = self.prepared.body_specs[index]
+            position = self.prepared.system.r[index]
+            prompt = (f'Click to choose the direction of {payload["spec"].name} from {parent.name}. '
+                      f'Distance stays {distance:,.6g} km from {parent.name}\'s center, '
+                      f'not {parent.name}\'s system position ({position[0]:.4g}, {position[1]:.4g}) AU. '
+                      'Escape cancels.')
+        elif payload['circular'] and payload['reference_id'] is None:
             self.tell('Choose a body for the initial orbit, or choose manual starting motion.')
             return
+        else:
+            prompt = None
         had_arrow = self.live_draft is not None
         self.live_draft = None
         self._live_preview_v = None
@@ -913,13 +959,13 @@ class Observatory(QMainWindow):
         if self.editing:
             self._resume_on_cancel = False
             self.tabs.setCurrentIndex(0)
-            self.tell(f'Click in the scene to place {payload["spec"].name}. Escape cancels without changing the setup.')
+            self.tell(prompt or f'Click in the scene to place {payload["spec"].name}. Escape cancels without changing the setup.')
         else:
             self._resume_on_cancel = self.running
             self.running = False
             self.pending_time = 0.
-            self.tell(f'Evolution paused at {self.prepared.system.time:.6g} yr. '
-                      f'Click the scene to place {payload["spec"].name}. Escape cancels.')
+            paused = f'Evolution paused at {self.prepared.system.time:.6g} yr. '
+            self.tell(paused+prompt if prompt else paused+f'Click the scene to place {payload["spec"].name}. Escape cancels.')
         self.canvas.setCursor(Qt.CursorShape.CrossCursor)
         self.sync_controls()
         if had_arrow:
@@ -946,10 +992,22 @@ class Observatory(QMainWindow):
         if not self.pending_body:
             return
         payload = self.pending_body
+        world = np.asarray(world, dtype=float)
+        if payload['spec'].kind == 'moon':
+            index = self._moon_parent_index(payload)
+            if index is None:
+                self.tell('Choose a planet as the moon parent. Stars, particles, and world coordinates are not moon parents.')
+                return
+            parent_r = self.prepared.system.r[index]
+            direction = world-parent_r
+            norm = np.linalg.norm(direction)
+            direction = direction/norm if norm > 0 else np.array([1., 0.])
+            world = parent_r+direction*(payload['distance_km']/AU_KM)
         if not self.editing:
             self._place_live(world, payload)
             return
         try:
+            old_dt = self.setup.dt
             candidate = place_body(self.setup, payload['spec'], world, payload['reference_id'],
                 circular=payload['circular'], velocity=payload['velocity'])
             self.selected_id = candidate.bodies[-1].id
@@ -957,7 +1015,14 @@ class Observatory(QMainWindow):
             self.preview_marker.set_data([], [])
             self.canvas.unsetCursor()
             self.apply_setup(candidate)
-            self.tell('Body added to the starting setup. Select it to edit, or press Run.')
+            if payload['spec'].kind == 'moon':
+                text = (f'{payload["spec"].name} added {payload["distance_km"]:,.6g} km from its parent. '
+                        'Gravity will move it; the parent does not hold it in place.')
+                if candidate.dt < old_dt:
+                    text += f' Fixed timestep is {candidate.dt:.6g} yr so the shorter orbit can be resolved.'
+                self.tell(text)
+            else:
+                self.tell('Body added to the starting setup. Select it to edit, or press Run.')
         except (ValueError, OverflowError) as exc:
             self.tell(str(exc)+' Choose another position, or Escape to cancel.')
 
