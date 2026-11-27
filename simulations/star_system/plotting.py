@@ -148,8 +148,33 @@ class App:
         from dataclasses import replace
         from .experiments import custom_copy
         self.select_setup(custom_copy(replace(self.initial_setup, collision_mode=mode), self.initial_setup))
+        note = ''
+        if self.initial_setup.tides.enabled and mode != 'none':
+            note = ' Tidal dissipation stays stored but is not applied inside the contact solver.'
+        elif self.initial_setup.tides.enabled:
+            note = ' Tidal dissipation stays on for this Yoshida run.'
         self.status.set_text(f'Collision mode {mode}; reset to starting setup in preparation. '
-                            'Perfect merge: nonstellar spheres / point tracers; stellar contact halts (#14).')
+                            'Perfect merge: nonstellar spheres / point tracers; stellar contact halts (#14).'+note)
+        self._refresh()
+
+    def set_tides(self, enabled):
+        """Store close-pass tidal dissipation on this experiment and reset to the start."""
+        from dataclasses import replace
+        from .experiments import custom_copy
+        from .model import TidalPolicy
+        if type(enabled) is not bool:
+            raise ValueError('Tidal dissipation must be explicitly on or off.')
+        current = self.initial_setup.tides
+        mode = self.initial_setup.collision_mode
+        tides = current if enabled and current.enabled else (TidalPolicy(enabled=True) if enabled else TidalPolicy())
+        self.select_setup(custom_copy(replace(self.initial_setup, tides=tides), self.initial_setup))
+        if tides.enabled and mode != 'none':
+            note = 'Tidal dissipation is stored and is not applied inside the contact solver.'
+        elif tides.enabled:
+            note = f'Tidal dissipation on ({tides.version}); reset to the starting setup.'
+        else:
+            note = 'Tidal dissipation off; reset to the starting setup.'
+        self.status.set_text(note)
         self._refresh()
 
     def save_current_setup(self, path, name):

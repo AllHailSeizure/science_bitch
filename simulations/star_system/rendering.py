@@ -357,7 +357,13 @@ class Scene:
             label = prepared.body_specs[origin_index].name+'-relative / inertial axes'
         mode = prepared.setup.collision_mode if prepared.setup is not None else 'none'
         model = f'\nModel: {mode}' if mode in ('perfect_merge', 'binary_star_merger') else ''
-        self.heading.set_text(label+model)
+        tide = ''
+        if prepared.setup is not None and prepared.setup.tides.enabled:
+            if mode == 'none':
+                tide = f'\nTides: {prepared.setup.tides.version}'
+            else:
+                tide = '\nTides stored, not applied in the contact solver'
+        self.heading.set_text(label+model+tide)
         self._update_reference_guides()
         for i, (key, spec) in enumerate(zip(prepared.body_ids, prepared.body_specs)):
             if spec.kind == 'particle' or key not in self.artists_by_id:

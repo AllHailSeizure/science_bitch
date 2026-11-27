@@ -108,7 +108,8 @@ def compare_recordings(first, second):
         raise ValueError('The Jupiter treatment no longer matches the paired source. Make a new comparison from the edited setup.')
     expected = set(original.body_ids)-{jupiter}
     if (set(control.body_ids) != expected or setups[0].collision_mode != setups[1].collision_mode
-            or setups[0].collision_policy != setups[1].collision_policy):
+            or setups[0].collision_policy != setups[1].collision_policy
+            or setups[0].tides != setups[1].tides):
         raise ValueError('Matched initial bodies/model settings were changed.')
     for key in control.body_ids:
         i, j = original.body_ids.index(key), control.body_ids.index(key)

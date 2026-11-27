@@ -500,9 +500,10 @@ period/1200 is compared with the position from Kepler's equation
 M = E - e sin E, using the same implemented mu as the integrator. The measured
 separation is about 2e-8 AU; the bound is 1e-6 AU.
 
-These conservation/accuracy checks apply to collision-free evolution. The optional
+These conservation/accuracy checks apply to collision-free, tide-free evolution. The optional
 nonstellar contact model below has different numerics and conservation limits.
-There are no tides, relativity, stellar evolution, 3D, or scripted capture outcomes.
+Relativity, stellar evolution, 3D, and scripted capture outcomes are not modeled.
+Optional close-pass tides are a separate experiment choice and stay off in these checks.
 
 ### Optional idealized nonstellar contacts
 
@@ -547,8 +548,9 @@ lost relative translational kinetic energy is
 `0.5*m1*m2/(m1+m2)*|v1-v2|**2`). The orbital-angular-momentum residual about the
 COM is recorded as **unmodeled internal spin**. Total energy and modeled orbital
 angular momentum are not claimed conserved across merges. Heat, spin evolution,
-ejecta, fragmentation, erosion, hit-and-run, tides and stellar impact physics are
-absent. Real planetary impacts have several outcome regimes; see
+ejecta, fragmentation, erosion, hit-and-run, and stellar impact physics are
+absent from this contact model. Optional close-pass tides are a separate choice
+and are not applied inside this solver. Real planetary impacts have several outcome regimes; see
 [Leinhardt & Stewart](https://arxiv.org/abs/1106.6084v3) and
 [Stewart & Leinhardt](https://arxiv.org/abs/1109.4588v3). This option does not
 implement those richer models or cosmological/galaxy collisions.
@@ -651,6 +653,75 @@ unsupported contact and does not build a remnant. Exhausting the solver's
 subdivision budget halts numerically, rolls back the unfinished step, and is
 not labeled a merger. Other stellar types, compact objects, and random
 encounters are outside this scenario.
+
+### Optional close-pass tidal dissipation
+
+`close-pass-energy-dissipation-v1` removes orbital energy when two positive-mass
+bodies pass through a resolved pericenter inside a few radii of the larger body.
+It is off unless the experiment stores an enabled tide policy, so existing
+tide-free trajectories are unchanged. In the Qt observatory, check **Tidal
+dissipation on close passes** and use **Apply collisions + reset**. That stores
+the choice with the other experiment settings and rebuilds the starting setup.
+The legacy controller keeps a saved choice; `App.set_tides(True)` selects the
+default strength and reach and resets to the start. A captured epoch keeps the
+policy that was active.
+
+The loss at one pericenter is `strength * G * (m_j^2 * R_i^5 + m_i^2 * R_j^5) / q^6`,
+with `q` floored at the larger radius. The default strength is 80 and the default
+reach is 6 larger radii. Strength is a dimensionless stand-in for a
+passage-integrated lag. It is not a measured k2/Q. Massless tracers do not
+raise or feel this kick. The relative velocity is scaled about the center of
+mass, so linear momentum is kept, and the removed energy cannot exceed the
+relative kinetic energy. The change in the pair's orbital angular momentum is
+recorded and is not stored as spin. Temperature, spin evolution, and stellar
+structure are omitted.
+
+The kick is applied to the velocity at the end of the fixed Yoshida step that
+contains the inbound-to-outbound crossing. The pericenter is estimated by
+interpolating that sign change across the step. The close-encounter guard is
+unchanged: an unresolved step still halts and keeps the last accepted state,
+and this model does not run. Collision modes `perfect_merge` and
+`binary_star_merger` keep the contact solver and do not apply the kick, even
+if a tide policy is stored on the setup.
+
+This kick is not a 3D or adaptive-step integrator and it does not call REBOUND (#70).
+A fixed step that skips the pericenter, or that estimates it poorly, understates the energy loss,
+so tides are not the dominant capture path for an unresolved encounter.
+It does not change collision rules (#69): perfect merge and the binary-star merger still use the contact solver,
+and a stored tide choice is not applied on that path.
+Fragmentation, hit-and-run, and merger remnants are not tidal outcomes.
+Where an impact would dominate, this model is not the capture path.
+It is not gas drag (#71). There is no disk, and a pass outside the tidal reach loses no energy here.
+Gas drag, fragmenting collisions, and a close-encounter integrator can outweigh this kick;
+none of those are implied by a tidal result.
+A longer encounter in this model is still planar, spin-free, and reversible by a later scattering.
+It is not a permanent capture.
+
+The documented comparison is catalog Jupiter and catalog Earth, with the Sun
+omitted so the energy change is only this kick. Both runs use the same vectors.
+The flyby starts hyperbolic (eccentricity 1.01) at 1.25 times the sum of the
+catalog radii. The eccentric case starts at eccentricity 0.65 and the same
+pericenter distance. `compare_jupiter_earth_passes` integrates the tide run
+until a second pericenter and gives the tide-free flyby that same step count.
+The eccentric pair stops at the first pericenter. A bound flyby or a lower
+eccentricity is a claim only for the run with the model on. Minimum sampled
+separations stay outside contact, so this is not a collision.
+
+```python
+from simulations.star_system.tides import compare_jupiter_earth_passes
+print(compare_jupiter_earth_passes().disclosure)
+```
+
+Measured on this implementation. The flyby rows share 6867 steps (0.00801789 yr). The eccentric rows share 286 steps. Specific energy is the Earth–Jupiter two-body value.
+
+| Run | Pericenters | Specific energy | Eccentricity | Energy lost |
+| --- | ---: | ---: | ---: | ---: |
+| Flyby, tides off | 1 | +0.296525 | 1.01 | 0 |
+| Flyby, tides on | 2 | -10.0444 | 0.661 | 3.095e-5 |
+| Eccentric, tides off | 1 | -10.3784 | 0.650 | 0 |
+| Eccentric, tides on | 1 | -15.5495 | 0.476 | 1.548e-5 |
+
+The closest sampled separation is about 0.000637 AU, outside the 0.000510 AU sum of the catalog radii. These digits are from this implementation; they are not a cross-platform bitwise guarantee. The checked claims are the energy signs, the pericenter counts, and the drop in eccentricity.
 
 ### Final dependency-stack acceptance audit
 
@@ -785,8 +856,8 @@ roundoff; those values need not decrease monotonically with dt. Sun/Earth/Moon
 and second-star fixtures verify finite mutually forced evolution at this step,
 not long-term stability or guaranteed binding. Resolving a moon can require
 many more steps per simulated year than the surrounding planets; the pacing
-control does not bypass that cost. There are no tides, formation, stellar
-evolution or 3D. Marker overlap has no contact effect. Optional `perfect_merge`
+control does not bypass that cost. These moon checks leave tidal dissipation off.
+Formation, stellar evolution, and 3D are not part of this fixture. Marker overlap has no contact effect. Optional `perfect_merge`
 uses the shared nonstellar response for moons; collision-free moon accuracy
 checks above do not validate a physical impact outcome. Saved/replayed moon
 references and remnant-parent mappings use the same shared workflow.

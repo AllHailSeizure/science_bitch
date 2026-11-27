@@ -17,6 +17,7 @@ One year of the Sun, Earth, and Jupiter, rendered by `sidereel-cli`.
 - A CLI that integrates the system and writes a PNG. No display required.
 - Save the initial setup, or save the current state as a new setup. Calculate a recording, then play the samples. Playback speed does not recalculate the motion.
 - Optional perfect merge for nonstellar contact. Point tracers are absorbed with no mass feedback. Contact with a star halts. The default still halts on a close encounter and does not merge.
+- Optional tidal dissipation on close passes of massive bodies. It is off unless the experiment turns it on, so a tide-free run is unchanged.
 - An isolated planet holds its period to a relative 1e-7. At 1 AU, solar gravity sits about 30 ppm above JPL's GM, inside a 1e-4 bound.
 - A late-stage formation prototype that follows rocky embryos, records which parcels built each body, and compares two runs from one checkpoint.
 

@@ -16,7 +16,7 @@ The questions this prototype can answer are:
 - Do mass, parcel totals, and linear momentum follow the perfect-merge and ejection rules, and does the kinetic-energy drop at a merge match the recorded loss?
 - How much does the first merger time move when the fixed step changes, while the remnant mass stays the combined parcel mass?
 
-Outside this slice: a gas disk and drag, grain growth, a rule for turning a swarm into one body, fragmentation and hit-and-run, three-dimensional orbits, tides, relativity, and stellar mergers.
+Outside this slice: a gas disk and drag, grain growth, a rule for turning a swarm into one body, fragmentation and hit-and-run, three-dimensional orbits, relativity, and stellar mergers. Optional close-pass tidal dissipation is a separate experiment choice and is not turned on here.
 
 ## Benchmark
 

@@ -255,6 +255,15 @@ def advance_prepared(prepared):
     Event clipping uses the same drift polynomial and then integrates remainder.
     """
     if prepared.setup is None or prepared.setup.collision_mode == 'none':
+        # Off, this is the same Yoshida step as before. On, the kick is a
+        # separate velocity update and is not part of the contact solver.
+        if prepared.setup is not None and prepared.setup.tides.enabled:
+            from .tides import dissipate_close_passes
+            start_r = prepared.system.r.copy()
+            start_v = prepared.system.v.copy()
+            prepared.system.step()
+            prepared = dissipate_close_passes(prepared, start_r, start_v)
+            return AdvanceResult(prepared)
         prepared.system.step()
         return AdvanceResult(prepared)
     validate_collision_state(prepared)
