@@ -34,6 +34,7 @@ from .playback import Playback
 from .recording import Calculation, CalculationRequest
 from .rendering import BACKGROUND, ACCENT, draw_system
 from .scenarios import DESCRIPTIONS, JUPITER_RING, get_scenario
+from .stellar_merger import outcome_text
 from .templates import EXPERIMENTS, get_experiment, place_body, remove_body, update_body
 
 
@@ -200,7 +201,7 @@ class Observatory(QMainWindow):
         self.load_button.setMinimumHeight(54)
         layout.addWidget(self.choose_button)
         layout.addWidget(self.load_button)
-        layout.addWidget(label('Every new experiment starts with the Solar System.', 'muted'))
+        layout.addWidget(label('The Solar System is the usual starting point. Binary-star merger is a separate two-star experiment.', 'muted'))
         self.menu_error = label('', 'notice')
         layout.addWidget(self.menu_error)
         outer.addWidget(card, alignment=Qt.AlignmentFlag.AlignHCenter)
@@ -664,9 +665,11 @@ class Observatory(QMainWindow):
         self.heading_label.setText(self.setup.name)
         if self.stack.currentWidget() is self.workspace:
             self.setWindowTitle(self.setup.name)
+        outcome = outcome_text(self.prepared)
         self.time_readout.setText(
             f'{self.prepared.system.time:,.3f} elapsed simulated years\n'
-            f'{self.speed.value():.4g} simulated years per second')
+            f'{self.speed.value():.4g} simulated years per second'
+            + (f'\n{outcome}' if outcome else ''))
 
     def _sync_menu_shortcut(self, _old, new):
         if not hasattr(self, 'menu_shortcut'):

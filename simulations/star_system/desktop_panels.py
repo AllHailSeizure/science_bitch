@@ -98,9 +98,12 @@ def _property_text(spec):
     for field in fields:
         value = getattr(spec, field)
         if value is None:
-            shown = 'Unknown — not estimated'
-            if field == 'radius':
-                shown += '. The marker is a drawing, not a physical radius'
+            if field == 'temperature':
+                shown = 'unknown'
+            else:
+                shown = 'Unknown — not estimated'
+                if field == 'radius':
+                    shown += '. The marker is a drawing, not a physical radius'
         else:
             shown = f'{value*conversions[field]:,.5g} {units[field]}'
         lines.append(f'{titles[field]}: {shown}')
@@ -115,6 +118,8 @@ def _property_text(spec):
         lines.append(f'  {detail}')
         if source.url:
             lines.append(f'  {source.url}')
+    if spec.kind == 'star' and spec.catalog_key is None and spec.provenance and spec.provenance != 'catalog':
+        lines.append(spec.provenance)
     return '\n'.join(lines)
 
 
