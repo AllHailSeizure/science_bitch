@@ -9,6 +9,8 @@ from .experiments import custom_copy
 from .initialization import build_system, circular_relative_velocity, legacy_setup, recommended_moon_step
 from .model import InitialBody, PopulationSpec, PropertySource
 from .populations import Population
+from .stellar_merger import DESCRIPTION as MERGER_DESCRIPTION, OBSERVE as MERGER_OBSERVE
+from .stellar_merger import SCENARIO_KEY, TITLE as MERGER_TITLE, binary_star_merger_setup
 
 SOLAR_PLANETS = ('mercury', 'venus', 'earth', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune')
 
@@ -36,6 +38,7 @@ EXPERIMENTS = (
         'The Solar System with 32 massless test particles in a ring at 3.2 AU.',
         'Watch the initially circular ring change under planetary gravity. '
         'This demonstrates perturbations; it does not promise asteroid capture.'),
+    ExperimentTemplate(SCENARIO_KEY, MERGER_TITLE, MERGER_DESCRIPTION, MERGER_OBSERVE),
 )
 
 
@@ -53,6 +56,10 @@ def get_experiment(key='solar-system'):
     definition = next((item for item in EXPERIMENTS if item.key == key), None)
     if definition is None:
         raise ValueError(f'Unknown experiment: {key}.')
+    if key == SCENARIO_KEY:
+        result = binary_star_merger_setup()
+        build_system(result)
+        return result
     setup = _solar_system()
     if key == 'heavier-star':
         setup = update_body(setup, 'sun', spec=override_properties(CATALOG['sun'], mass=2.))

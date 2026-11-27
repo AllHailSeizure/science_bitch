@@ -11,7 +11,7 @@ One year of the Sun, Earth, and Jupiter, rendered by `sidereel-cli`.
 - Unsoftened Newtonian gravity in the plane. Masses pull on each other. Test particles only fall.
 - A fixed-step Yoshida integrator. A close encounter halts the run and keeps the last good state.
 - A PyQt6 window filled by the sky. Menu, or M, lays a sidebar over the scene. The view stays put.
-- Five starting experiments: the Solar System, a star at twice the Sun's mass, Earth and the Moon, 32 asteroids in a ring at 3.2 AU, and a Sun–Jupiter ring with seed 7.
+- Six starting experiments: the Solar System, a star at twice the Sun's mass, Earth and the Moon, 32 asteroids in a ring at 3.2 AU, a Sun–Jupiter ring with seed 7, and a head-on merger of two solar-type stars.
 - Add a moon by choosing its planet and a center-to-center distance in kilometers. Gravity moves the moon after that; the planet does not hold it in place.
 - A CLI that integrates the system and writes a PNG. No display required.
 - Save the initial setup, or save the current state as a new setup. Calculate a recording, then play the samples. Playback speed does not recalculate the motion.

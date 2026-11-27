@@ -202,6 +202,10 @@ def _contacts(prepared, acceleration, h, policy):
 
 def _respond(prepared, contacts):
     """Connected massive groups, then point absorptions, all ordered by ID."""
+    from .stellar_merger import respond_if_stellar_scenario
+    handled = respond_if_stellar_scenario(prepared, contacts)
+    if handled is not None:
+        return handled
     masses = dict(zip(prepared.body_ids, prepared.system.masses))
     specs = dict(zip(prepared.body_ids, prepared.body_specs))
     if any(specs[a].kind == 'star' or specs[b].kind == 'star' for _, a, b in contacts):

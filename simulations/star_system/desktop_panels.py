@@ -82,6 +82,8 @@ class BodyInformation(QWidget):
         text = f'{spec.kind.title()}\nMass: {mass}\nRadius: {radius}'
         if spec.kind == 'star':
             text += f'\nTemperature: {spec.temperature:,.0f} K' if spec.temperature else '\nTemperature: unknown'
+        if spec.kind == 'star' and spec.catalog_key is None and spec.provenance:
+            text += '\n' + spec.provenance
         self.details.setText(text)
 
 

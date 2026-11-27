@@ -140,8 +140,8 @@ class InitialSetup:
             raise ValueError('A setup needs a name and at least one body.')
         if not np.isfinite(self.dt) or self.dt <= 0:
             raise ValueError('Fixed dt must be finite and positive (years).')
-        if self.collision_mode not in ('none', 'perfect_merge'):
-            raise ValueError('Supported collision modes: none, perfect_merge.')
+        if self.collision_mode not in ('none', 'perfect_merge', 'binary_star_merger'):
+            raise ValueError('Supported collision modes: none, perfect_merge, binary_star_merger.')
         if not isinstance(self.collision_policy, CollisionPolicy):
             raise ValueError('A supported CollisionPolicy is required.')
         if not isinstance(self.provenance, Mapping):
