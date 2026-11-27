@@ -2,8 +2,8 @@
 
 Only ``collision_mode='binary_star_merger'`` with model id
 ``solar-type-head-on-contact-v1`` uses this response. Other stellar contact,
-including ``perfect_merge``, still halts. This is not a rule for every pair
-of touching stars.
+including ``perfect_merge`` and ``speed_angle``, is logged as unmodeled and the
+run continues. This is not a rule for every pair of touching stars.
 """
 import hashlib
 import math

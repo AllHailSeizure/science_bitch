@@ -398,6 +398,7 @@ class Observatory(QMainWindow):
         self.collision_mode = Dropdown()
         self.collision_mode.addItem('None', 'none')
         self.collision_mode.addItem('Perfect merge', 'perfect_merge')
+        self.collision_mode.addItem('Speed and angle', 'speed_angle')
         collision.addWidget(self.collision_mode, 1)
         self.collision_button = action('Apply collisions + reset', self.apply_collision_mode)
         collision.addWidget(self.collision_button)
@@ -405,11 +406,12 @@ class Observatory(QMainWindow):
         self.tides_check = QCheckBox('Tidal dissipation on close passes')
         form.addWidget(self.tides_check)
         self.collision_note = label(
-            'Choose none or perfect merge, and whether close passes lose tidal energy, then apply. '
+            'Choose none, perfect merge, or speed and angle, and whether close passes lose tidal energy, then apply. '
             'Applying resets to the starting setup and keeps earlier recordings. '
-            'Tidal dissipation is off unless checked. It is not part of perfect merge. '
-            'Perfect merge joins nonstellar bodies on contact and absorbs point tracers with no mass feedback. '
-            'Particle/particle contact is ignored. Contact with a star halts. Marker overlap is not a physical collision.',
+            'Tidal dissipation is off unless checked. It is not part of a collision rule. '
+            'Perfect merge keeps one remnant and is not a general collision law. '
+            'Speed and angle merges, grazes, or fragments from impact speed and angle. '
+            'Contact with a star is logged as unmodeled and the run continues. Marker overlap is not a physical collision.',
             'muted')
         form.addWidget(self.collision_note)
         form.addWidget(self.make_calculation_controls())
@@ -664,8 +666,9 @@ class Observatory(QMainWindow):
         self.collision_note.setText(
             f'Active collision mode: {self.setup.collision_mode}. {tide_line}'
             'Apply collisions + reset rebuilds the starting setup, stores the tide checkbox, and keeps earlier recordings. '
-            'Perfect merge joins nonstellar bodies on contact and absorbs point tracers with no mass feedback. '
-            'Particle/particle contact is ignored. Contact with a star halts. Marker overlap is not a physical collision.')
+            'Perfect merge keeps one remnant and is not a general collision law. '
+            'Speed and angle merges below mutual escape, grazes a fast wide impact, and fragments a fast closer impact. '
+            'Contact with a star is logged as unmodeled and the run continues. Marker overlap is not a physical collision.')
         self.calculate_button.setEnabled(not placing)
         self.calculate_button.setText('Cancel calculation' if calculating else 'Calculate')
         if self.running:
@@ -1255,11 +1258,12 @@ class Observatory(QMainWindow):
             self.tell('Cancel or finish the calculation before changing collision handling.')
             return
         mode = self.collision_mode.currentData()
+        from .model import with_collision_rule
         if self.tides_check.isChecked():
             tides = self.setup.tides if self.setup.tides.enabled else TidalPolicy(enabled=True)
         else:
             tides = TidalPolicy()
-        candidate = custom_copy(replace(self.setup, collision_mode=mode, tides=tides), self.setup)
+        candidate = custom_copy(with_collision_rule(replace(self.setup, tides=tides), mode), self.setup)
         previous = self.setup
         try:
             prepared = self.session.select(candidate)
@@ -1284,10 +1288,16 @@ class Observatory(QMainWindow):
         self.refresh_bodies()
         self.refresh_scene()
         self.sync_controls()
-        detail = ('Point masses. A close encounter halts and keeps the last valid state. Marker overlap is not a physical collision.'
-                  if mode == 'none' else
-                  'Perfect merge: nonstellar spheres join on contact; point tracers are absorbed with no mass feedback; '
-                  'particle/particle contact is ignored; contact with a star halts. Stellar mergers are not modeled.')
+        if mode == 'none':
+            detail = 'Point masses. A close encounter halts and keeps the last valid state. Marker overlap is not a physical collision.'
+        elif mode == 'perfect_merge':
+            detail = 'Perfect merge: one remnant keeps the mass. This is not a general collision law. '
+        else:
+            detail = ('Speed and angle: merge at or below mutual escape, graze above escape when the impact parameter is at least 0.5, '
+                      'otherwise fragment into tracked bodies and record the lost mass. ')
+        if mode != 'none':
+            detail += ('Point tracers are absorbed by a nonstellar body with no mass feedback. Particle/particle contact is ignored. '
+                       'Contact with a star is logged as unmodeled and the run continues. Stellar mergers are not this rule.')
         self.tell(f'Collision mode {mode}. Reset to the starting setup. {detail} Earlier recordings keep their own mode.')
 
     def edit_starting_setup(self):
@@ -1352,10 +1362,18 @@ class Observatory(QMainWindow):
             if completed and budget_seconds is not None and time.monotonic()-started >= budget_seconds:
                 break
             try:
+                before = len(self.prepared.events)
                 result = advance_prepared(self.prepared)
                 self.session.prepared = result.prepared
                 self.history.extend(result.event_frames)
                 completed += 1
+                fresh = self.prepared.events[before:]
+                contact = [event for event in fresh if event.kind in
+                           ('merge', 'fragment', 'graze', 'unmodeled', 'absorption', 'stellar_merger')]
+                if contact:
+                    self.tell(contact[-1].message)
+                elif fresh:
+                    self.tell(fresh[-1].message)
             except ValueError as exc:
                 self.running = False
                 self.tell(f'Simulation halted at the last valid state: {exc}')

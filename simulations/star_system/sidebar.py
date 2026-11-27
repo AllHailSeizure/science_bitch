@@ -253,16 +253,21 @@ class ExperimentEditor:
         self._button((.50, .565, .42, .045), 'Load into preparation', self.load)
         self.fig.text(.07, .535, 'Initial save restores the configured beginning, including its original seed.\n'
                       'Evolution and live insertions do not change that starting setup.', color=MUTED, fontsize=9, va='top')
-        self.collision_picker = RadioButtons(self.fig.add_axes((.07, .44, .35, .055)),
-            ('none', 'perfect_merge'), active=int(app.initial_setup.collision_mode == 'perfect_merge'), activecolor=ACCENT, useblit=False)
+        choices = ('none', 'perfect_merge', 'speed_angle')
+        try:
+            selected = choices.index(app.initial_setup.collision_mode)
+        except ValueError:
+            selected = 0
+        self.collision_picker = RadioButtons(self.fig.add_axes((.07, .42, .42, .08)),
+            choices, active=selected, activecolor=ACCENT, useblit=False)
         self.collision_picker.ax.set_facecolor(PANEL)
         for label in self.collision_picker.labels:
             label.set_color(TEXT)
             label.set_fontsize(9)
         self.widgets.append(self.collision_picker)
         self._button((.50, .45, .42, .04), 'Apply collisions + RESET', self.collisions)
-        self.fig.text(.07, .435, 'Perfect merge: nonstellar spheres / point tracers; stellar contact halts (#14). '
-                      'Tides are a separate saved choice.', color=MUTED, fontsize=8, va='top')
+        self.fig.text(.07, .41, 'Perfect merge: one remnant, not a general law. Speed and angle can graze or fragment. '
+                      'Stellar contact is logged (#14). Tides are a separate saved choice.', color=MUTED, fontsize=7, va='top')
         self._button((.07, .26, .85, .045), 'Save current state as new setup', self.save_current)
         self.fig.text(.07, .245, 'Capture writes a separate named epoch at time zero, including explicit particles.\n'
                       'The current experiment stays selected. Load the file to use the new epoch.', color=MUTED, fontsize=10, va='top')

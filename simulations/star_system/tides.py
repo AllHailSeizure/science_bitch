@@ -45,7 +45,7 @@ INTERACTION = (
     'This kick is not a 3D or adaptive-step integrator and it does not call REBOUND (#70). '
     'A fixed step that skips the pericenter, or that estimates it poorly, understates the energy loss, '
     'so tides are not the dominant capture path for an unresolved encounter. '
-    'It does not change collision rules (#69): perfect merge and the binary-star merger still use the contact solver, '
+    'It does not change collision rules (#69): perfect merge, speed and angle, and the binary-star merger still use the contact solver, '
     'and a stored tide choice is not applied on that path. '
     'Fragmentation, hit-and-run, and merger remnants are not tidal outcomes. '
     'Where an impact would dominate, this model is not the capture path. '

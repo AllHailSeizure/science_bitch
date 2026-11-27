@@ -356,7 +356,7 @@ class Scene:
         if self.frame_mode == 'sun-relative':
             label = prepared.body_specs[origin_index].name+'-relative / inertial axes'
         mode = prepared.setup.collision_mode if prepared.setup is not None else 'none'
-        model = f'\nModel: {mode}' if mode in ('perfect_merge', 'binary_star_merger') else ''
+        model = f'\nModel: {mode}' if mode in ('perfect_merge', 'speed_angle', 'binary_star_merger') else ''
         tide = ''
         if prepared.setup is not None and prepared.setup.tides.enabled:
             if mode == 'none':

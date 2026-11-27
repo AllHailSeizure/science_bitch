@@ -144,8 +144,12 @@ def test_other_contacts_halt_without_a_stellar_remnant():
     sirius = CATALOG['sirius']
     foreign = replace(setup, bodies=tuple(
         replace(body, spec=replace(sirius, name=body.spec.name)) for body in setup.bodies))
+    continued = integrate(replace(setup, collision_mode='perfect_merge'), duration)
+    assert continued.result.status == 'complete'
+    assert any(getattr(event, 'kind', None) == 'unmodeled' for event in continued.prepared.events)
+    assert not any(getattr(event, 'kind', None) == 'stellar_merger' for event in continued.prepared.events)
+    assert continued.prepared.body_ids == ('primary', 'secondary')
     cases = {
-        'perfect_merge': replace(setup, collision_mode='perfect_merge'),
         'missing model': no_model,
         'edited mass': replace(setup, bodies=(heavier, setup.bodies[1])),
         'sirius': foreign,

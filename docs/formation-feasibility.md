@@ -6,7 +6,7 @@ This note is the first slice of a formation experience: a star and massive rocky
 
 The candidate stage is late-stage assembly around a star that already exists. Each embryo is one body and one material parcel, with a stable id and a mass. There is no gas, no dust bin, and no tree that groups distant mass.
 
-Contacts use the disclosed perfect-merge model `nonstellar-perfect-merge-v1`. One remnant keeps the mass and the linear momentum. The relative kinetic energy is recorded as lost, and the orbital spin residual is recorded as unmodeled. A collision has one descendant. A nonstellar body leaves the active set when its two-body specific energy about the star is positive and its star-centric distance has reached the ejection radius. The check runs at each macro step. The body, its parcels, and its last position stay in the history. Stellar contact halts the run.
+The collision rule is stored on the experiment setup. Perfect merge (`nonstellar-perfect-merge-v1`) remains available and is disclosed as one remnant: it keeps the mass and the linear momentum, records the relative kinetic energy as lost, and records the orbital spin residual as unmodeled. It is not a general collision law. The speed-and-angle rule (`speed-angle-merge-graze-fragment-v1`) merges at or below mutual escape, grazes a faster wider impact, and fragments a faster closer impact. Fragments are bodies. Lost mass is recorded and is not a body. Parcel ancestry survives each of those outcomes. A collision does not end the run; it is logged with its time, participants, rule, and outcome. Close encounters and orbital changes are logged as well. A nonstellar body leaves the active set when its two-body specific energy about the star is positive and its star-centric distance has reached the ejection radius. The check runs at each macro step. The body, its parcels, and its last position stay in the history. Stellar contact is logged as unmodeled and the run continues. A dedicated stellar merger stays out of this prototype.
 
 The questions this prototype can answer are:
 
@@ -16,7 +16,7 @@ The questions this prototype can answer are:
 - Do mass, parcel totals, and linear momentum follow the perfect-merge and ejection rules, and does the kinetic-energy drop at a merge match the recorded loss?
 - How much does the first merger time move when the fixed step changes, while the remnant mass stays the combined parcel mass?
 
-Outside this slice: a gas disk and drag, grain growth, a rule for turning a swarm into one body, fragmentation and hit-and-run, three-dimensional orbits, relativity, and stellar mergers. The gas-and-dust stage is a separate prototype, `simulations.star_system.gas_dust`, written up in `docs/gas-dust-formation.md`. It does not change this late-stage run. Optional close-pass tidal dissipation is a separate experiment choice and is not turned on here.
+Outside this slice: a gas disk and drag, grain growth, a rule for turning a swarm into one body, the full Stewart and Leinhardt strength map, three-dimensional orbits, relativity, and stellar mergers. The speed-and-angle rule is a smaller disclosed map with tracked fragments and recorded losses. The gas-and-dust stage is a separate prototype, `simulations.star_system.gas_dust`, written up in `docs/gas-dust-formation.md`. It does not change this late-stage run. Optional close-pass tidal dissipation is a separate experiment choice and is not turned on here.
 
 ## Benchmark
 
@@ -65,9 +65,9 @@ The contact times differ by 3.03e-8 yr. The remnant mass is the sum of the two p
 
 ## Recommended scope
 
-Keep the first implementation on late-stage embryos, one parcel per body, perfect merge, ejection records, ancestry amounts, and checkpoint branching. Calculate a run to completion, then scrub and compare it. Leave stellar contact as a halt.
+Keep late-stage embryos, one parcel per body, a collision rule stored on the setup, ejection records, ancestry amounts, and checkpoint branching. Perfect merge remains available. Calculate a run to completion, then scrub and compare it, including the same experiment rerun under the other rule. Log stellar contact and continue.
 
-That earlier gas-and-dust start is the annular isothermal prototype in `docs/gas-dust-formation.md`. It keeps a fluid disk, drag between gas and dust, grain growth, and a swarm-to-body rule that holds onto mass, momentum, origin, and the radius and ancestry the collision model needs. This late-stage run still does not include them. Partial accretion, erosion, hit-and-run, and fragmentation need an outcome map such as Stewart and Leinhardt, because perfect merge cannot send mass to more than one descendant. Tree gravity is a later optimization: at 200 bodies the measured cost was a few seconds of direct summation, and a grouped force would still have to keep parcel identity.
+That earlier gas-and-dust start is the annular isothermal prototype in `docs/gas-dust-formation.md`. It keeps a fluid disk, drag between gas and dust, grain growth, and a swarm-to-body rule that holds onto mass, momentum, origin, and the radius and ancestry the collision model needs. This late-stage run still does not include them. Partial accretion, erosion, hit-and-run, and fragmentation in the literature need an outcome map such as Stewart and Leinhardt. The stored speed-and-angle rule is one explicit map: mass can reach more than one descendant, and losses are recorded. Perfect merge still cannot do that. Tree gravity is a later optimization: at 200 bodies the measured cost was a few seconds of direct summation, and a grouped force would still have to keep parcel identity.
 
 The in-repo Verlet contact solver was enough for these inflated-radius runs. A close-encounter integrator such as REBOUND is the piece to revisit if the radii become physical and the fixed step starts halting. It is not required for the questions above.
 

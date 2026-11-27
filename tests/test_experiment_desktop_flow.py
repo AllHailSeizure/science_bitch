@@ -276,21 +276,24 @@ def test_missing_radius_does_not_replace_the_experiment(window):
     assert 'unchanged' in window.notice.text().lower()
 
 
-def test_star_contact_halts_live_step_and_calculation_without_a_merge(window):
+def test_star_contact_continues_the_live_step_and_the_calculation(window):
     window.install_experiment(contact_pair(mode='perfect_merge', kind='star'))
     window.step_button.click()
-    assert window.prepared.system.time == 0
+    assert window.prepared.system.time == pytest.approx(.2)
     assert window.prepared.body_ids == ('a', 'b')
+    assert any(event.kind == 'unmodeled' for event in window.prepared.events)
+    assert 'Unmodeled stellar contact' in window.notice.text()
     assert '#14' in window.notice.text()
-    assert 'Unsupported star contact' in window.notice.text()
     window.edit_button.click()
     window.duration.setValue(1)
     window.start_calculation()
     assert window.progress.isVisible()
-    window.tick()
-    assert window.calculation.result.status == 'halted'
-    assert window.calculation.result.completed_steps == 0
-    assert '#14' in window.notice.text()
-    assert window.notice.text().startswith('Halted:')
-    assert window.prepared.system.time == 0
-    assert len(window.prepared.body_ids) == 2
+    for _ in range(30):
+        if window.calculation.done:
+            break
+        window.tick()
+    result = window.calculation.result
+    assert result.status == 'complete'
+    assert result.actual_end_time == pytest.approx(1.)
+    assert window.notice.text().startswith('Complete:')
+    assert not any(event.kind == 'merge' for frame in result.frames for event in frame.events)

@@ -1,11 +1,11 @@
 """Late-stage assembly with parcel ancestry, checkpoints, and branched runs.
 
 The physical stage is rocky embryos around one existing star. Each embryo
-starts as one material parcel. Contacts use the disclosed perfect-merge
-solver already in this package. Fragmentation and stellar mergers are
-outside this prototype. The earlier gas-and-dust stage lives in
-``gas_dust`` and does not change this integrator. Ejection is checked at
-macro steps.
+starts as one material parcel. The collision rule is stored on the experiment
+setup: perfect merge, or the speed-and-angle merge/graze/fragment rule.
+The earlier gas-and-dust stage lives in ``gas_dust`` and does not change this
+integrator. Stellar mergers are outside this prototype. Ejection is checked at
+macro steps. A collision does not end the run.
 """
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
@@ -26,7 +26,7 @@ from .collisions import CollisionEvent, advance_prepared
 from .core import G, SOLAR_RADIUS_AU, System
 from .history import StateFrame
 from .initialization import PreparedSystem, build_system
-from .model import BodySpec, InitialBody, InitialSetup
+from .model import SPEED_ANGLE_VERSION, BodySpec, InitialBody, InitialSetup
 from .persistence import SOLVER_BUILD, setup_digest
 from .playback import Playback
 from .recording import RecordedRun
@@ -53,17 +53,18 @@ BENCHMARK_ECCENTRICITY = 0.12
 
 _ASSUMPTIONS = (
     'Late-stage assembly: one star already exists, and every other body is a massive rocky embryo.',
-    'Each embryo starts as one material parcel. Parcels keep their ids and do not split.',
-    'Collisions use disclosed perfect merge: one remnant keeps the mass and linear momentum, and the relative kinetic energy is recorded as lost.',
-    'Perfect merge does not fragment, partially accrete, or lose mass, so a collision has one descendant.',
+    'Each embryo starts as one material parcel. Parcel ids survive every outcome. Under the speed-angle rule a parcel\'s mass can be shared by fragment bodies and by recorded lost mass.',
+    'The collision rule is stored on the experiment setup. Perfect merge keeps one remnant and is unrealistic as a general law: it is not what a real Venus-Earth collision would do.',
+    'Perfect merge, when selected, does not fragment. One remnant keeps the mass and linear momentum, and the relative kinetic energy is recorded as lost.',
+    'The speed-angle rule merges at or below mutual escape, grazes a faster wider impact, and fragments a faster closer impact. Fragments are bodies. Lost mass is recorded and is not a body.',
     'A nonstellar body is ejected when its two-body specific energy about the star is positive and its star-centric distance has reached the ejection radius. The check runs at macro steps. The body is removed from the active set and its last state is kept.',
     'Ejection is a bookkeeping cut. After it, the frozen body no longer exchanges gravity with the active set.',
-    'Stellar contact halts the run. This prototype does not merge stars.',
-    'Gravity is planar and unsoftened. The fixed step is the setup dt.',
+    'Stellar contact is logged as unmodeled and the run continues. This prototype does not merge stars.',
+    'Gravity is planar and the fixed step is the setup dt. During an unmodeled stellar overlap that pair is evaluated at the contact separation so the step can cross it.',
 )
 _QUESTIONS = (
     'Which initial parcels make up a surviving body, and how much mass came from each?',
-    'When did mergers and ejections happen, including for a body that has left an empty region?',
+    'When did mergers, grazes, fragmentations, close encounters, orbital changes, and ejections happen, including for a body that has left an empty region?',
     'If two runs share a checkpoint and one embryo velocity changes, how do their histories differ at the same simulated time?',
     'Do mass, parcel totals, and linear momentum follow the perfect-merge and ejection rules, and does the kinetic-energy drop at a merge match the recorded loss?',
     'How much does the first merger time move when the fixed step changes, while the remnant mass stays the combined parcel mass?',
@@ -72,25 +73,25 @@ _NOT_MODELED = (
     'A gas disk, gas drag, and dust as a population.',
     'Grain growth and any rule that turns a swarm into one body.',
     'Tree-code grouping of distant mass.',
-    'Fragmentation, hit-and-run, erosion, and partial accretion.',
+    'Partial accretion and erosion beyond the disclosed speed-angle lost-mass fraction.',
     'Three-dimensional orbits and relativity. Optional close-pass tidal dissipation is a separate experiment choice and stays off in this prototype.',
     'Stellar mergers and stellar internal structure.',
 )
 _SCOPE = (
-    'Keep the first implementation on late-stage embryos, one parcel per body, perfect merge, ejection records, ancestry amounts, and checkpoint branching.',
-    'Calculate a run to completion, then scrub and compare it. Inflated encounter radii make contacts inspectable; they are not rocky surfaces, and this fixed step is not an interactive solver for realistic radii.',
-    'Leave stellar contact as a halt.',
+    'Keep late-stage embryos, one parcel per body, a stored collision rule, ejection records, ancestry amounts, and checkpoint branching. Perfect merge remains available.',
+    'Calculate a run to completion, then scrub and compare it. The same setup can be rerun under each stored rule. Inflated encounter radii make contacts inspectable; they are not rocky surfaces, and this fixed step is not an interactive solver for realistic radii.',
+    'Log stellar contact and continue. A dedicated stellar-merger model stays in its own scenario.',
 )
 _GAS = (
     'An earlier gas-and-dust start needs a fluid disk, drag between gas and dust, and an explicit rule for when a swarm becomes one body without dropping mass, momentum, origin, or the internal state the collision model needs. That stage is simulations.star_system.gas_dust; this late-stage prototype does not run it.',
-    'Partial accretion, erosion, hit-and-run, and fragmentation need an outcome map such as Stewart and Leinhardt, because perfect merge cannot send mass to more than one descendant.',
+    'Partial accretion, erosion, hit-and-run, and fragmentation in the literature follow an outcome map such as Stewart and Leinhardt. The stored speed-angle rule is a disclosed speed-and-angle map with tracked fragments and recorded losses; it is not that full model. Perfect merge still cannot send mass to more than one descendant.',
     'Tree gravity is a later optimization. At a few hundred bodies the measured cost is direct summation, and grouping would have to preserve parcel identity to be usable here.',
 )
 _PROVENANCE_KEYS = ('run_id', 'model', 'representation', 'collision_model', 'seed', 'setup_digest',
                     'parent_checkpoint_id', 'change', 'execution_environment', 'solver_build')
 _BODY_KEYS = ('id', 'name', 'kind', 'mass', 'radius', 'status', 'r', 'v', 'contributions', 'reference_id')
 _EVENT_KEYS = ('time', 'kind', 'parent_ids', 'remnant_id', 'descendant_ids', 'contributions',
-               'lost_relative_kinetic', 'unmodeled_spin', 'location', 'message')
+               'lost_relative_kinetic', 'unmodeled_spin', 'location', 'message', 'lost_contributions')
 _SAMPLE_KEYS = ('time', 'phase', 'bodies')
 _CHANGE_KEYS = ('kind', 'body_id', 'delta_v', 'note')
 _DOCUMENT_KEYS = ('schema', 'id', 'model', 'name', 'time', 'dt', 'ejection_radius', 'sample_stride',
@@ -114,7 +115,7 @@ class FormationSpecification:
 SPECIFICATION = FormationSpecification(
     'Late-stage assembly around an existing star, beginning with massive rocky embryos rather than a gas-and-dust disk.',
     'Each simulated object is one body. Every embryo begins as a single material parcel with a stable id and a mass. The prototype does not group parcels into a tree and does not represent gas or dust.',
-    'Disclosed perfect merge on contact (nonstellar-perfect-merge-v1), using the existing positive-time Verlet contact solver. One remnant keeps the mass and linear momentum. Relative kinetic energy and the orbital spin residual are recorded as lost. An unbound body outside the ejection radius leaves the active set and stays in the history.',
+    'The experiment stores one collision rule. Perfect merge (nonstellar-perfect-merge-v1) keeps one remnant and is unrealistic as a general law. The speed-angle rule (speed-angle-merge-graze-fragment-v1) merges, grazes, or fragments from impact speed and impact parameter. Fragments stay as bodies and lost mass is recorded. Relative kinetic energy and the orbital spin residual are recorded only as the selected rule defines them. An unbound body outside the ejection radius leaves the active set and stays in the history.',
     _QUESTIONS, _ASSUMPTIONS, _NOT_MODELED, _SCOPE, _GAS)
 
 
@@ -162,6 +163,7 @@ class FormationEvent:
     unmodeled_spin: float
     location: tuple[float, float]
     message: str
+    lost_contributions: tuple[Contribution, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -406,7 +408,28 @@ def _validated_composition(composition, prepared):
 
 
 def _contributions(mapping):
-    return tuple(Contribution(key, float(mapping[key])) for key in sorted(mapping))
+    return tuple(Contribution(key, float(mapping[key])) for key in sorted(mapping) if mapping[key] > 0)
+
+
+def _split_composition(composition, shares):
+    """Split parcel masses across descendants and a recorded loss. Amounts sum to the parents."""
+    total = sum(mass for _key, mass in shares)
+    if total <= 0:
+        raise ValueError('A fragment split needs positive mass.')
+    largest = max(shares, key=lambda item: item[1])[0]
+    assigned = {key: {} for key, _mass in shares}
+    for parcel, mass in composition.items():
+        remaining = float(mass)
+        for key, share in shares:
+            if key == largest:
+                continue
+            portion = float(mass)*float(share)/total
+            if portion > 0:
+                assigned[key][parcel] = portion
+                remaining -= portion
+        if remaining > 0:
+            assigned[largest][parcel] = remaining
+    return assigned
 
 
 def _num(value):
@@ -446,7 +469,7 @@ def _change_document(change):
 
 def _new_provenance(setup, seed):
     provenance = {'run_id': '', 'model': FORMATION_MODEL, 'representation': REPRESENTATION_ID,
-                  'collision_model': COLLISION_MODEL_ID, 'seed': seed, 'setup_digest': setup_digest(setup),
+                  'collision_model': setup.collision_policy.version, 'seed': seed, 'setup_digest': setup_digest(setup),
                   'parent_checkpoint_id': None, 'change': None,
                   'execution_environment': {'numpy': np.__version__}, 'solver_build': SOLVER_BUILD}
     provenance['run_id'] = _run_id(provenance['setup_digest'], seed, None, None)
@@ -459,8 +482,8 @@ class FormationExperiment:
     def __init__(self, setup, *, ejection_radius, sample_stride=1, seed=None, composition=None):
         if not isinstance(setup, InitialSetup):
             raise TypeError('Formation starts from an InitialSetup.')
-        if setup.collision_mode != 'perfect_merge':
-            raise ValueError('Formation uses the disclosed perfect_merge collision mode.')
+        if setup.collision_mode not in ('perfect_merge', 'speed_angle'):
+            raise ValueError('Formation stores a disclosed collision rule: perfect_merge or speed_angle.')
         if seed is not None and (type(seed) is not int or isinstance(seed, bool) or seed < 0):
             raise ValueError('Formation seed must be a nonnegative integer or omitted.')
         if type(sample_stride) is not int or isinstance(sample_stride, bool) or sample_stride < 1:
@@ -488,7 +511,7 @@ class FormationExperiment:
         self.status = 'running'
         self.reason = ''
         self.completed_steps = 0
-        self._applied_merges = 0
+        self._applied_outcomes = 0
         self.provenance = _new_provenance(setup, seed)
         extras = [f'Ejection radius is {self.ejection_radius:.6g} AU and is evaluated at macro steps.']
         radii = [body.spec.radius for body in setup.bodies if body.spec.kind != 'star']
@@ -540,14 +563,18 @@ class FormationExperiment:
                 self.status = 'halted'
                 self.reason = str(exc)
                 break
+            previous = len(self.prepared.events)
             for frame in outcome.event_frames:
                 if frame.event_phase == 'pre':
                     self.samples.append(self._sample_from_frame(frame, 'pre'))
                 elif frame.event_phase == 'post':
-                    self._consume_merges(frame)
+                    self._consume_outcomes(frame)
                     self.samples.append(self._sample_from_frame(frame, 'post'))
                 else:
                     raise ValueError('Unexpected collision frame.')
+            for event in outcome.prepared.events[previous:]:
+                if isinstance(event, CollisionEvent) and event.kind in ('close_encounter', 'orbital_change'):
+                    self._record_passive(event)
             self.prepared = outcome.prepared
             self._eject()
             self.completed_steps += 1
@@ -586,7 +613,7 @@ class FormationExperiment:
     def descendant_ids(self, body_id):
         children = {}
         for event in self.events:
-            if event.kind == 'merge':
+            if event.kind in ('merge', 'fragment'):
                 for parent in event.parent_ids:
                     children[parent] = event.descendant_ids
         if body_id not in self.composition and body_id not in self.removed and body_id not in children:
@@ -608,7 +635,7 @@ class FormationExperiment:
         initial = self.samples[0]
         initial_mass = sum(body.mass for body in initial.bodies)
         leaves = self._leaf_records()
-        closed_mass = sum(body.mass for body in leaves)
+        closed_mass = sum(body.mass for body in leaves)+sum(item.mass for event in self.events for item in event.lost_contributions)
         parcel_initial, parcel_now = {}, {}
         for body in initial.bodies:
             for item in body.contributions:
@@ -616,26 +643,41 @@ class FormationExperiment:
         for body in leaves:
             for item in body.contributions:
                 parcel_now[item.parcel_id] = parcel_now.get(item.parcel_id, 0.)+item.mass
+        for event in self.events:
+            for item in event.lost_contributions:
+                parcel_now[item.parcel_id] = parcel_now.get(item.parcel_id, 0.)+item.mass
         keys = set(parcel_initial) | set(parcel_now)
         parcel_error = max((abs(parcel_now.get(key, 0.)-parcel_initial.get(key, 0.)) for key in keys), default=0.)
         merge_momentum = merge_kinetic = ejection_momentum = 0.
         merge_count = ejection_count = index = 0
+        dynamic = ('merge', 'fragment', 'graze', 'unmodeled')
         for sample_index, sample in enumerate(self.samples[:-1]):
             nxt = self.samples[sample_index+1]
             if sample.phase != 'pre' or nxt.phase != 'post':
                 continue
-            while index < len(self.events) and self.events[index].kind != 'merge':
+            while index < len(self.events) and self.events[index].kind not in dynamic:
                 index += 1
             batch = []
             tolerance = 1e-12*max(1., abs(sample.time))
-            while (index < len(self.events) and self.events[index].kind == 'merge'
+            while (index < len(self.events) and self.events[index].kind in dynamic
                    and abs(self.events[index].time-sample.time) <= tolerance):
                 batch.append(self.events[index])
                 index += 1
-            merge_count += len(batch)
-            merge_momentum = max(merge_momentum, _max_abs(_momentum(sample.bodies)-_momentum(nxt.bodies)))
+            merge_count += sum(event.kind == 'merge' for event in batch)
+            lost_momentum = np.zeros(2)
+            carried_kinetic = 0.
+            for event in batch:
+                lost = sum(item.mass for item in event.lost_contributions)
+                if lost <= 0:
+                    continue
+                parents = [body for body in sample.bodies if body.id in event.parent_ids]
+                total = sum(body.mass for body in parents)
+                velocity = sum(body.mass*np.array(body.v) for body in parents)/total
+                lost_momentum = lost_momentum+lost*velocity
+                carried_kinetic += .5*lost*float(np.dot(velocity, velocity))
+            merge_momentum = max(merge_momentum, _max_abs(_momentum(nxt.bodies)+lost_momentum-_momentum(sample.bodies)))
             measured = _kinetic(nxt.bodies)-_kinetic(sample.bodies)
-            expected = -sum(event.lost_relative_kinetic for event in batch)
+            expected = -sum(event.lost_relative_kinetic for event in batch)-carried_kinetic
             merge_kinetic = max(merge_kinetic, abs(measured-expected))
         for sample_index, sample in enumerate(self.samples[:-1]):
             if sample.phase != 'ejection':
@@ -683,11 +725,17 @@ class FormationExperiment:
         self.reason = ''
         self._record_current('branch', force=True)
 
-    def _consume_merges(self, frame):
-        merges = [event for event in frame.events if isinstance(event, CollisionEvent) and event.kind == 'merge']
-        for event in merges[self._applied_merges:]:
-            self._apply_merge(event)
-        self._applied_merges = len(merges)
+    def _consume_outcomes(self, frame):
+        dynamic = [event for event in frame.events if isinstance(event, CollisionEvent)
+                   and event.kind in ('merge', 'fragment', 'graze', 'unmodeled')]
+        for event in dynamic[self._applied_outcomes:]:
+            if event.kind == 'merge':
+                self._apply_merge(event)
+            elif event.kind == 'fragment':
+                self._apply_fragment(event, frame)
+            else:
+                self._apply_continuation(event)
+        self._applied_outcomes = len(dynamic)
 
     def _apply_merge(self, event):
         pre = self.samples[-1]
@@ -711,6 +759,67 @@ class FormationExperiment:
         self.events.append(FormationEvent(float(event.time), 'merge', tuple(event.parent_ids), event.remnant_id,
                                           _contributions(composition), (event.remnant_id,), float(event.lost_relative_kinetic),
                                           float(event.unmodeled_spin), location, event.message))
+
+    def _apply_fragment(self, event, frame):
+        pre = self.samples[-1]
+        if pre.phase != 'pre':
+            raise ValueError('A fragment needs the pre-contact sample before the descendants are recorded.')
+        composition = {}
+        for parent in event.parent_ids:
+            for parcel, mass in self.composition[parent].items():
+                composition[parcel] = composition.get(parcel, 0.)+mass
+            source = next(body for body in pre.bodies if body.id == parent)
+            self.removed[parent] = replace(source, status='fragmented')
+            del self.composition[parent]
+        shares = [(descendant, float(frame.masses[frame.body_ids.index(descendant)])) for descendant in event.descendant_ids]
+        if event.lost_mass > 0:
+            shares.append(('__lost__', float(event.lost_mass)))
+        assigned = _split_composition(composition, shares)
+        lost = assigned.pop('__lost__', {})
+        for descendant in event.descendant_ids:
+            if descendant in self.composition or descendant in self.removed:
+                raise ValueError('Fragment id collides with an existing formation identity.')
+            self.composition[descendant] = assigned[descendant]
+        total = sum(next(body.mass for body in pre.bodies if body.id == parent) for parent in event.parent_ids)
+        location = event.location or (
+            sum(next(body.mass*body.r[0] for body in pre.bodies if body.id == parent) for parent in event.parent_ids)/total,
+            sum(next(body.mass*body.r[1] for body in pre.bodies if body.id == parent) for parent in event.parent_ids)/total,
+        )
+        self.events.append(FormationEvent(float(event.time), 'fragment', tuple(event.parent_ids), event.remnant_id,
+                                          _contributions(composition), tuple(event.descendant_ids),
+                                          float(event.lost_relative_kinetic), float(event.unmodeled_spin), location,
+                                          event.message, _contributions(lost)))
+
+    def _apply_continuation(self, event):
+        pre = self.samples[-1]
+        if pre.phase != 'pre':
+            raise ValueError('A continuation needs the pre-contact sample.')
+        contributions = []
+        for parent in event.parent_ids:
+            contributions.extend(_contributions(self.composition[parent]))
+        location = event.location
+        if location is None:
+            total = sum(next(body.mass for body in pre.bodies if body.id == parent) for parent in event.parent_ids)
+            location = (
+                sum(next(body.mass*body.r[0] for body in pre.bodies if body.id == parent) for parent in event.parent_ids)/total,
+                sum(next(body.mass*body.r[1] for body in pre.bodies if body.id == parent) for parent in event.parent_ids)/total,
+            )
+        descendants = tuple(event.descendant_ids) or tuple(event.parent_ids)
+        self.events.append(FormationEvent(float(event.time), event.kind, tuple(event.parent_ids), None,
+                                          tuple(contributions), descendants, float(event.lost_relative_kinetic),
+                                          float(event.unmodeled_spin), location, event.message))
+
+    def _record_passive(self, event):
+        contributions = []
+        for parent in event.parent_ids:
+            if parent in self.composition:
+                contributions.extend(_contributions(self.composition[parent]))
+            elif parent in self.removed:
+                contributions.extend(self.removed[parent].contributions)
+        location = event.location or (0., 0.)
+        self.events.append(FormationEvent(float(event.time), event.kind, tuple(event.parent_ids), None,
+                                          tuple(contributions), tuple(event.descendant_ids) or tuple(event.parent_ids),
+                                          0., 0., location, event.message))
 
     def _eject(self):
         system = self.prepared.system
@@ -837,7 +946,9 @@ def _event_document(event):
             'contributions': [{'parcel_id': item.parcel_id, 'mass': _num(item.mass)}
                               for item in sorted(event.contributions, key=lambda item: item.parcel_id)],
             'lost_relative_kinetic': _num(event.lost_relative_kinetic), 'unmodeled_spin': _num(event.unmodeled_spin),
-            'location': [_num(event.location[0]), _num(event.location[1])], 'message': event.message}
+            'location': [_num(event.location[0]), _num(event.location[1])], 'message': event.message,
+            'lost_contributions': [{'parcel_id': item.parcel_id, 'mass': _num(item.mass)}
+                                   for item in sorted(event.lost_contributions, key=lambda item: item.parcel_id)]}
 
 
 def _sample_document(sample):
@@ -949,8 +1060,8 @@ def _experiment_from_document(document):
     removed_list = tuple(_body_from_document(body, 'Removed body') for body in _list(document['removed'], 'Removed bodies'))
     if not active or any(body.status != 'active' for body in active):
         raise ValueError('Active checkpoint bodies must be present and marked active.')
-    if any(body.status not in ('merged', 'ejected') for body in removed_list):
-        raise ValueError('Removed bodies must be merged or ejected.')
+    if any(body.status not in ('merged', 'ejected', 'fragmented') for body in removed_list):
+        raise ValueError('Removed bodies must be merged, fragmented, or ejected.')
     active_ids = [body.id for body in active]
     removed_ids = [body.id for body in removed_list]
     if len(set(active_ids)) != len(active_ids) or len(set(removed_ids)) != len(removed_ids) or set(active_ids) & set(removed_ids):
@@ -963,13 +1074,18 @@ def _experiment_from_document(document):
         raise ValueError('A sample is later than the checkpoint time.')
     shell_bodies = tuple(InitialBody(body.id, BodySpec(body.name, body.kind, body.mass, body.radius), body.r, body.v, body.reference_id)
                          for body in active)
-    shell = InitialSetup(name, shell_bodies, dt, collision_mode='perfect_merge')
+    mode = 'speed_angle' if provenance['collision_model'] == SPEED_ANGLE_VERSION else 'perfect_merge'
+    shell = InitialSetup(name, shell_bodies, dt, collision_mode=mode)
     collision_events = []
     for event in events:
-        if event.kind == 'merge':
+        if event.kind in ('merge', 'fragment'):
             ancestry = tuple(sorted({item.parcel_id for item in event.contributions}))
-            collision_events.append(CollisionEvent(event.time, 'merge', event.parent_ids, event.remnant_id, ancestry,
-                                                   event.lost_relative_kinetic, event.unmodeled_spin, event.message))
+            descendants = event.descendant_ids
+            collision_events.append(CollisionEvent(
+                event.time, event.kind, event.parent_ids, event.remnant_id, ancestry,
+                event.lost_relative_kinetic, event.unmodeled_spin, event.message,
+                rule=mode, outcome=event.kind, descendant_ids=descendants,
+                lost_mass=sum(item.mass for item in event.lost_contributions)))
         elif event.kind == 'ejection':
             collision_events.extend(CollisionEvent(event.time, 'reserve', (parent,), None, (parent,), 0., 0.,
                                                    f'Reserved ejected id {parent}.') for parent in event.parent_ids)
@@ -992,7 +1108,7 @@ def _experiment_from_document(document):
     experiment.status = document['status']
     experiment.reason = reason
     experiment.completed_steps = document['completed_steps']
-    experiment._applied_merges = sum(event.kind == 'merge' for event in events)
+    experiment._applied_outcomes = sum(event.kind in ('merge', 'fragment') for event in collision_events)
     if experiment.checkpoint_id != identity:
         raise ValueError('Checkpoint did not round-trip.')
     return experiment
@@ -1004,7 +1120,8 @@ def body_spec(body):
 
 def _provenance_from_document(value):
     _object(value, _PROVENANCE_KEYS, 'Provenance')
-    if value['model'] != FORMATION_MODEL or value['representation'] != REPRESENTATION_ID or value['collision_model'] != COLLISION_MODEL_ID:
+    if (value['model'] != FORMATION_MODEL or value['representation'] != REPRESENTATION_ID
+            or value['collision_model'] not in (COLLISION_MODEL_ID, SPEED_ANGLE_VERSION)):
         raise ValueError('Unsupported formation provenance model.')
     seed = value['seed']
     if seed is not None and (type(seed) is not int or isinstance(seed, bool) or seed < 0):
@@ -1041,7 +1158,7 @@ def _body_from_document(value, label):
                       _string(value['reference_id'], 'Reference', nullable=True))
     if body.kind not in ('star', 'planet', 'moon', 'asteroid'):
         raise ValueError('Unsupported formation body kind.')
-    if body.status not in ('active', 'merged', 'ejected'):
+    if body.status not in ('active', 'merged', 'ejected', 'fragmented'):
         raise ValueError('Unsupported formation body status.')
     if abs(sum(item.mass for item in body.contributions)-body.mass) > 1e-9*max(1., abs(body.mass)):
         raise ValueError(f'Contributions for {body.id} do not add up to its mass.')
@@ -1056,7 +1173,7 @@ def _contribution_from_document(value):
 def _event_from_document(value):
     _object(value, _EVENT_KEYS, 'Formation event')
     kind = value['kind']
-    if kind not in ('merge', 'ejection'):
+    if kind not in ('merge', 'fragment', 'graze', 'unmodeled', 'close_encounter', 'orbital_change', 'ejection'):
         raise ValueError('Unsupported formation event.')
     parents = tuple(_string(item, 'Parent id') for item in _list(value['parent_ids'], 'Parent ids'))
     if not parents:
@@ -1065,13 +1182,20 @@ def _event_from_document(value):
     descendants = tuple(_string(item, 'Descendant id') for item in _list(value['descendant_ids'], 'Descendant ids'))
     if kind == 'merge' and (remnant is None or descendants != (remnant,)):
         raise ValueError('A merge event needs its remnant as the only descendant.')
+    if kind == 'fragment' and (remnant is None or remnant not in descendants or len(descendants) < 2):
+        raise ValueError('A fragment event needs its largest remnant and at least one other descendant.')
     if kind == 'ejection' and (remnant is not None or descendants != parents):
         raise ValueError('An ejection keeps the same body as its descendant.')
+    if kind in ('graze', 'unmodeled', 'close_encounter', 'orbital_change') and remnant is not None:
+        raise ValueError('This event keeps the participants and does not name a remnant.')
     contributions = tuple(_contribution_from_document(item) for item in _list(value['contributions'], 'Contributions'))
+    lost = tuple(_contribution_from_document(item) for item in _list(value['lost_contributions'], 'Lost contributions'))
+    if kind != 'fragment' and lost:
+        raise ValueError('Only a fragment event records lost mass.')
     return FormationEvent(_finite_number(value['time'], 'Event time'), kind, parents, remnant, contributions, descendants,
                           _finite_number(value['lost_relative_kinetic'], 'Lost kinetic energy'),
                           _finite_number(value['unmodeled_spin'], 'Unmodeled spin'),
-                          _vector(value['location'], 'Event location'), _string(value['message'], 'Event message'))
+                          _vector(value['location'], 'Event location'), _string(value['message'], 'Event message'), lost)
 
 
 def _sample_from_document(value):

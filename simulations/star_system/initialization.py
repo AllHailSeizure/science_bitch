@@ -22,6 +22,9 @@ class PreparedSystem:
     events: tuple[IntegrationEvent, ...] = ()
     segment: int = 0
     reference_ids: tuple[str | None, ...] = ()
+    # Sorted body pairs currently crossing an unmodeled stellar overlap.
+    # Runtime bookkeeping only; it is not part of the saved setup.
+    open_passages: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self):
         object.__setattr__(self, 'body_ids', tuple(self.body_ids))
@@ -76,7 +79,7 @@ def _validate_surfaces(r, specs, collision_mode='none'):
     sources = np.array([i for i,s in enumerate(specs) if s.mass and s.mass > 0], dtype=int)
     if not len(sources):
         return
-    radii = np.array([0. if collision_mode == 'perfect_merge' and s.mass == 0 else (s.radius or 0.) for s in specs])
+    radii = np.array([0. if collision_mode in ('perfect_merge', 'speed_angle') and s.mass == 0 else (s.radius or 0.) for s in specs])
     dist = np.linalg.norm(r[:,None,:]-r[None,sources,:],axis=-1)
     dist[sources,np.arange(len(sources))] = np.inf
     overlaps = np.argwhere(dist <= radii[:,None]+radii[None,sources])
@@ -145,7 +148,7 @@ def build_system(setup):
     if system.dt > moon_limit*(1+1e-12):
         raise ValueError(f'Moon timescale unresolved: fixed dt must be <= {moon_limit:.9g} yr (initial relative period / 600).')
     prepared = PreparedSystem(system, ids, specs, setup, reference_ids=references)
-    if setup.collision_mode in ('perfect_merge', 'binary_star_merger'):
+    if setup.collision_mode in ('perfect_merge', 'speed_angle', 'binary_star_merger'):
         from .collisions import validate_collision_state
         validate_collision_state(prepared)
     else:
@@ -178,7 +181,7 @@ def insert_body(prepared, body):
     # associations are inspection metadata, including if a parent later vanishes.
     if body.spec.kind == 'moon':
         system.dt = min(system.dt, _moon_step_limit(system, ids, specs, references, (len(ids)-1,)))
-    if mode in ('perfect_merge', 'binary_star_merger'):
+    if mode in ('perfect_merge', 'speed_angle', 'binary_star_merger'):
         from .collisions import validate_collision_state
         validate_collision_state(PreparedSystem(system, ids, specs, prepared.setup, reference_ids=references))
     else:
