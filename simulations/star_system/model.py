@@ -117,13 +117,60 @@ class TidalPolicy:
             raise ValueError('Turn tidal dissipation on to store a strength or reach. Off uses the default policy only.')
 
 
+# Perfect merge is one disclosed rule. The legacy pairs id said stellar contact
+# halted the run; that behavior is retired, and loaded documents adopt the id below.
+PERFECT_MERGE_VERSION = 'nonstellar-perfect-merge-v1'
+PERFECT_MERGE_PAIRS = 'nonstellar-massive-merge-point-tracer-absorb-star-unmodeled-v1'
+_LEGACY_PERFECT_MERGE_PAIRS = 'nonstellar-massive-merge-point-tracer-absorb-star-halt-v1'
+PERFECT_MERGE_REMNANT = 'volume-com-planet-reference-map-v1'
+COLLISION_NUMERICAL = 'positive-verlet-swept-parabola-v1'
+SPEED_ANGLE_VERSION = 'speed-angle-merge-graze-fragment-v1'
+SPEED_ANGLE_PAIRS = 'nonstellar-speed-angle-merge-graze-fragment-star-unmodeled-v1'
+SPEED_ANGLE_REMNANT = 'fragments-tracked-losses-recorded-v1'
+_PERFECT_MERGE_IDENTITY = (PERFECT_MERGE_VERSION, PERFECT_MERGE_PAIRS, PERFECT_MERGE_REMNANT, COLLISION_NUMERICAL)
+_SPEED_ANGLE_IDENTITY = (SPEED_ANGLE_VERSION, SPEED_ANGLE_PAIRS, SPEED_ANGLE_REMNANT, COLLISION_NUMERICAL)
+COLLISION_MODES = ('none', 'perfect_merge', 'speed_angle', 'binary_star_merger')
+SELECTABLE_COLLISION_MODES = ('none', 'perfect_merge', 'speed_angle')
+
+
+def collision_policy_identity(policy):
+    """Which stored rule a policy names. ``None`` when the policy is not a known rule."""
+    identity = (policy.version, policy.pairs, policy.remnant, policy.numerical)
+    if identity == _PERFECT_MERGE_IDENTITY:
+        return 'perfect_merge'
+    if identity == _SPEED_ANGLE_IDENTITY:
+        return 'speed_angle'
+    return None
+
+
+def retarget_collision_policy(policy, mode):
+    """Keep the numerical bounds and store the named rule's version identifiers."""
+    if not isinstance(policy, CollisionPolicy):
+        raise ValueError('A supported CollisionPolicy is required.')
+    if mode == 'speed_angle':
+        version, pairs, remnant, numerical = _SPEED_ANGLE_IDENTITY
+    elif mode in ('none', 'perfect_merge', 'binary_star_merger'):
+        version, pairs, remnant, numerical = _PERFECT_MERGE_IDENTITY
+    else:
+        raise ValueError('Supported collision modes: none, perfect_merge, speed_angle, binary_star_merger.')
+    return replace(policy, version=version, pairs=pairs, remnant=remnant, numerical=numerical)
+
+
+def with_collision_rule(setup, mode):
+    """Copy a setup onto one stored collision rule, including ``none``."""
+    if mode not in COLLISION_MODES:
+        raise ValueError('Supported collision modes: none, perfect_merge, speed_angle, binary_star_merger.')
+    policy = retarget_collision_policy(setup.collision_policy, mode)
+    return replace(setup, collision_mode=mode, collision_policy=policy)
+
+
 @dataclass(frozen=True)
 class CollisionPolicy:
-    """Versioned, deliberately bounded nonstellar contact model."""
-    version: str = 'nonstellar-perfect-merge-v1'
-    pairs: str = 'nonstellar-massive-merge-point-tracer-absorb-star-halt-v1'
-    remnant: str = 'volume-com-planet-reference-map-v1'
-    numerical: str = 'positive-verlet-swept-parabola-v1'
+    """Versioned, deliberately bounded contact model stored on the experiment setup."""
+    version: str = PERFECT_MERGE_VERSION
+    pairs: str = PERFECT_MERGE_PAIRS
+    remnant: str = PERFECT_MERGE_REMNANT
+    numerical: str = COLLISION_NUMERICAL
     max_substeps: int = 100000
     max_refinements: int = 64
     macro_fraction: float = .125
@@ -132,9 +179,10 @@ class CollisionPolicy:
     distance_rtol: float = 1e-12
 
     def __post_init__(self):
-        expected = ('nonstellar-perfect-merge-v1', 'nonstellar-massive-merge-point-tracer-absorb-star-halt-v1',
-                    'volume-com-planet-reference-map-v1', 'positive-verlet-swept-parabola-v1')
-        if (self.version, self.pairs, self.remnant, self.numerical) != expected:
+        if (self.version, self.pairs, self.remnant, self.numerical) == (
+                PERFECT_MERGE_VERSION, _LEGACY_PERFECT_MERGE_PAIRS, PERFECT_MERGE_REMNANT, COLLISION_NUMERICAL):
+            object.__setattr__(self, 'pairs', PERFECT_MERGE_PAIRS)
+        if (self.version, self.pairs, self.remnant, self.numerical) not in (_PERFECT_MERGE_IDENTITY, _SPEED_ANGLE_IDENTITY):
             raise ValueError('Unsupported collision policy / model / numerical version.')
         if type(self.max_substeps) is not int or not 1 <= self.max_substeps <= 100000:
             raise ValueError('Collision substep bound must be an integer from 1 to 100000.')
@@ -169,12 +217,22 @@ class InitialSetup:
             raise ValueError('A setup needs a name and at least one body.')
         if not np.isfinite(self.dt) or self.dt <= 0:
             raise ValueError('Fixed dt must be finite and positive (years).')
-        if self.collision_mode not in ('none', 'perfect_merge', 'binary_star_merger'):
-            raise ValueError('Supported collision modes: none, perfect_merge, binary_star_merger.')
+        if self.collision_mode not in COLLISION_MODES:
+            raise ValueError('Supported collision modes: none, perfect_merge, speed_angle, binary_star_merger.')
         if not isinstance(self.collision_policy, CollisionPolicy):
             raise ValueError('A supported CollisionPolicy is required.')
         if not isinstance(self.tides, TidalPolicy):
             raise ValueError('A supported TidalPolicy is required.')
+        family = collision_policy_identity(self.collision_policy)
+        # A perfect-merge policy is the default object, so choosing speed_angle
+        # without a second argument still stores that rule on the setup.
+        if self.collision_mode == 'speed_angle' and family == 'perfect_merge':
+            object.__setattr__(self, 'collision_policy', retarget_collision_policy(self.collision_policy, 'speed_angle'))
+            family = 'speed_angle'
+        if self.collision_mode == 'speed_angle' and family != 'speed_angle':
+            raise ValueError('speed_angle stores the speed-angle collision policy on the setup.')
+        if self.collision_mode != 'speed_angle' and family == 'speed_angle':
+            raise ValueError('The speed-angle policy is stored only with collision mode speed_angle.')
         if not isinstance(self.provenance, Mapping):
             raise ValueError('Setup provenance must be an object.')
         object.__setattr__(self, 'provenance', freeze_metadata(self.provenance))

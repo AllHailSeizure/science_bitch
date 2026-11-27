@@ -52,19 +52,27 @@ def test_high_speed_crossing_resolves_contact_and_macro_remainder():
 
 def test_near_miss_and_grazing():
     miss = advance_prepared(build_system(fixture(y=.20001))).prepared
-    assert len(miss.body_ids) == 2 and not miss.events
+    assert len(miss.body_ids) == 2
+    assert miss.events and all(event.kind != 'merge' for event in miss.events)
+    assert any(event.kind == 'close_encounter' for event in miss.events)
     graze = advance_prepared(build_system(fixture(y=.2))).prepared
     assert len(graze.body_ids) == 1
 
 
-def test_star_contact_halts_whole_macro_transactionally():
+def test_star_contact_is_logged_and_the_macro_finishes():
     p = build_system(fixture(kind='star'))
     old = (p.system.r.copy(), p.system.v.copy())
-    with pytest.raises(ValueError, match='star.*#14'):
-        advance_prepared(p)
+    result = advance_prepared(p).prepared
     assert p.system.time == 0 and p.body_ids == ('a', 'b') and not p.events
     np.testing.assert_array_equal(p.system.r, old[0])
     np.testing.assert_array_equal(p.system.v, old[1])
+    assert result.system.time == pytest.approx(.2)
+    assert result.body_ids == ('a', 'b')
+    event = next(item for item in result.events if item.kind == 'unmodeled')
+    assert event.outcome == 'unmodeled' and event.rule == 'perfect_merge'
+    assert event.parent_ids == ('a', 'b')
+    assert 'unmodeled' in event.message.lower() and '#14' in event.message
+    assert not any(item.kind == 'merge' for item in result.events)
 
 
 @pytest.mark.parametrize('other_kind', ['star', 'particle'])
@@ -73,9 +81,11 @@ def test_star_star_and_star_point_contact_are_both_unsupported(other_kind):
     other = replace(setup.bodies[1], spec=BodySpec('Other', other_kind,
         0. if other_kind == 'particle' else 1e-14, None if other_kind == 'particle' else .1))
     p = build_system(replace(setup, bodies=(setup.bodies[0], other)))
-    with pytest.raises(ValueError, match='star.*#14'):
-        advance_prepared(p)
+    result = advance_prepared(p).prepared
     assert p.system.time == 0 and len(p.body_ids) == 2 and not p.events
+    assert result.system.time == pytest.approx(.2) and result.body_ids == ('a', 'b')
+    assert any(event.kind == 'unmodeled' for event in result.events)
+    assert not any(event.kind in ('merge', 'absorption') for event in result.events)
 
 
 def test_missing_radius_and_initial_overlap_block_recoverably():
@@ -189,9 +199,11 @@ def test_bounded_numerical_halt_and_late_stellar_contact_roll_back_prior_merges(
     assert p.system.time == 0 and not p.events and p.body_ids == ('a', 'b')
     star = InitialBody('star', BodySpec('Star', 'star', 1e-14, .1), (1.6, 0), (0., 0.))
     p = build_system(replace(setup, bodies=setup.bodies+(star,)))
-    with pytest.raises(ValueError, match='star.*#14'):
-        advance_prepared(p)
+    result = advance_prepared(p).prepared
     assert p.system.time == 0 and not p.events and len(p.body_ids) == 3
+    assert result.system.time == pytest.approx(.4)
+    assert any(event.kind == 'merge' for event in result.events)
+    assert any(event.kind == 'unmodeled' and event.rule == 'perfect_merge' for event in result.events)
 
 
 def test_insufficient_contact_refinement_halts_instead_of_claiming_tolerance():
@@ -222,9 +234,9 @@ def test_collision_substeps_obey_start_and_end_guard(monkeypatch):
     from simulations.star_system import collisions
     original = System.accelerations
     states = []
-    def capture(s):
-        states.append((s.time, s.resolution_limit()))
-        return original(s)
+    def capture(s, separation_floor=None):
+        states.append((s.time, s.resolution_limit(separation_floor)))
+        return original(s, separation_floor)
     monkeypatch.setattr(System, 'accelerations', capture)
     result = collisions.advance_prepared(build_system(fixture()))
     # Accepted accelerations occur in start/end pairs; rejected trials can add
@@ -238,10 +250,9 @@ def test_collision_substeps_obey_start_and_end_guard(monkeypatch):
 def contact_time(dt):
     setup = fixture(dt=dt, speed=1., mass=1e-4)
     p = build_system(setup)
-    while not p.events and p.system.time < 3.:
+    while not any(event.kind == 'merge' for event in p.events) and p.system.time < 3.:
         p = advance_prepared(p).prepared
-    assert p.events
-    return p.events[0].time
+    return next(event.time for event in p.events if event.kind == 'merge')
 
 
 def test_contact_time_converges_under_macro_dt_halving():
@@ -279,12 +290,13 @@ def test_translated_near_miss_stays_a_miss_and_unresolved_contact_rolls_back():
     gap = 4*CATALOG['bennu'].radius
     for x in (0., 1.):
         missed = advance_prepared(_bennu_pair(x, y=gap)).prepared
-        assert missed.events == () and len(missed.body_ids) == 2
+        assert len(missed.body_ids) == 2 and not any(event.kind == 'merge' for event in missed.events)
         assert missed.system.time == pytest.approx(1e-5)
     star = build_system(fixture(kind='star'))
     old = (star.system.r.copy(), star.system.v.copy(), star.system.time, star.body_ids, star.events)
-    with pytest.raises(ValueError, match='unresolved|star'):
-        advance_prepared(star)
+    result = advance_prepared(star).prepared
     np.testing.assert_array_equal(star.system.r, old[0])
     np.testing.assert_array_equal(star.system.v, old[1])
     assert star.system.time == old[2] and star.body_ids == old[3] and star.events == old[4]
+    assert result.system.time == pytest.approx(.2)
+    assert any(event.kind == 'unmodeled' for event in result.events)

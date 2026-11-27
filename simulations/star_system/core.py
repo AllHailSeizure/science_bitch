@@ -35,14 +35,19 @@ class System:
     dt: float
     time: float = 0.
 
-    def accelerations(self):
+    def accelerations(self, separation_floor=None):
         sources = np.flatnonzero(self.masses > 0)
         delta = self.r[None, sources, :] - self.r[:, None, :]
         d2 = np.sum(delta**2, axis=-1)
         d2[sources, np.arange(len(sources))] = np.inf
-        return G*np.sum(delta * (self.masses[None, sources]/(d2*np.sqrt(d2)))[:, :, None], axis=1)
+        if separation_floor is None:
+            return G*np.sum(delta * (self.masses[None, sources]/(d2*np.sqrt(d2)))[:, :, None], axis=1)
+        # An unmodeled stellar overlap evaluates gravity at the contact separation
+        # so a fixed step can cross it. The direction stays the true separation.
+        dist = np.maximum(np.sqrt(d2), np.asarray(separation_floor, dtype=float)[:, sources])
+        return G*np.sum(delta * (self.masses[None, sources]/(dist*dist*dist))[:, :, None], axis=1)
 
-    def resolution_limit(self):
+    def resolution_limit(self, separation_floor=None):
         """Largest supported step from pair gravity and relative crossing time."""
         if not np.isfinite(self.masses).all() or np.any(self.masses < 0) or not np.isfinite(self.r).all() or not np.isfinite(self.v).all():
             raise ValueError('Nonfinite or negative numeric state; correct the starting vectors.')
@@ -53,6 +58,8 @@ class System:
             return np.inf
         delta = self.r[None, sources, :] - self.r[:, None, :]
         dist = np.linalg.norm(delta, axis=-1)
+        if separation_floor is not None:
+            dist = np.maximum(dist, np.asarray(separation_floor, dtype=float)[:, sources])
         dist[sources, np.arange(len(sources))] = np.inf
         speed = np.linalg.norm(self.v[None, sources, :] - self.v[:, None, :], axis=-1)
         with np.errstate(divide='ignore', invalid='ignore', over='ignore'):

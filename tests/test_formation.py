@@ -12,7 +12,7 @@ from simulations.star_system.formation import (
     load_checkpoint, make_demonstration_setup, make_late_stage_setup, playback,
     run_benchmark, save_checkpoint, specification,
 )
-from simulations.star_system.model import BodySpec, InitialBody, InitialSetup
+from simulations.star_system.model import SPEED_ANGLE_VERSION, BodySpec, InitialBody, InitialSetup, with_collision_rule
 from simulations.star_system.persistence import setup_digest
 from simulations.star_system.playback import Playback
 from simulations.star_system.core import SOLAR_RADIUS_AU
@@ -111,7 +111,9 @@ def test_checkpoint_roundtrip_resumes_the_same_future(tmp_path):
     saved = save_checkpoint(experiment, path)
     restored = load_checkpoint(path)
     assert restored.checkpoint_id == saved == experiment.checkpoint_id
-    assert [(event.kind, event.parent_ids) for event in restored.events] == []
+    assert not any(event.kind == 'merge' for event in experiment.events)
+    assert [(event.kind, event.parent_ids) for event in restored.events] == [
+        (event.kind, event.parent_ids) for event in experiment.events]
     experiment.integrate(.3)
     restored.integrate(.3)
     np.testing.assert_allclose(restored.prepared.system.r, experiment.prepared.system.r, rtol=0, atol=0)
@@ -235,17 +237,72 @@ def test_composition_must_match_body_mass():
         FormationExperiment(setup, ejection_radius=20., composition={'star': {'star': 1.}, 'rock': {'dust-a': 1e-6}})
 
 
-def test_stellar_contact_halts_without_merging():
+def test_stellar_contact_continues_without_merging():
     star = InitialBody('star', BodySpec('Star', 'star', 1., SOLAR_RADIUS_AU), (0., 0.), (0., 0.))
     rock = InitialBody('rock', BodySpec('Rock', 'planet', 1e-6, .02), (.15, 0.), (-6., 0.))
     experiment = FormationExperiment(InitialSetup('Starward', (star, rock), .002, collision_mode='perfect_merge'),
                                      ejection_radius=20.)
     experiment.integrate(.05, finish=True)
-    assert experiment.status == 'halted'
-    assert experiment.reason
+    assert experiment.status == 'complete'
+    assert experiment.time == pytest.approx(.05)
+    logged = [event for event in experiment.events if event.kind == 'unmodeled']
+    assert logged and logged[0].parent_ids == ('rock', 'star')
     assert not any(event.kind == 'merge' for event in experiment.events)
-    assert 'star' in experiment.composition
+    assert 'star' in experiment.composition and 'rock' in experiment.composition
     assert experiment.replay_ancestry('rock').samples
+
+
+def test_speed_angle_fragments_keep_parcels_and_survive_a_checkpoint(tmp_path):
+    experiment = FormationExperiment(with_collision_rule(make_demonstration_setup(), 'speed_angle'),
+                                     ejection_radius=DEMONSTRATION_EJECTION_RADIUS)
+    experiment.integrate(.2)
+    fragments = [event for event in experiment.events if event.kind == 'fragment']
+    assert len(fragments) == 1
+    fragment = fragments[0]
+    assert fragment.parent_ids == ('alpha', 'beta')
+    assert fragment.remnant_id in fragment.descendant_ids and len(fragment.descendant_ids) == 3
+    assert fragment.lost_contributions
+    tracked = {}
+    for body_id in fragment.descendant_ids:
+        for parcel, mass in experiment.composition[body_id].items():
+            tracked[parcel] = tracked.get(parcel, 0.)+mass
+    for item in fragment.lost_contributions:
+        tracked[item.parcel_id] = tracked.get(item.parcel_id, 0.)+item.mass
+    assert tracked == pytest.approx({'alpha': 1e-5, 'beta': 2e-5})
+    assert experiment.removed['alpha'].status == 'fragmented'
+    story = experiment.replay_ancestry('alpha')
+    assert story.status == 'fragmented'
+    assert any(event.kind == 'fragment' and event.descendant_ids == fragment.descendant_ids for event in story.events)
+    assert story.descendant_ids
+    books = experiment.accounting()
+    assert books.merge_count == 0
+    assert books.parcel_error == pytest.approx(0., abs=1e-15)
+    assert books.merge_momentum_error == pytest.approx(0., abs=1e-12)
+    path = tmp_path/'fragments.json'
+    save_checkpoint(experiment, path)
+    restored = load_checkpoint(path)
+    assert restored.provenance['collision_model'] == SPEED_ANGLE_VERSION
+    assert restored.prepared.setup.collision_mode == 'speed_angle'
+    restored_event = next(event for event in restored.events if event.kind == 'fragment')
+    assert restored_event.descendant_ids == fragment.descendant_ids
+    assert {(item.parcel_id, item.mass) for item in restored_event.lost_contributions} == {
+        (item.parcel_id, item.mass) for item in fragment.lost_contributions}
+    child = restored.branch(VelocityChange(fragment.descendant_ids[0], (0., .1), 'Nudge one fragment.'))
+    assert child.provenance['parent_checkpoint_id'] == restored.checkpoint_id
+    assert fragment.descendant_ids[0] in child.composition
+
+
+def test_same_experiment_can_be_rerun_under_each_stored_rule():
+    perfect = FormationExperiment(make_demonstration_setup(), ejection_radius=100.)
+    angled = FormationExperiment(with_collision_rule(make_demonstration_setup(), 'speed_angle'), ejection_radius=100.)
+    perfect.integrate(.2, finish=True)
+    angled.integrate(.2, finish=True)
+    assert perfect.status == angled.status == 'complete'
+    assert any(event.kind == 'merge' and len(event.descendant_ids) == 1 for event in perfect.events)
+    assert any(event.kind == 'fragment' and len(event.descendant_ids) == 3 for event in angled.events)
+    compared = SynchronizedPlayback(perfect, angled)
+    view = compared.seek(min(perfect.time, angled.time))
+    assert view.common_start <= view.time <= view.common_end
 
 
 def test_invalid_checkpoint_is_rejected(tmp_path):

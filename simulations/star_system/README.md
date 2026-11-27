@@ -51,8 +51,10 @@ position in the system; the click chooses only the direction. **Calculate a reco
 bounded calculator; completed recordings appear under **Recorded results**.
 **Save initial setup** writes that beginning, including population seeds and the collision mode.
 **Save current state as new setup** writes evolved positions and velocities as a new named epoch and leaves the open experiment in place.
-Choose `none` or `perfect_merge`, then **Apply collisions + reset**, to rebuild the starting setup.
-Perfect merge joins nonstellar bodies, absorbs point tracers with no mass feedback, ignores tracer–tracer contact, and halts if a star is involved.
+Choose `none`, `perfect_merge`, or `speed_angle`, then **Apply collisions + reset**, to rebuild the starting setup.
+Perfect merge joins nonstellar bodies into one remnant and is not a general collision law.
+Speed and angle merges, grazes, or fragments from impact speed and angle, and tracks fragments as bodies.
+Both rules absorb point tracers with no mass feedback, ignore tracer–tracer contact, and log contact with a star as unmodeled without ending the run.
 Native file dialogs save and load the existing validated JSON format.
 
 **Focus selected and its orbiting bodies** zooms to a planet's local system;
@@ -507,28 +509,41 @@ Optional close-pass tides are a separate experiment choice and stay off in these
 
 ### Optional idealized nonstellar contacts
 
-Open **Experiment / Save / Load...**, choose `none` or `perfect_merge`, and use
-**Apply collisions + RESET**. This explicitly rebuilds the selected starting
-setup in paused preparation, including when invoked from LIVE/RECORDED; existing
-recordings and their source setups remain immutable. An invalid selection leaves
-the current state recoverable. Physical contact uses world AU and supplied physical
+Open **Experiment / Save / Load...**, choose `none`, `perfect_merge`, or
+`speed_angle`, and use **Apply collisions + RESET**. This explicitly rebuilds the
+selected starting setup in paused preparation, including when invoked from
+LIVE/RECORDED; existing recordings and their source setups remain immutable. An
+invalid selection leaves the current state recoverable. The selected rule is stored
+on the setup (`collision_mode` plus the versioned `collision_policy`) so a later
+experiment file can keep it. Physical contact uses world AU and supplied physical
 radii, independently of zoom, marker size, compression or rotating coordinates.
 Initial surface overlap/contact is rejected for revision. Missing massive radii
-block this mode; tracers are points and may have no radius.
+block a physical mode; tracers are points and may have no radius.
 
-| Pair | `perfect_merge` response |
-| --- | --- |
-| Two positive-mass nonstellar bodies | Merge at resolved physical sphere contact |
-| Zero-mass tracer and positive-mass nonstellar body | Absorb/remove the point tracer; zero mass/momentum feedback |
-| Two tracers | Ignore contact and mutual gravity |
-| Any contact involving a star | Halt the entire macro step unchanged, explicitly referencing deferred stellar-merger #14 |
+A collision does not end a run. The macro step finishes, and every collision is
+logged with its time, the participants, the selected rule, and the outcome.
+A numerical failure or a user cancellation can still end a run early and is
+labeled as such. Mode `none` still halts on an unresolved close encounter; that
+guard is a fixed-step limit, not a collision outcome.
+
+| Pair | `perfect_merge` | `speed_angle` |
+| --- | --- | --- |
+| Two positive-mass nonstellar bodies | Merge at resolved physical sphere contact | Merge, graze, or fragment from impact speed and impact parameter |
+| Zero-mass tracer and positive-mass nonstellar body | Absorb/remove the point tracer; zero mass/momentum feedback | Same absorption |
+| Two tracers | Ignore contact and mutual gravity | Ignore contact and mutual gravity |
+| Any contact involving a star | Log `unmodeled`, keep both bodies, and continue | Log `unmodeled`, keep both bodies, and continue |
 
 Ordinary binary gravity remains supported; an orbit is not a stellar-merger model.
-`perfect_merge` still halts when a star is involved. The only modeled stellar
-merger is the separate [Binary-star merger](#binary-star-merger) experiment.
-The versioned policy is `nonstellar-perfect-merge-v1`, pair rule
-`nonstellar-massive-merge-point-tracer-absorb-star-halt-v1`, and remnant rule
-`volume-com-planet-reference-map-v1`. Simultaneous physical contacts form connected
+Neither selectable rule merges a star. While an unmodeled stellar overlap remains,
+that pair's gravity is evaluated at the contact separation so the fixed step can
+cross the point-mass singularity. Masses and velocities are not replaced by a
+remnant. The only modeled stellar merger is the separate
+[Binary-star merger](#binary-star-merger) experiment.
+Perfect merge's versioned policy is `nonstellar-perfect-merge-v1`, pair rule
+`nonstellar-massive-merge-point-tracer-absorb-star-unmodeled-v1`, and remnant rule
+`volume-com-planet-reference-map-v1`. Documents saved with the older pairs id
+`nonstellar-massive-merge-point-tracer-absorb-star-halt-v1` still load and adopt
+the continuation id. Simultaneous physical contacts form connected
 massive groups, processed in sorted stable-ID order, with sorted-parent identities
 and recursively retained ancestry. Unaffected rows retain their relative order.
 Remnants get a deterministic hash ID and combined name, summed mass, center-of-mass
@@ -548,12 +563,53 @@ lost relative translational kinetic energy is
 `0.5*m1*m2/(m1+m2)*|v1-v2|**2`). The orbital-angular-momentum residual about the
 COM is recorded as **unmodeled internal spin**. Total energy and modeled orbital
 angular momentum are not claimed conserved across merges. Heat, spin evolution,
-ejecta, fragmentation, erosion, hit-and-run, and stellar impact physics are
-absent from this contact model. Optional close-pass tides are a separate choice
+ejecta are absent from perfect merge. Perfect merge is a disclosed
+option with one remnant. It is unrealistic as a general law: Venus plus Earth
+would not become one body. Optional close-pass tides are a separate choice
 and are not applied inside this solver. Real planetary impacts have several outcome regimes; see
 [Leinhardt & Stewart](https://arxiv.org/abs/1106.6084v3) and
-[Stewart & Leinhardt](https://arxiv.org/abs/1109.4588v3). This option does not
+[Stewart & Leinhardt](https://arxiv.org/abs/1109.4588v3). Perfect merge does not
 implement those richer models or cosmological/galaxy collisions.
+
+### Speed and angle
+
+`speed_angle` is the other stored rule. Its policy version is
+`speed-angle-merge-graze-fragment-v1`, pair rule
+`nonstellar-speed-angle-merge-graze-fragment-star-unmodeled-v1`, and remnant rule
+`fragments-tracked-losses-recorded-v1`. It uses the same positive-time contact
+solver. At contact it measures the impact speed and the impact parameter
+`b = |r × v| / (|r| |v|)` (0 is head-on, 1 is tangent) and the mutual escape speed
+`sqrt(2 G (m1+m2) / (R1+R2))`.
+
+| Condition | Outcome |
+| --- | --- |
+| Impact speed at or below mutual escape | Merge, same remnant as perfect merge |
+| Faster, and `b >= 0.5` | Graze: both bodies keep their mass; the normal relative velocity reverses; the tangential velocity stays |
+| Faster, and `b < 0.5` | Fragment |
+
+A fragment replaces the parents with one largest remnant and two equal fragment
+bodies. With `severity = min(4, (v/v_esc - 1) * (1-b))`, the lost-mass fraction is
+`min(0.2, 0.05 * severity)` and each tracked fragment's fraction is
+`min(0.25, 0.10 + 0.05 * severity)`. The largest remnant is the rest, and never
+less than 0.2 of the parent mass. Lost mass is recorded on the event and is not a
+body. It is accounted at the parents' center-of-mass velocity, so tracked mass plus
+lost mass, and tracked momentum plus lost momentum, match the parents. Fragment
+kinetic energy in the center-of-mass frame is 25% of the incoming relative kinetic
+energy; the rest is the recorded loss. Parcel ancestry is the parents' parcels,
+split across the tracked bodies and the recorded loss. This is a disclosed
+speed-and-angle map. It is not the Stewart and Leinhardt strength model, and it
+does not claim a unique real Venus–Earth outcome.
+
+Further rules can be added as another named `collision_mode` and policy identity
+on the same setup fields.
+
+Close encounters and orbital changes are logged in addition to merges, grazes,
+fragments, and ejections. A close encounter is a pair that comes inside three
+contact radii without touching, either by entering that sphere or by reaching a
+periapsis inside it. An orbital change is logged when a participant's star-centric
+semi-major axis changes by at least 5% or its eccentricity changes by at least 0.02.
+The log carries the time and the participating bodies. Histories of removed bodies
+keep those events.
 
 `perfect_merge` uses a separately named **positive-time velocity-Verlet** solver.
 It never responds to Yoshida's negative middle stage. One live Step still advances
@@ -680,14 +736,14 @@ The kick is applied to the velocity at the end of the fixed Yoshida step that
 contains the inbound-to-outbound crossing. The pericenter is estimated by
 interpolating that sign change across the step. The close-encounter guard is
 unchanged: an unresolved step still halts and keeps the last accepted state,
-and this model does not run. Collision modes `perfect_merge` and
+and this model does not run. Collision modes `perfect_merge`, `speed_angle`, and
 `binary_star_merger` keep the contact solver and do not apply the kick, even
 if a tide policy is stored on the setup.
 
 This kick is not a 3D or adaptive-step integrator and it does not call REBOUND (#70).
 A fixed step that skips the pericenter, or that estimates it poorly, understates the energy loss,
 so tides are not the dominant capture path for an unresolved encounter.
-It does not change collision rules (#69): perfect merge and the binary-star merger still use the contact solver,
+It does not change collision rules (#69): perfect merge, speed and angle, and the binary-star merger still use the contact solver,
 and a stored tide choice is not applied on that path.
 Fragmentation, hit-and-run, and merger remnants are not tidal outcomes.
 Where an impact would dominate, this model is not the capture path.
@@ -737,7 +793,7 @@ does not merge PRs or close issues. #6 is already closed externally and remains 
 | #9 / 4,5,6,8 | Planet-relative initial states and timescale limits, live insertion, separation inspection, save/replay; contact uses the same nonstellar response and explicit remnant-parent mapping. No forced binding or tides. |
 | #8 / 5,6,8 | Named/custom preparation, separate initial/current saves, strict version recovery, bounded calculation and immutable replay, retained live mode, versioned physical contact and PRE/POST events. Numerical/unsupported-contact/memory halts preserve partial accepted output and report incomplete status. |
 | #7 / 7 | Sun/Jupiter ring preset and matched control, rotating historical view and labeled geometric guides; original collision-none behavior remains covered. Optional collision mode changes numerical identity; no Trojan/capture/stability guarantee. |
-| #14 | Stellar contact halts transactionally; no stellar merger/remnant, dissipation or stellar structure is implemented. |
+| #14 | The binary-star scenario is the only modeled stellar merger. Other stellar contact is logged as unmodeled and the run continues; it does not build a nonstellar remnant. |
 
 The selected minimal recording controls remain duration/stride/budget, forward
 Play/Pause/Next, and in-memory results. Timeline scrubbing, reverse navigation,
@@ -917,9 +973,9 @@ followed; the selected particle has a bounded trail. There is no
 particle self-gravity/accretion or stability promise, especially for
 multiple-star systems. Test particles represent rocks whose gravitational
 influence is neglected: they feel every massive body but do not backreact or
-interact with one another. In optional `perfect_merge`, point tracers are absorbed
+interact with one another. In `perfect_merge` and `speed_angle`, point tracers are absorbed
 by nonstellar massive bodies without feedback, ignored by other tracers, and
-halt on stellar contact. The Jupiter preset defaults to collision mode `none`;
+logged without a remnant if they meet a star. The Jupiter preset defaults to collision mode `none`;
 changing modes is an explicit reset and a different numerical model.
 
 Persistence saves/reloads full settings, seed, population ID and reference ID,
@@ -1209,9 +1265,10 @@ expected Agg notice. A final captured-ancestry lookup assertion passed its focus
 identity regression (**1 passed in 0.12 seconds**). This is the final verification
 boundary; the full suite was not repeated after those scoped refinements.
 
-Both CLI commands succeeded. The workflow tests also run saved collision and
-unsupported-stellar-contact exports in fresh processes: normal completion exits 0;
-stars halt with exit 2 and an inspectable incomplete PNG. The separately reviewed
+Both CLI commands succeeded. The workflow tests also run saved collision exports
+in fresh processes. A selectable-rule run that only meets a star completes and
+exits 0; that contact is logged as unmodeled. The binary-star scenario still
+exits 2 when a contact is outside its supported pair. The separately reviewed
 CLI images are 1350x1350. Normal App previews `output/collision-preparation.png`,
 `output/collision-live-remnant.png`, `output/collision-recorded-pre.png`, and
 `output/collision-recorded-post.png` (1776x1104), plus

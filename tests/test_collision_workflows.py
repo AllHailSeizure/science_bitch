@@ -165,10 +165,12 @@ def test_memory_budget_rejects_event_macro_without_losing_policy_or_metadata():
     assert sum(frame_storage_bytes(frame) for frame in calc.result.frames) <= calc.request.max_bytes
 
 
-def test_star_and_numerical_halts_remain_partial_results():
+def test_star_contact_completes_and_numerical_halts_remain_partial_results():
     star = calculate(setup_fixture('star'))
-    assert star.result.status == 'halted' and '#14' in star.result.reason
-    assert star.result.completed_steps == 0 and star.result.actual_end_time == 0
+    assert star.result.status == 'complete'
+    assert star.result.actual_end_time == pytest.approx(.4)
+    assert any(event.kind == 'unmodeled' for frame in star.result.frames for event in frame.events)
+    assert not any(event.kind == 'merge' for frame in star.result.frames for event in frame.events)
     setup = setup_fixture()
     limited = calculate(replace(setup, collision_policy=replace(setup.collision_policy, max_substeps=1)))
     assert limited.result.status == 'halted' and 'numerical halt' in limited.result.reason
@@ -254,6 +256,18 @@ def test_policy_dialog_is_explicit_reset_and_previous_result_stays_immutable(app
     assert app.session.recordings[0] is old and old.source_setup.collision_mode == 'perfect_merge'
 
 
+def test_speed_angle_picker_stores_the_rule_on_the_setup(app):
+    app.select_setup(get_scenario('sun-earth-jupiter'))
+    app.edit_experiment()
+    editor = app.experiment_editor
+    editor.collision_picker.set_active(2)
+    assert editor.collision_picker.value_selected == 'speed_angle'
+    editor.collisions()
+    assert app.initial_setup.collision_mode == 'speed_angle'
+    assert app.initial_setup.collision_policy.version == 'speed-angle-merge-graze-fragment-v1'
+    assert app.system.time == 0 and app.paused
+
+
 def test_population_moon_insertion_and_display_scale_do_not_change_physics(app, monkeypatch):
     setup = replace(get_scenario('sun-jupiter-ring'), collision_mode='perfect_merge')
     pop = calculate(setup, steps=2)
@@ -274,15 +288,14 @@ def test_population_moon_insertion_and_display_scale_do_not_change_physics(app, 
     assert inserted.system.time == app.system.time
 
 
-def test_saved_collision_cli_and_unsupported_contact_export_status(tmp_path):
-    for kind, expected in (('planet', 0), ('star', 2)):
+def test_saved_collision_cli_completes_for_a_planet_and_a_star(tmp_path):
+    for kind in ('planet', 'star'):
         path, image = tmp_path/(kind+'.json'), tmp_path/(kind+'.png')
         save_setup(setup_fixture(kind), path)
         result = subprocess.run([sys.executable, '-m', 'simulations.star_system', '--load', str(path),
             '--years', '.2', '--sample-stride', '100', '--output', str(image)], capture_output=True, text=True)
-        assert result.returncode == expected, result.stderr
-        if expected:
-            assert 'halted' in result.stderr and '#14' in result.stderr
+        assert result.returncode == 0, result.stderr
+        assert 'halted' not in result.stderr
         with Image.open(image) as png:
             assert png.format == 'PNG' and png.size == (1350, 1350)
 

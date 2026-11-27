@@ -145,16 +145,17 @@ class App:
 
     def set_collision_mode(self, mode):
         """Explicitly restart selected starting setup in paused preparation."""
-        from dataclasses import replace
         from .experiments import custom_copy
-        self.select_setup(custom_copy(replace(self.initial_setup, collision_mode=mode), self.initial_setup))
+        from .model import with_collision_rule
+        self.select_setup(custom_copy(with_collision_rule(self.initial_setup, mode), self.initial_setup))
         note = ''
         if self.initial_setup.tides.enabled and mode != 'none':
             note = ' Tidal dissipation stays stored but is not applied inside the contact solver.'
         elif self.initial_setup.tides.enabled:
             note = ' Tidal dissipation stays on for this Yoshida run.'
         self.status.set_text(f'Collision mode {mode}; reset to starting setup in preparation. '
-                            'Perfect merge: nonstellar spheres / point tracers; stellar contact halts (#14).'+note)
+                            'Perfect merge keeps one remnant and is not a general law. '
+                            'Speed and angle can graze or fragment. Stellar contact is logged and the run continues (#14).'+note)
         self._refresh()
 
     def set_tides(self, enabled):

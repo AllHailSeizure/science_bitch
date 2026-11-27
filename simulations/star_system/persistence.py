@@ -22,7 +22,7 @@ GENERATOR_VERSION = 'planar-circular-population-v1'
 # Integrator implementation that produces a trajectory. Not written into setup
 # JSON and not part of setup_digest. Bump when solver arithmetic changes even
 # if NUMERICAL_VERSION stays the same.
-SOLVER_BUILD = 'star-system-solver-build-1'
+SOLVER_BUILD = 'star-system-solver-build-2'
 UNITS = {'length': 'AU', 'mass': 'solar_mass', 'time': 'Julian_year',
          'velocity': 'AU/Julian_year', 'temperature': 'K'}
 
@@ -47,8 +47,8 @@ def _population(pop):
 
 
 def _numerical_version(setup):
-    # binary_star_merger uses the same positive-time contact solver as perfect_merge.
-    if setup.collision_mode in ('perfect_merge', 'binary_star_merger'):
+    # Physical contact modes share the positive-time Verlet solver. Mode none stays on Yoshida.
+    if setup.collision_mode in ('perfect_merge', 'speed_angle', 'binary_star_merger'):
         return setup.collision_policy.numerical
     return NUMERICAL_VERSION
 
@@ -194,7 +194,7 @@ def _decode(document):
     _string(value['name'], 'Setup name')
     _string(value['preset_id'], 'Preset ID', nullable=True)
     _string(value['collision_mode'], 'Collision mode')
-    if value['collision_mode'] in ('perfect_merge', 'binary_star_merger') and 'collision_policy' not in value:
+    if value['collision_mode'] in ('perfect_merge', 'speed_angle', 'binary_star_merger') and 'collision_policy' not in value:
         raise ValueError('Physical collision mode requires an explicit versioned collision policy.')
     policy = CollisionPolicy(**_object(value['collision_policy'], {field.name for field in fields(CollisionPolicy)}, 'Collision policy')) if 'collision_policy' in value else CollisionPolicy()
     if 'tides' in value:
@@ -204,7 +204,7 @@ def _decode(document):
         tides = TidalPolicy(**raw)
     else:
         tides = TidalPolicy()
-    contact = value['collision_mode'] in ('perfect_merge', 'binary_star_merger')
+    contact = value['collision_mode'] in ('perfect_merge', 'speed_angle', 'binary_star_merger')
     if document['numerical_version'] != (policy.numerical if contact else NUMERICAL_VERSION):
         raise ValueError('Unsupported numerical_version for selected collision mode.')
     _number(value['dt'], 'Fixed dt', positive=True)
