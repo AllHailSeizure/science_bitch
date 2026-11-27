@@ -102,7 +102,15 @@ second, the bodies currently in view, and the playback and inspection controls.
 | Open planetary view | Show the selected planet and the moons assigned to it |
 
 **Add body** is where catalog choices appear. Placement and starting-velocity
-editing stay on that existing path. A long body list scrolls inside the sidebar,
+editing stay on that existing path. During a run, **Add body** pauses the clock.
+Click the scene to drop the body, drag the arrow (its length is speed), then
+**Confirm insertion**. Existing positions, velocities, and elapsed time stay as
+they are, and the starting setup is not rewritten. **Reset** drops that insertion.
+The circular arrow is a two-body aid around the chosen reference, including a
+second star, and does not guarantee a stable orbit. **Custom body** takes a name,
+kind, mass, and optional radius without editing a source file. Unknown catalog
+values stay unknown until you supply one. The inspector shows units, status, and
+the source for each value. A long body list scrolls inside the sidebar,
 so Run, Pause, Resume, and Step remain on screen.
 
 Select a planet and choose **Open planetary view**. The scene recenters on that
