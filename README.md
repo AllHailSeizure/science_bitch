@@ -17,6 +17,7 @@ One year of the Sun, Earth, and Jupiter, rendered by `sidereel-cli`.
 - Save the initial setup, or save the current state as a new setup. Calculate a recording, then play the samples. Playback speed does not recalculate the motion.
 - Optional perfect merge for nonstellar contact. Point tracers are absorbed with no mass feedback. Contact with a star halts. The default still halts on a close encounter and does not merge.
 - An isolated planet holds its period to a relative 1e-7. At 1 AU, solar gravity sits about 30 ppm above JPL's GM, inside a 1e-4 bound.
+- A late-stage formation prototype that follows rocky embryos, records which parcels built each body, and compares two runs from one checkpoint.
 
 ## Prerequisites and installation
 
@@ -75,6 +76,10 @@ sidereel-cli --star sun --planet mercury --planet venus --planet earth --years 0
 `--years` works only with `--output`. So do `--sample-stride` and `--max-recording-mib`. Name bodies without `--output` and the Matplotlib window opens instead.
 
 In a checkout, `python -m simulations.star_system` is the same program. `sidereel-cli --help` lists every flag.
+
+## Formation prototype
+
+`simulations.star_system.formation` starts from a star and massive embryos, merges them on contact, and keeps the mass each parcel contributed. Save a checkpoint, change one velocity, and play both runs across the years they share. The bundled embryo radii are inflated, and the run does not include gas or fragmentation. The measured benchmark and the recommended scope are in [docs/formation-feasibility.md](docs/formation-feasibility.md).
 
 ## License
 
