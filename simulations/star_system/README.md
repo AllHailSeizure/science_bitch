@@ -36,7 +36,7 @@ python -m pytest -q
 
 `python -m simulations.star_system` with no arguments opens the native Qt
 **Observatory** window. **Choose experiment** lists prepared templates (Solar
-System, doubled stellar mass, added Moon, test-particle ring, and others). **Load
+System, doubled stellar mass, added Moon, test-particle ring, and the Sun–Jupiter ring). **Load
 saved experiment** opens validated JSON starting setups from disk.
 
 Each experiment opens at time zero with **Run**, **Pause**, **Reset**, and
@@ -46,6 +46,10 @@ then a scene click; Escape cancels. **Lunar** asks for the parent planet and the
 moon's center-to-center distance in kilometers, separate from that planet's
 position in the system; the click chooses only the direction. **Calculate a recording** uses the shared
 bounded calculator; completed recordings appear under **Recorded results**.
+**Save initial setup** writes that beginning, including population seeds and the collision mode.
+**Save current state as new setup** writes evolved positions and velocities as a new named epoch and leaves the open experiment in place.
+Choose `none` or `perfect_merge`, then **Apply collisions + reset**, to rebuild the starting setup.
+Perfect merge joins nonstellar bodies, absorbs point tracers with no mass feedback, ignores tracer–tracer contact, and halts if a star is involved.
 Native file dialogs save and load the existing validated JSON format.
 
 **Focus selected and its orbiting bodies** zooms to a planet's local system;
