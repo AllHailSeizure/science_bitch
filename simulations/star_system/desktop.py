@@ -17,7 +17,7 @@ from PyQt6.QtGui import QFontDatabase, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QStackedWidget, QVBoxLayout, QHBoxLayout,
     QScrollArea, QListWidget, QListWidgetItem, QTabWidget, QLineEdit,
-    QFileDialog, QMessageBox, QFormLayout, QGroupBox, QSpinBox, QDoubleSpinBox,
+    QFileDialog, QInputDialog, QMessageBox, QFormLayout, QGroupBox, QSpinBox, QDoubleSpinBox,
     QComboBox, QProgressBar, QCheckBox,
 )
 
@@ -25,7 +25,7 @@ from .collisions import advance_prepared, mapped_selection
 from .context import selection_context
 from .core import System
 from .desktop_panels import AUYR_TO_KMS, BodyCatalog, BodyInformation, BodyProperties, Dropdown, action, label, spin
-from .experiments import ExperimentSession
+from .experiments import ExperimentSession, capture_current_setup, custom_copy
 from .history import MAX_HISTORY, StateFrame
 from .initialization import PreparedSystem, circular_relative_velocity, insert_body
 from .model import InitialBody
@@ -33,6 +33,7 @@ from .persistence import load_setup, save_setup, setup_digest
 from .playback import Playback
 from .recording import Calculation, CalculationRequest
 from .rendering import BACKGROUND, ACCENT, draw_system
+from .scenarios import DESCRIPTIONS, JUPITER_RING, get_scenario
 from .templates import EXPERIMENTS, get_experiment, place_body, remove_body, update_body
 
 
@@ -144,6 +145,7 @@ class Observatory(QMainWindow):
         self.editing = True
         self.dirty = False
         self.saved_digest = None
+        self.initial_path = None
         self.pending_body = None
         self.live_draft = None
         self.live_tip = None
@@ -216,8 +218,10 @@ class Observatory(QMainWindow):
         row = QHBoxLayout()
         self.experiment_list = QListWidget()
         self.experiment_list.setMinimumWidth(280)
-        for experiment in EXPERIMENTS:
-            self.experiment_list.addItem(experiment.title)
+        for kind, key, title, description, observe in self._library_entries():
+            item = QListWidgetItem(title)
+            item.setData(Qt.ItemDataRole.UserRole, (kind, key, description, observe))
+            self.experiment_list.addItem(item)
         row.addWidget(self.experiment_list, 1)
         details = QWidget()
         details_layout = QVBoxLayout(details)
@@ -237,11 +241,22 @@ class Observatory(QMainWindow):
         self.experiment_list.setCurrentRow(0)
         return page
 
+    def _library_entries(self):
+        entries = [('template', item.key, item.title, item.description, item.observe) for item in EXPERIMENTS]
+        scenario = get_scenario(JUPITER_RING)
+        entries.append(('scenario', JUPITER_RING, scenario.name, DESCRIPTIONS[JUPITER_RING],
+            'Inspect the Sun, Jupiter, and the seeded ring, then calculate or run. '
+            'Gravity produces the motion. The ring is not steered toward a target.'))
+        return entries
+
     def describe_experiment(self, index):
-        item = EXPERIMENTS[max(0, index)]
-        self.experiment_title.setText(item.title)
-        self.experiment_description.setText(item.description)
-        self.experiment_observe.setText(item.observe)
+        item = self.experiment_list.item(index)
+        if item is None:
+            return
+        _kind, _key, description, observe = item.data(Qt.ItemDataRole.UserRole)
+        self.experiment_title.setText(item.text())
+        self.experiment_description.setText(description)
+        self.experiment_observe.setText(observe)
 
     def make_workspace(self):
         page = FullWindowWorkspace()
@@ -267,9 +282,11 @@ class Observatory(QMainWindow):
         form.setSpacing(8)
         navigation = QHBoxLayout()
         navigation.addWidget(action('Starting menu', self.show_menu))
-        self.save_button = action('Save experiment…', self.save_dialog)
-        navigation.addWidget(self.save_button)
         form.addLayout(navigation)
+        self.save_initial_button = action('Save initial setup', self.save_dialog)
+        self.save_current_button = action('Save current state as new setup', self.save_current_dialog)
+        form.addWidget(self.save_initial_button)
+        form.addWidget(self.save_current_button)
         self.heading_label = label('', 'heading')
         self.heading_label.setAccessibleName('Scenario name')
         form.addWidget(self.heading_label)
@@ -364,6 +381,21 @@ class Observatory(QMainWindow):
         edits.addWidget(self.undo_button)
         edits.addWidget(self.original_button)
         form.addLayout(edits)
+        collision = QHBoxLayout()
+        collision.addWidget(label('Collisions', 'muted'))
+        self.collision_mode = Dropdown()
+        self.collision_mode.addItem('None', 'none')
+        self.collision_mode.addItem('Perfect merge', 'perfect_merge')
+        collision.addWidget(self.collision_mode, 1)
+        self.collision_button = action('Apply collisions + reset', self.apply_collision_mode)
+        collision.addWidget(self.collision_button)
+        form.addLayout(collision)
+        self.collision_note = label(
+            'Choose none or perfect merge, then apply. Applying resets to the starting setup and keeps earlier recordings. '
+            'Perfect merge joins nonstellar bodies on contact and absorbs point tracers with no mass feedback. '
+            'Particle/particle contact is ignored. Contact with a star halts. Marker overlap is not a physical collision.',
+            'muted')
+        form.addWidget(self.collision_note)
         form.addWidget(self.make_calculation_controls())
         recordings = QHBoxLayout()
         recordings.addWidget(label('Recorded results', 'muted'))
@@ -454,7 +486,14 @@ class Observatory(QMainWindow):
         self.stack.setCurrentWidget(self.library_page)
 
     def open_selected(self):
-        self.open_experiment(EXPERIMENTS[max(0, self.experiment_list.currentRow())].key)
+        item = self.experiment_list.currentItem()
+        if item is None:
+            return
+        kind, key, *_rest = item.data(Qt.ItemDataRole.UserRole)
+        if kind == 'scenario':
+            self.install_experiment(get_scenario(key))
+        else:
+            self.open_experiment(key)
 
     def open_experiment(self, key):
         self.install_experiment(get_experiment(key))
@@ -465,6 +504,7 @@ class Observatory(QMainWindow):
         self.stop_activity()
         self.session, self.original_setup = session, setup
         self.saved_digest = setup_digest(setup)
+        self.initial_path = None
         self.selected_id = None
         self.editing, self.dirty = True, False
         self.pending_body = None
@@ -487,8 +527,10 @@ class Observatory(QMainWindow):
         self.history = deque([StateFrame.capture(self.prepared)], maxlen=MAX_HISTORY)
         self.create_scene()
         self.refresh_bodies()
+        self._show_collision_mode()
         self.sync_controls()
-        self.tell(setup.provenance.get('observe', 'Frozen starting setup. Run it, or select a body to edit.'))
+        self.tell(setup.provenance.get('observe') or setup.provenance.get('description')
+                  or 'Frozen starting setup. Run it, or select a body to edit.')
 
     def create_scene(self):
         self.scene = draw_system(self.ax, self.prepared, self.history)
@@ -586,7 +628,15 @@ class Observatory(QMainWindow):
         self.run_button.setEnabled(not calculating and not placing)
         self.step_button.setEnabled(not calculating and not placing)
         self.reset_button.setEnabled(not calculating and not placing)
-        self.save_button.setEnabled(not calculating and not placing)
+        self.save_initial_button.setEnabled(not calculating and not placing)
+        self.save_current_button.setEnabled(not calculating and not placing)
+        self.collision_mode.setEnabled(not calculating and not placing)
+        self.collision_button.setEnabled(not calculating and not placing)
+        self.collision_note.setText(
+            f'Active collision mode: {self.setup.collision_mode}. '
+            'Apply collisions + reset rebuilds the starting setup and keeps earlier recordings. '
+            'Perfect merge joins nonstellar bodies on contact and absorbs point tracers with no mass feedback. '
+            'Particle/particle contact is ignored. Contact with a star halts. Marker overlap is not a physical collision.')
         self.calculate_button.setEnabled(not placing)
         self.calculate_button.setText('Cancel calculation' if calculating else 'Calculate')
         if self.running:
@@ -804,6 +854,7 @@ class Observatory(QMainWindow):
         self.pending_time = 0.
         self.history = deque([StateFrame.capture(self.prepared)], maxlen=MAX_HISTORY)
         self.name_field.setText(self.setup.name)
+        self._show_collision_mode()
         self.refresh_bodies()
         self.refresh_scene()
         self.sync_controls()
@@ -949,6 +1000,7 @@ class Observatory(QMainWindow):
         self.dirty = setup_digest(self.setup) != self.saved_digest
         self.history = deque([StateFrame.capture(self.prepared)], maxlen=MAX_HISTORY)
         self.name_field.setText(previous.name)
+        self._show_collision_mode()
         self.refresh_bodies()
         self.refresh_scene()
         self.sync_controls()
@@ -973,16 +1025,18 @@ class Observatory(QMainWindow):
         self.apply_setup(replace(self.setup, name=name))
 
     def save_to(self, path):
-        save_setup(self.setup, Path(path))
+        path = Path(path)
+        save_setup(self.setup, path)
+        self.initial_path = path
         self.saved_digest = setup_digest(self.setup)
         self.dirty = False
-        self.tell(f'Saved starting setup: {path}. Recorded results remain in memory for this session.')
+        self.tell(f'Saved initial setup: {path}. Recorded results remain in memory for this session.')
 
     def save_dialog(self):
         if not self.session:
             return False
         self.rename_experiment()
-        filename, _ = QFileDialog.getSaveFileName(self, 'Save experiment starting setup', self.setup.name+'.json', 'Experiment (*.json)')
+        filename, _ = QFileDialog.getSaveFileName(self, 'Save initial setup', self.setup.name+'.json', 'Experiment (*.json)')
         if not filename:
             return False
         try:
@@ -992,9 +1046,66 @@ class Observatory(QMainWindow):
             return False
         return True
 
+    def _reject_same_initial_path(self, path):
+        if self.initial_path is None:
+            return
+        path, initial = Path(path), Path(self.initial_path)
+        try:
+            same = path.resolve() == initial.resolve() or (path.exists() and initial.exists() and path.samefile(initial))
+        except OSError:
+            same = False
+        if same:
+            raise ValueError('Choose a capture path different from the initial setup path.')
+
+    def save_current_to(self, path, name):
+        """Write evolved state as a new epoch. Leave the open experiment selected."""
+        if not self.session:
+            raise ValueError('Open an experiment before saving its current state.')
+        path = Path(path)
+        self._reject_same_initial_path(path)
+        if self.playback is None:
+            captured = self.session.save_current(path, name)
+        else:
+            source = self.playback.recording.source_setup
+            if source is None:
+                raise ValueError('This recording has no source setup definition for capture provenance.')
+            captured = capture_current_setup(self.prepared, source, name)
+            save_setup(captured, path)
+        source_time = captured.provenance.get('source_time')
+        self.tell(
+            f'Saved current state as a new setup: {captured.name}. {captured.provenance.get("capture_note", "")} '
+            f'Source "{captured.provenance.get("source_name")}" at {source_time:.6g} yr. '
+            f'Fixed dt {captured.dt:.6g} yr. The open experiment is unchanged. Load the file to use the new epoch.')
+        return captured
+
+    def save_current_dialog(self):
+        if not self.session or self.pending_body is not None:
+            return False
+        if self.calculation is not None and not self.calculation.done:
+            self.tell('Cancel or finish the calculation before saving the current state.')
+            return False
+        name, accepted = QInputDialog.getText(
+            self, 'Save current state as new setup',
+            'Name for the new starting setup. The open experiment stays as it is.',
+            text=self.setup.name+' / captured')
+        if not accepted:
+            return False
+        filename, _ = QFileDialog.getSaveFileName(
+            self, 'Save current state as new setup', 'captured.json', 'Experiment (*.json)')
+        if not filename:
+            return False
+        try:
+            self.save_current_to(filename, name)
+        except (ValueError, OSError) as exc:
+            self.tell(exc)
+            return False
+        return True
+
     def load_from(self, path):
-        setup = load_setup(Path(path))
+        path = Path(path)
+        setup = load_setup(path)
         self.install_experiment(setup)
+        self.initial_path = path
 
     def load_dialog(self):
         filename, _ = QFileDialog.getOpenFileName(self, 'Load saved experiment', '', 'Experiment (*.json)')
@@ -1012,6 +1123,52 @@ class Observatory(QMainWindow):
             self.playback.pause()
         if self.calculation is not None and not self.calculation.done:
             self.calculation.cancel()
+
+    def _show_collision_mode(self):
+        if not self.session:
+            return
+        index = self.collision_mode.findData(self.setup.collision_mode)
+        if index >= 0:
+            self.collision_mode.setCurrentIndex(index)
+
+    def apply_collision_mode(self):
+        """Rebuild the starting setup in preparation. Recordings keep their own mode."""
+        if not self.session or self.pending_body is not None:
+            return
+        if self.calculation is not None and not self.calculation.done:
+            self.tell('Cancel or finish the calculation before changing collision handling.')
+            return
+        mode = self.collision_mode.currentData()
+        candidate = custom_copy(replace(self.setup, collision_mode=mode), self.setup)
+        previous = self.setup
+        try:
+            prepared = self.session.select(candidate)
+        except ValueError as exc:
+            self._show_collision_mode()
+            self.tell(f'{exc} Current experiment unchanged.')
+            return
+        self.undo_stack.append(previous)
+        self.running = False
+        self.pending_time = 0.
+        self.playback = None
+        self.editing = True
+        self.selected_id = self.selected_id if self.selected_id in prepared.body_ids else None
+        self.history = deque([StateFrame.capture(prepared)], maxlen=MAX_HISTORY)
+        self.scene.result_info.set_text('')
+        self.result_combo.blockSignals(True)
+        self.result_combo.setCurrentIndex(-1)
+        self.result_combo.blockSignals(False)
+        self.dirty = setup_digest(self.setup) != self.saved_digest
+        self.name_field.setText(self.setup.name)
+        self._show_collision_mode()
+        self.refresh_bodies()
+        self.refresh_scene()
+        self.sync_controls()
+        detail = ('Point masses. A close encounter halts and keeps the last valid state. Marker overlap is not a physical collision.'
+                  if mode == 'none' else
+                  'Perfect merge: nonstellar spheres join on contact; point tracers are absorbed with no mass feedback; '
+                  'particle/particle contact is ignored; contact with a star halts. Stellar mergers are not modeled.')
+        self.tell(f'Collision mode {mode}. Reset to the starting setup. {detail} Earlier recordings keep their own mode.')
 
     def edit_starting_setup(self):
         if self.session:
