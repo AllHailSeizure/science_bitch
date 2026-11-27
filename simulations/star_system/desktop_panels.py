@@ -6,10 +6,11 @@ from PyQt6.QtCore import Qt, QPointF, pyqtSignal
 from PyQt6.QtGui import QColor, QImage, QPainter, QPen, QPixmap, QPolygonF
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QFormLayout, QLabel, QComboBox, QPushButton,
-    QDoubleSpinBox, QLineEdit, QGroupBox,
+    QDoubleSpinBox, QLineEdit, QGroupBox, QCheckBox,
 )
 
 from .data import AU_KM, CATALOG, SOLAR_KG
+from .model import BodySpec, PropertySource
 from .rendering import planet_sprite, star_sprite
 from .templates import override_properties
 
@@ -55,6 +56,73 @@ def spin(value, minimum=.001, maximum=1e6, decimals=3):
     return widget
 
 
+def _parse_measure(text, unit_name):
+    text = text.strip()
+    if not text:
+        return None
+    try:
+        value = float(text)
+    except ValueError:
+        raise ValueError(f'Enter a finite number for {unit_name}.') from None
+    if not np.isfinite(value):
+        raise ValueError(f'Enter a finite number for {unit_name}.')
+    return value
+
+
+def custom_spec(name, kind, mass, radius, temperature):
+    """A body typed in the observatory. Unknown fields stay unknown."""
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError('A custom body needs a name.')
+    units = {'mass': 'solar masses', 'radius': 'AU', 'temperature': 'K'}
+    fields = {'mass': mass, 'radius': radius}
+    if kind == 'star':
+        fields['temperature'] = temperature
+    sources = {field: PropertySource(
+        'user://custom', 'observatory', '', value, units[field], 'identity',
+        status='user-authored' if value is not None else 'unknown',
+        note='Entered in the observatory. Not a catalog measurement.')
+        for field, value in fields.items()}
+    return BodySpec(name.strip(), kind, mass, radius, temperature if kind == 'star' else None,
+                    provenance='custom', sources=sources)
+
+
+def _property_text(spec):
+    """Physical values with units, and the catalog status behind each one."""
+    conversions = {'mass': SOLAR_KG, 'radius': AU_KM, 'temperature': 1.}
+    units = {'mass': 'kg', 'radius': 'km', 'temperature': 'K'}
+    titles = {'mass': 'Mass', 'radius': 'Radius', 'temperature': 'Temperature'}
+    fields = ('mass', 'radius', 'temperature') if spec.kind == 'star' else ('mass', 'radius')
+    lines = [spec.kind.title()]
+    if spec.provenance != 'catalog':
+        lines.append('Custom values are marked as entered here, not as catalog measurements.')
+    for field in fields:
+        value = getattr(spec, field)
+        if value is None:
+            if field == 'temperature':
+                shown = 'unknown'
+            else:
+                shown = 'Unknown — not estimated'
+                if field == 'radius':
+                    shown += '. The marker is a drawing, not a physical radius'
+        else:
+            shown = f'{value*conversions[field]:,.5g} {units[field]}'
+        lines.append(f'{titles[field]}: {shown}')
+        source = spec.sources.get(field) if spec.sources else None
+        if source is None:
+            continue
+        detail = source.status or 'unspecified'
+        uncertainty = source.uncertainty
+        if uncertainty not in (None, '', '(None, None)') and not (
+                isinstance(uncertainty, tuple) and all(item is None for item in uncertainty)):
+            detail += f'; uncertainty {uncertainty} ({source.original_units})'
+        lines.append(f'  {detail}')
+        if source.url:
+            lines.append(f'  {source.url}')
+    if spec.kind == 'star' and spec.catalog_key is None and spec.provenance and spec.provenance != 'catalog':
+        lines.append(spec.provenance)
+    return '\n'.join(lines)
+
+
 class BodyInformation(QWidget):
     def __init__(self, preview_size=120):
         super().__init__()
@@ -77,14 +145,7 @@ class BodyInformation(QWidget):
         self.image.setPixmap(QPixmap.fromImage(image).scaled(self.preview_size, self.preview_size, Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation))
         self.name.setText(spec.name)
-        mass = f'{spec.mass*SOLAR_KG:.5g} kg' if spec.mass is not None else 'Unknown'
-        radius = f'{spec.radius*AU_KM:,.5g} km' if spec.radius is not None else 'Unknown'
-        text = f'{spec.kind.title()}\nMass: {mass}\nRadius: {radius}'
-        if spec.kind == 'star':
-            text += f'\nTemperature: {spec.temperature:,.0f} K' if spec.temperature else '\nTemperature: unknown'
-        if spec.kind == 'star' and spec.catalog_key is None and spec.provenance:
-            text += '\n' + spec.provenance
-        self.details.setText(text)
+        self.details.setText(_property_text(spec))
 
 
 class BodyCatalog(QWidget):
@@ -132,14 +193,48 @@ class BodyCatalog(QWidget):
         manual_form.addRow('Speed (km/s)', self.speed)
         manual_form.addRow('Direction (°)', self.direction)
         layout.addWidget(self.manual)
-        self.note = label('The circular option sets a starting velocity. Gravity determines the motion after that.', 'muted')
+        self.custom_check = QCheckBox('Custom body')
+        self.custom_check.setToolTip('Type a name and physical properties instead of using a catalog entry.')
+        layout.addWidget(self.custom_check)
+        self.custom_box = QWidget()
+        custom_form = QFormLayout(self.custom_box)
+        custom_form.setContentsMargins(0, 0, 0, 0)
+        custom_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        self.custom_name = QLineEdit('Custom body')
+        self.custom_kind = Dropdown()
+        for title, kind in (('Planet', 'planet'), ('Star', 'star'), ('Moon', 'moon'), ('Asteroid', 'asteroid')):
+            self.custom_kind.addItem(title, kind)
+        self.custom_mass = QLineEdit('1e21')
+        self.custom_mass.setPlaceholderText('kilograms, required')
+        self.custom_radius = QLineEdit()
+        self.custom_radius.setPlaceholderText('kilometers, blank if unknown')
+        self.custom_temperature = QLineEdit('5772')
+        self.temperature_holder = QWidget()
+        temperature_form = QFormLayout(self.temperature_holder)
+        temperature_form.setContentsMargins(0, 0, 0, 0)
+        temperature_form.addRow('Temperature (K)', self.custom_temperature)
+        custom_form.addRow('Name', self.custom_name)
+        custom_form.addRow('Kind', self.custom_kind)
+        custom_form.addRow('Mass (kg)', self.custom_mass)
+        custom_form.addRow('Radius (km)', self.custom_radius)
+        custom_form.addRow(self.temperature_holder)
+        self.custom_box.setVisible(False)
+        self.temperature_holder.setVisible(False)
+        layout.addWidget(self.custom_box)
+        self.note = label('', 'muted')
         layout.addWidget(self.note)
+        self.draft_readout = label('', 'notice')
+        layout.addWidget(self.draft_readout)
         self.add_button = action('Add', self.request_add, primary=True)
         layout.addWidget(self.add_button)
         layout.addStretch()
         self.type_combo.currentTextChanged.connect(self.populate_bodies)
         self.body_combo.currentIndexChanged.connect(self.show_body)
         self.motion_combo.currentIndexChanged.connect(self.motion_changed)
+        self.custom_check.toggled.connect(self._custom_toggled)
+        self.custom_kind.currentIndexChanged.connect(self._kind_changed)
+        for field in (self.custom_name, self.custom_mass, self.custom_radius, self.custom_temperature):
+            field.editingFinished.connect(self.show_body)
         self.populate_bodies()
         self.motion_changed()
 
@@ -153,31 +248,83 @@ class BodyCatalog(QWidget):
         if default >= 0:
             self.body_combo.setCurrentIndex(default)
         self.body_combo.blockSignals(False)
+        self._refresh_note()
         self.show_body()
         self.sync_lunar_fields()
 
     def sync_lunar_fields(self):
-        lunar = self.type_combo.currentText() == 'Lunar'
+        lunar = self._lunar_reference()
         self.distance_box.setVisible(lunar)
         self.reference_label.setText('Parent planet' if lunar else 'Relative to')
         if lunar:
             self.note.setText('Distance is center-to-center from the parent planet, in kilometers. '
                               'It is not that planet\'s distance from its star. '
                               'A circular start is only a first guess; gravity determines the motion.')
+
+    def _custom_toggled(self, checked):
+        self.custom_box.setVisible(checked)
+        self.body_combo.setEnabled(not checked)
+        self._kind_changed()
+
+    def _kind_changed(self):
+        self.temperature_holder.setVisible(self.custom_check.isChecked() and self.custom_kind.currentData() == 'star')
+        self._refresh_note()
+        if getattr(self, '_prepared', None) is not None:
+            self.set_references(self._prepared, getattr(self, '_selected', None))
         else:
-            self.note.setText('The circular option sets a starting velocity. Gravity determines the motion after that.')
+            self.show_body()
+
+    def _refresh_note(self):
+        self.sync_lunar_fields()
+        if self._lunar_reference():
+            return
+        stellar = self.type_combo.currentText() == 'Stellar' or (
+            self.custom_check.isChecked() and self.custom_kind.currentData() == 'star')
+        text = ('The circular option is a two-body start around the chosen body. '
+                'Gravity takes over afterward and does not guarantee an orbit.')
+        if stellar:
+            text += ' Another star is an ordinary body. The same aid does not solve a binary.'
+        self.note.setText(text)
+
+    def _lunar_reference(self):
+        return self.type_combo.currentText() == 'Lunar' or (
+            self.custom_check.isChecked() and self.custom_kind.currentData() == 'moon')
 
     def show_body(self):
+        if self.custom_check.isChecked():
+            try:
+                self.information.set_spec(self.custom_definition())
+                ready = True
+            except ValueError as exc:
+                self.information.name.setText(self.custom_name.text().strip() or 'Custom body')
+                self.information.details.setText(str(exc))
+                ready = False
+            self.add_button.setEnabled(ready and self.reference_combo.count() > 0)
+            return
         key = self.body_combo.currentData()
         if key:
             self.information.set_spec(CATALOG[key])
-        self.add_button.setEnabled(key is not None)
+        self.add_button.setEnabled(key is not None and self.reference_combo.count() > 0)
+
+    def custom_definition(self):
+        mass_kg = _parse_measure(self.custom_mass.text(), 'mass (kg)')
+        if mass_kg is None:
+            raise ValueError('Enter a mass in kilograms. Gravity needs a known mass.')
+        radius_km = _parse_measure(self.custom_radius.text(), 'radius (km)')
+        temperature = _parse_measure(self.custom_temperature.text(), 'temperature (K)')
+        try:
+            return custom_spec(self.custom_name.text(), self.custom_kind.currentData(),
+                               mass_kg/SOLAR_KG, None if radius_km is None else radius_km/AU_KM, temperature)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from None
 
     def set_references(self, prepared, selected=None):
+        self._prepared, self._selected = prepared, selected
         previous = self.reference_combo.currentData()
         had_reference = self.reference_combo.currentIndex() >= 0
+        self.reference_combo.blockSignals(True)
         self.reference_combo.clear()
-        lunar = self.type_combo.currentText() == 'Lunar'
+        lunar = self._lunar_reference()
         for key, spec in zip(prepared.body_ids, prepared.body_specs):
             if spec.mass and spec.mass > 0 and (not lunar or spec.kind == 'planet'):
                 self.reference_combo.addItem(spec.name, key)
@@ -185,18 +332,26 @@ class BodyCatalog(QWidget):
             self.reference_combo.addItem('World (no parent)', None)
         index = self.reference_combo.findData(selected if selected is not None else previous) if (selected is not None or had_reference) else 0
         self.reference_combo.setCurrentIndex(max(0, index))
-        self.add_button.setEnabled(self.body_combo.currentData() is not None and self.reference_combo.count() > 0)
+        self.reference_combo.blockSignals(False)
+        self.show_body()
 
     def motion_changed(self):
-        self.manual.setVisible(not self.motion_combo.currentData())
+        self.manual.setVisible(not bool(self.motion_combo.currentData()))
 
-    def request_add(self):
+    def placement_payload(self):
         theta = math.radians(self.direction.value())
         velocity = self.speed.value()/AUYR_TO_KMS*np.array([math.cos(theta), math.sin(theta)])
-        lunar = self.type_combo.currentText() == 'Lunar'
-        self.add_requested.emit({'spec': CATALOG[self.body_combo.currentData()],
-            'reference_id': self.reference_combo.currentData(), 'circular': self.motion_combo.currentData(),
-            'velocity': velocity, 'distance_km': self.distance.value() if lunar else None})
+        lunar = self._lunar_reference()
+        spec = self.custom_definition() if self.custom_check.isChecked() else CATALOG[self.body_combo.currentData()]
+        return {'spec': spec, 'reference_id': self.reference_combo.currentData(),
+                'circular': bool(self.motion_combo.currentData()), 'velocity': velocity,
+                'distance_km': self.distance.value() if lunar else None}
+
+    def request_add(self):
+        try:
+            self.add_requested.emit(self.placement_payload())
+        except ValueError as exc:
+            self.note.setText(str(exc))
 
 
 class BodyProperties(QWidget):
