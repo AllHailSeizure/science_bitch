@@ -17,6 +17,7 @@ from .initialization import build_system
 SCHEMA_VERSION = 1
 SOURCE_VERSION = 'star-system-setup-v1'
 MODEL_VERSION = 'planar-newtonian-point-mass-v1'
+SPATIAL_MODEL_VERSION = 'newtonian-point-mass-v1'
 NUMERICAL_VERSION = 'fixed-yoshida4-v1'
 GENERATOR_VERSION = 'planar-circular-population-v1'
 # Integrator implementation that produces a trajectory. Not written into setup
@@ -67,7 +68,17 @@ def _recorded_environment(setup):
     return {'numpy': recorded['numpy']}
 
 
+def _setup_dimension(setup):
+    lengths = {len(body.r) for body in setup.bodies} | {len(body.v) for body in setup.bodies}
+    if lengths == {2}:
+        return 2
+    if lengths == {3}:
+        return 3
+    raise ValueError('Every position and velocity must share two components, or every one must share three.')
+
+
 def _document(setup):
+    dimension = _setup_dimension(setup)
     bodies = []
     for body in setup.bodies:
         spec = {field.name: getattr(body.spec, field.name) for field in fields(BodySpec) if field.name != 'sources'}
@@ -75,7 +86,8 @@ def _document(setup):
         bodies.append({'id': body.id, 'spec': spec, 'r': list(body.r), 'v': list(body.v),
                        'reference_id': body.reference_id})
     document = {'schema_version': SCHEMA_VERSION, 'units': UNITS, 'source_version': SOURCE_VERSION,
-            'model_version': MODEL_VERSION, 'numerical_version': _numerical_version(setup),
+            'model_version': SPATIAL_MODEL_VERSION if dimension == 3 else MODEL_VERSION,
+            'numerical_version': _numerical_version(setup),
             'environment': _recorded_environment(setup),
             'setup': {'name': setup.name, 'preset_id': setup.preset_id, 'dt': setup.dt,
                       'collision_mode': setup.collision_mode, 'bodies': bodies,
@@ -114,8 +126,8 @@ def _number(value, label, *, nullable=False, minimum=None, positive=False):
 
 
 def _vector(value, label):
-    if type(value) is not list or len(value) != 2:
-        raise ValueError(f'{label} must contain exactly two numbers.')
+    if type(value) is not list or len(value) not in (2, 3):
+        raise ValueError(f'{label} must contain two or three numbers.')
     return tuple(_number(item, label) for item in value)
 
 
@@ -179,10 +191,11 @@ def _decode(document):
     _object(document, ('schema_version', 'units', 'source_version', 'model_version', 'numerical_version', 'environment', 'setup'), 'Document')
     if type(document['schema_version']) is not int or document['schema_version'] != SCHEMA_VERSION:
         raise ValueError('Unsupported setup schema version; expected 1.')
-    for key, expected in (('units', UNITS), ('source_version', SOURCE_VERSION),
-                          ('model_version', MODEL_VERSION)):
+    for key, expected in (('units', UNITS), ('source_version', SOURCE_VERSION)):
         if document[key] != expected:
             raise ValueError(f'Unsupported {key}.')
+    if document['model_version'] not in (MODEL_VERSION, SPATIAL_MODEL_VERSION):
+        raise ValueError('Unsupported model_version.')
     _object(document['environment'], ('numpy',), 'Environment')
     _string(document['environment']['numpy'], 'NumPy version')
     keys = {'name', 'preset_id', 'dt', 'collision_mode', 'bodies', 'population', 'provenance'}
@@ -213,10 +226,14 @@ def _decode(document):
     if type(value['provenance']) is not dict:
         raise ValueError('Setup provenance must be an object.')
     bodies = []
+    dimension = 3 if document['model_version'] == SPATIAL_MODEL_VERSION else 2
     for body in value['bodies']:
         _object(body, ('id', 'spec', 'r', 'v', 'reference_id'), 'Initial body')
+        position, velocity = _vector(body['r'], 'Position'), _vector(body['v'], 'Velocity')
+        if len(position) != dimension or len(velocity) != dimension:
+            raise ValueError('Three-dimensional setups store three components; planar setups store two.')
         bodies.append(InitialBody(_string(body['id'], 'Body ID'), _spec(body['spec']),
-                                  _vector(body['r'], 'Position'), _vector(body['v'], 'Velocity'),
+                                  position, velocity,
                                   _string(body['reference_id'], 'Body reference', nullable=True)))
     setup = InitialSetup(value['name'], tuple(bodies), value['dt'], value['preset_id'],
                          _decode_population(value['population']), value['collision_mode'], value['provenance'], policy,

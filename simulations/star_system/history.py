@@ -29,7 +29,9 @@ class StateFrame:
             object.__setattr__(self, name, tuple(getattr(self, name)))
         if not self.reference_ids:
             object.__setattr__(self, 'reference_ids', (None,)*len(self.body_ids))
-        if len(self.body_ids) != len(self.masses) or len(self.body_specs) != len(self.masses) or self.r.shape != (len(self.masses), 2) or self.v.shape != self.r.shape:
+        if (len(self.body_ids) != len(self.masses) or len(self.body_specs) != len(self.masses)
+                or self.r.ndim != 2 or self.r.shape[0] != len(self.masses) or self.r.shape[1] not in (2, 3)
+                or self.v.shape != self.r.shape):
             raise ValueError('History identities, properties and numeric rows must align.')
         if len(self.reference_ids) != len(self.body_ids):
             raise ValueError('History reference metadata must align with body identities.')
@@ -45,8 +47,8 @@ class RelativeState:
     """Current world-frame difference; a missing reference remains explicit."""
     reference_id: str
     reference_name: str | None
-    r: tuple[float, float] | None
-    v: tuple[float, float] | None
+    r: tuple[float, ...] | None
+    v: tuple[float, ...] | None
 
     @property
     def missing(self):

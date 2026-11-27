@@ -72,7 +72,10 @@ def _moon_step_limit(system, ids, specs, references, indices=None):
         parent = ids.index(reference)
         if specs[parent].kind != 'planet' or not specs[parent].mass or specs[parent].mass <= 0:
             raise ValueError('A moon reference must be a planet with known positive mass.')
-        limit = min(limit, recommended_moon_step(system.r[i]-system.r[parent], system.masses[parent], system.masses[i]))
+        relative = system.r[i]-system.r[parent]
+        if relative.shape != (2,):
+            raise ValueError('Moon timestep aids are planar. A three-dimensional moon is not given a circular period/600 step.')
+        limit = min(limit, recommended_moon_step(relative, system.masses[parent], system.masses[i]))
     return limit
 
 def _validate_surfaces(r, specs, collision_mode='none'):
@@ -96,7 +99,17 @@ def _validate_particles(specs):
         raise ValueError(f'At most {MAX_PARTICLES} test particles are supported.')
 
 
+def _shared_dimension(setup):
+    lengths = [len(body.r) for body in setup.bodies] + [len(body.v) for body in setup.bodies]
+    if any(length not in (2, 3) for length in lengths) or len(set(lengths)) != 1:
+        raise ValueError('Every position and velocity must share two components, or every one must share three.')
+    return lengths[0]
+
+
 def build_system(setup):
+    dimension = _shared_dimension(setup)
+    if setup.population is not None and dimension == 3:
+        raise ValueError('Populations are planar. A three-dimensional setup cannot add a planar particle ring.')
     _validate_particles(tuple(body.spec for body in setup.bodies))
     bodies = {body.id: body for body in setup.bodies}
     if len(bodies) != len(setup.bodies):
@@ -161,13 +174,15 @@ def insert_body(prepared, body):
     if body.spec.mass is None:
         raise ValueError('Gravity requires a known mass; enter a custom mass.')
     _validate_particles(prepared.body_specs+(body.spec,))
-    r, v = np.array(body.r), np.array(body.v)
+    old = prepared.system
+    r, v = np.array(body.r, dtype=float), np.array(body.v, dtype=float)
+    if r.shape != (old.r.shape[1],) or v.shape != r.shape:
+        raise ValueError('An inserted body must use the same two- or three-component vectors as the system.')
     if body.reference_id is not None:
         if body.reference_id not in prepared.body_ids:
             raise ValueError('Insertion reference body is missing.')
         index = prepared.body_ids.index(body.reference_id)
         r, v = r+prepared.system.r[index], v+prepared.system.v[index]
-    old = prepared.system
     system = System(np.append(old.masses, body.spec.mass), np.vstack((old.r, r)), np.vstack((old.v, v)), old.dt, old.time)
     specs = prepared.body_specs + (body.spec,)
     ids = prepared.body_ids + (body.id,)

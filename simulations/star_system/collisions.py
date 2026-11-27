@@ -49,7 +49,7 @@ class CollisionEvent:
     impact_speed: float = 0.
     impact_parameter: float = 0.
     approach_distance: float = 0.
-    location: tuple[float, float] | None = None
+    location: tuple[float, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -142,7 +142,11 @@ def _merge_group(prepared, ids):
     radius = float(np.cbrt(sum(prepared.body_specs[i].radius**3 for i in indices)))
     lost = float(.5*np.sum(masses[:, None]*(s.v[indices]-v)**2))
     offsets, velocities = s.r[indices]-r, s.v[indices]-v
-    spin = float(np.sum(masses*(offsets[:, 0]*velocities[:, 1]-offsets[:, 1]*velocities[:, 0])))
+    if offsets.shape[1] == 2:
+        spin = float(np.sum(masses*(offsets[:, 0]*velocities[:, 1]-offsets[:, 1]*velocities[:, 0])))
+    else:
+        # Magnitude of the residual angular momentum. Planar runs keep the signed z component above.
+        spin = float(np.linalg.norm(np.sum(masses[:, None]*np.cross(offsets, velocities), axis=0)))
     ancestry = _ancestors(prepared, ids)
     key = 'merge:'+hashlib.sha256(('\0'.join(ids)).encode()).hexdigest()[:24]
     stem, ordinal = key, 0
@@ -315,10 +319,16 @@ def _impact_geometry(prepared, first_id, second_id):
     if distance > 0 and np.isfinite(distance):
         direction = delta/distance
     else:
-        direction = np.array((1., 0.))
+        direction = np.zeros(delta.shape[0])
+        direction[0] = 1.
         distance = 0.
     if speed > 0 and distance > 0:
-        impact_parameter = abs(float(delta[0]*relative[1]-delta[1]*relative[0]))/(distance*speed)
+        # Planar runs keep the signed z component. A third component uses the full cross product.
+        if delta.shape[0] == 2:
+            cross = abs(float(delta[0]*relative[1]-delta[1]*relative[0]))
+        else:
+            cross = float(np.linalg.norm(np.cross(delta, relative)))
+        impact_parameter = cross/(distance*speed)
     else:
         impact_parameter = 0.
     return i, j, direction, distance, speed, min(1., max(0., impact_parameter))
@@ -372,7 +382,7 @@ def _unmodeled_star(prepared, contact):
                'A stellar-merger model remains #14.')
     event = CollisionEvent(float(system.time), 'unmodeled', ids, None, ids, 0., 0., message,
                            rule=rule, outcome='unmodeled', descendant_ids=ids, approach_distance=float(distance),
-                           location=(float(origin[0]), float(origin[1])))
+                           location=tuple(float(component) for component in origin))
     return replace(prepared, events=prepared.events+(event,), open_passages=prepared.open_passages+(ids,))
 
 
@@ -409,7 +419,7 @@ def _graze_pair(prepared, first_id, second_id, speed, impact_parameter):
     event = CollisionEvent(float(system.time), 'graze', ids, None, _ancestors(prepared, ids), float(lost), float(spin),
                            message, rule=rule, outcome='graze', descendant_ids=ids, impact_speed=float(speed),
                            impact_parameter=float(impact_parameter), approach_distance=float(distance),
-                           location=(float(origin[0]), float(origin[1])))
+                           location=tuple(float(component) for component in origin))
     return replace(prepared, system=System(masses.copy(), positions, velocities, system.dt, system.time),
                    events=prepared.events+(event,))
 
@@ -445,8 +455,9 @@ def _fragment_pair(prepared, first_id, second_id, speed, impact_parameter, escap
     gap = (radii[0]+radii[1])*(1+1e-2)
     retained = FRAGMENT_KINETIC_RETAINED*max(relative_kinetic, 0.)
     piece_speed = math.sqrt(retained/each_mass) if each_mass > 0 and retained > 0 else 0.
-    offsets = (np.zeros(2), direction*gap, -direction*gap)
-    piece_velocities = (np.zeros(2), direction*piece_speed, -direction*piece_speed)
+    width = int(np.asarray(origin).shape[0])
+    offsets = (np.zeros(width), direction*gap, -direction*gap)
+    piece_velocities = (np.zeros(width), direction*piece_speed, -direction*piece_speed)
     rows_r, rows_v, row_masses, specs = [], [], [], []
     ancestry = _ancestors(prepared, ids)
     for key, (_role, mass), radius, offset, velocity in zip(keys, roles, radii, offsets, piece_velocities):
@@ -480,7 +491,7 @@ def _fragment_pair(prepared, first_id, second_id, speed, impact_parameter, escap
                            float(parent_spin-child_spin), message, rule=rule, outcome='fragment',
                            descendant_ids=tuple(keys), lost_mass=float(lost_mass), impact_speed=float(speed),
                            impact_parameter=float(impact_parameter), approach_distance=float(np.linalg.norm(system.r[indices[0]]-system.r[indices[1]])),
-                           location=(float(origin[0]), float(origin[1])))
+                           location=tuple(float(component) for component in origin))
     keep = [index for index, body_id in enumerate(prepared.body_ids) if body_id not in ids]
     references = tuple(keys[0] if prepared.reference_ids[index] in ids else prepared.reference_ids[index] for index in keep)+(None, None, None)
     updated = System(np.append(system.masses[keep], row_masses), np.vstack((system.r[keep], child_positions)),
@@ -606,7 +617,7 @@ def _note_approaches(prepared, approaches):
         midpoint = .5*(prepared.system.r[int(first[k])]+prepared.system.r[int(second[k])])
         previous = approaches.get(key)
         if previous is None or distance < previous[0]:
-            approaches[key] = (distance, time, float(midpoint[0]), float(midpoint[1]), float(limit[k]))
+            approaches[key] = (distance, time, tuple(float(component) for component in midpoint), float(limit[k]))
 
 
 def _remember_resolved(resolved, events):
@@ -658,7 +669,7 @@ def _append_passage_logs(prepared, start_state, approaches, resolved):
     survivors = set(prepared.body_ids)
     encounter_events = []
     interesting = []
-    for key, (distance, time, mx, my, limit) in sorted(approaches.items(), key=lambda item: (item[1][1], item[0])):
+    for key, (distance, time, location, limit) in sorted(approaches.items(), key=lambda item: (item[1][1], item[0])):
         if frozenset(key) in resolved or any(body_id not in survivors or body_id not in start_state for body_id in key):
             continue
         start = float(np.linalg.norm(start_state[key[0]][0]-start_state[key[1]][0]))
@@ -669,7 +680,7 @@ def _append_passage_logs(prepared, start_state, approaches, resolved):
                    f'Closest approach {distance:.6g} AU at {time:.6g} yr, inside {limit:.6g} AU. No contact.')
         encounter_events.append(CollisionEvent(time, 'close_encounter', key, None, key, 0., 0., message,
                                                rule=rule, outcome='close_encounter', descendant_ids=key,
-                                               approach_distance=distance, location=(mx, my)))
+                                               approach_distance=distance, location=location))
         interesting.append(key)
     for event in prepared.events:
         if (isinstance(event, CollisionEvent) and event.kind in ('graze', 'unmodeled')
@@ -699,7 +710,7 @@ def _append_passage_logs(prepared, start_state, approaches, resolved):
                 orbital.append(CollisionEvent(float(prepared.system.time), 'orbital_change', (body_id, other_id), None,
                                               (body_id,), 0., 0., message, rule=rule, outcome='orbital_change',
                                               descendant_ids=(body_id,),
-                                              location=(float(prepared.system.r[index, 0]), float(prepared.system.r[index, 1]))))
+                                              location=tuple(float(component) for component in prepared.system.r[index])))
     if not encounter_events and not orbital:
         return prepared
     return replace(prepared, events=prepared.events+tuple(encounter_events)+tuple(orbital))

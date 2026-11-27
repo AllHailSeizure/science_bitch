@@ -442,7 +442,9 @@ backends redraw fully. Resize preserves center and compressed units/pixel.
 
 ## Numerical model and limits
 
-Gravity is unsoftened Newtonian gravity in 2D:
+Gravity is unsoftened Newtonian gravity. The overhead presets are planar.
+Formation can store a third component; that schedule is
+[formation numerics](../../docs/formation-numerics.md). The force is
 `a_i = G sum(j != i) m_j (r_j - r_i) / |r_j - r_i|^3`.
 Positive masses mutually interact; zero-mass test particles feel massive bodies
 without backreaction or particle/particle gravity. Units use 1 AU = 149597870700 m,
@@ -504,8 +506,10 @@ separation is about 2e-8 AU; the bound is 1e-6 AU.
 
 These conservation/accuracy checks apply to collision-free, tide-free evolution. The optional
 nonstellar contact model below has different numerics and conservation limits.
-Relativity, stellar evolution, 3D, and scripted capture outcomes are not modeled.
+Relativity, stellar evolution, and scripted capture outcomes are not modeled.
 Optional close-pass tides are a separate experiment choice and stay off in these checks.
+The overhead presets stay planar. Formation's three-dimensional option is separate
+and is not drawn by this view.
 
 ### Optional idealized nonstellar contacts
 

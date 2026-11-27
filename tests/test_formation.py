@@ -7,15 +7,21 @@ import numpy as np
 import pytest
 
 from simulations.star_system.formation import (
-    BENCHMARK_EMBRYO_COUNT, DEMONSTRATION_EJECTION_RADIUS, FORMATION_MODEL,
+    BENCHMARK_EMBRYO_COUNT, BENCHMARK_EMBRYO_MASS, BENCHMARK_EMBRYO_RADIUS,
+    DEMONSTRATION_EJECTION_RADIUS, FORMATION_MODEL, PHYSICAL_PROBE_COUNT,
     FormationExperiment, SynchronizedPlayback, VelocityChange, compare_resolution,
-    load_checkpoint, make_demonstration_setup, make_late_stage_setup, playback,
-    run_benchmark, save_checkpoint, specification,
+    load_checkpoint, make_close_pass_setup, make_demonstration_setup,
+    make_inclined_circular_setup, make_late_stage_setup, playback, rocky_radius,
+    run_benchmark, run_physical_probe, save_checkpoint, specification,
 )
+from simulations.star_system.frames import frame_transform
+from simulations.star_system.history import StateFrame
 from simulations.star_system.model import SPEED_ANGLE_VERSION, BodySpec, InitialBody, InitialSetup, with_collision_rule
-from simulations.star_system.persistence import setup_digest
+from simulations.star_system.persistence import (
+    MODEL_VERSION, SPATIAL_MODEL_VERSION, load_setup, save_setup, setup_digest,
+)
 from simulations.star_system.playback import Playback
-from simulations.star_system.core import SOLAR_RADIUS_AU
+from simulations.star_system.core import G, SOLAR_RADIUS_AU, kepler_period
 
 
 def demonstration():
@@ -350,3 +356,165 @@ def test_feasibility_note_states_the_measured_experiment():
     assert 'gas' in lowered
     assert 'checkpoint' in lowered
     assert 'stewart' in lowered
+    assert 'formation-numerics.md' in text
+
+
+def test_default_late_stage_setup_stays_planar_and_inflated():
+    setup = make_late_stage_setup(count=4, include_unbound=False)
+    assert all(len(body.r) == 2 and len(body.v) == 2 for body in setup.bodies)
+    embryos = [body for body in setup.bodies if body.spec.kind != 'star']
+    assert all(body.spec.radius == BENCHMARK_EMBRYO_RADIUS for body in embryos)
+    rocky = make_late_stage_setup(count=4, include_unbound=False, radii='rocky')
+    radius = rocky_radius(BENCHMARK_EMBRYO_MASS)
+    assert rocky.bodies[1].spec.radius == pytest.approx(radius)
+    assert BENCHMARK_EMBRYO_RADIUS/radius > 500
+
+
+def test_mixed_dimensions_are_rejected():
+    star = InitialBody('star', BodySpec('Star', 'star', 1., SOLAR_RADIUS_AU), (0., 0.), (0., 0.))
+    embryo = InitialBody('rock', BodySpec('Rock', 'planet', 1e-6, .01), (1., 0., 0.), (0., 1., 0.))
+    setup = InitialSetup('Mixed', (star, embryo), .01, collision_mode='perfect_merge')
+    with pytest.raises(ValueError, match='three'):
+        FormationExperiment(setup, ejection_radius=10.)
+
+
+def test_inclined_circular_orbit_keeps_a_vertical_component():
+    mass = 1e-6
+    setup = make_inclined_circular_setup(mass=mass)
+    experiment = FormationExperiment(setup, ejection_radius=5.)
+    assert experiment.dimensions == 3
+    relative_r = experiment.prepared.system.r[1]-experiment.prepared.system.r[0]
+    relative_v = experiment.prepared.system.v[1]-experiment.prepared.system.v[0]
+    assert relative_r[2] == pytest.approx(0., abs=1e-12)
+    assert abs(relative_v[2]) > .1
+    period = kepler_period(1., G*(1.+mass))
+    experiment.integrate(period/4)
+    assert experiment.status == 'running'
+    later_r = experiment.prepared.system.r[1]-experiment.prepared.system.r[0]
+    later_v = experiment.prepared.system.v[1]-experiment.prepared.system.v[0]
+    assert later_r[2] > .3
+    initial_h = np.cross(relative_r, relative_v)
+    later_h = np.cross(later_r, later_v)
+    cosine = float(np.dot(initial_h, later_h)/(np.linalg.norm(initial_h)*np.linalg.norm(later_h)))
+    assert cosine > math.cos(math.radians(1.5))
+
+
+def test_adaptive_step_shrinks_on_a_close_miss_and_recovers():
+    setup = make_close_pass_setup()
+    adaptive = FormationExperiment(setup, ejection_radius=80., adaptive=True)
+    steps = []
+    while adaptive.status == 'running' and adaptive.time < .4:
+        adaptive.advance(1)
+        steps.append(adaptive.prepared.system.dt)
+    assert adaptive.status == 'running'
+    assert min(steps) < setup.dt/5
+    assert steps[-1] == pytest.approx(setup.dt)
+    assert not any(event.kind == 'merge' for event in adaptive.events)
+    separations = []
+    for sample in adaptive.samples:
+        bodies = {body.id: body for body in sample.bodies}
+        if 'alpha' in bodies and 'beta' in bodies:
+            separations.append(math.dist(bodies['alpha'].r, bodies['beta'].r))
+    assert min(separations) < .05
+    assert min(separations) > 10*(rocky_radius(BENCHMARK_EMBRYO_MASS)*2)
+    fixed = FormationExperiment(make_close_pass_setup(), ejection_radius=80., adaptive=False)
+    fixed.integrate(.05)
+    assert fixed.status == 'running'
+    assert fixed.prepared.system.dt == setup.dt
+
+
+def test_adaptive_floor_halts_before_taking_a_step():
+    setup = make_close_pass_setup()
+    experiment = FormationExperiment(setup, ejection_radius=80., adaptive=True, dt_min=.01)
+    positions = experiment.prepared.system.r.copy()
+    experiment.advance(1)
+    assert experiment.status == 'halted'
+    assert 'floor' in experiment.reason.lower()
+    np.testing.assert_array_equal(experiment.prepared.system.r, positions)
+    assert experiment.time == 0.
+
+
+def test_spatial_merge_conserves_vector_momentum():
+    star = InitialBody('star', BodySpec('Star', 'star', 1., SOLAR_RADIUS_AU), (0., 0., 0.), (0., 0., 0.))
+    alpha = InitialBody('alpha', BodySpec('Alpha', 'planet', 1e-5, .08), (5., 0., 0.), (2.5, 0., .05))
+    beta = InitialBody('beta', BodySpec('Beta', 'planet', 2e-5, .08), (5.5, 0., 0.), (-2.5, 0., -.05))
+    setup = InitialSetup('Spatial merge', (star, alpha, beta), .02, collision_mode='perfect_merge')
+    experiment = FormationExperiment(setup, ejection_radius=30.)
+    experiment.integrate(.2, finish=True)
+    merges = [event for event in experiment.events if event.kind == 'merge']
+    assert len(merges) == 1
+    assert len(merges[0].location) == 3
+    assert merges[0].unmodeled_spin > 0
+    assert experiment.accounting().merge_momentum_error == pytest.approx(0., abs=1e-12)
+
+
+def test_spatial_checkpoint_and_branch_keep_the_third_component(tmp_path):
+    experiment = FormationExperiment(make_inclined_circular_setup(), ejection_radius=5., adaptive=True)
+    experiment.integrate(.01)
+    path = tmp_path/'spatial.json'
+    save_checkpoint(experiment, path)
+    restored = load_checkpoint(path)
+    assert restored.adaptive and restored.dimensions == 3
+    assert restored.dt_max == pytest.approx(experiment.dt_max)
+    np.testing.assert_array_equal(restored.prepared.system.r, experiment.prepared.system.r)
+    experiment.integrate(.01)
+    restored.integrate(.01)
+    np.testing.assert_allclose(restored.prepared.system.r, experiment.prepared.system.r, rtol=0, atol=0)
+    np.testing.assert_allclose(restored.prepared.system.v, experiment.prepared.system.v, rtol=0, atol=0)
+    embryo = experiment.prepared.body_ids.index('embryo')
+    change = VelocityChange('embryo', (0., 0., .01), 'Add a small vertical velocity.')
+    child = experiment.branch(change)
+    assert child.prepared.system.v[embryo, 2] == pytest.approx(experiment.prepared.system.v[embryo, 2]+.01)
+    assert experiment.provenance['change'] is None
+    with pytest.raises(ValueError, match='components'):
+        experiment.branch(VelocityChange('embryo', (0., .01), 'Planar nudge on a spatial run.'))
+
+
+def test_planar_and_spatial_setup_documents_disclose_dimension(tmp_path):
+    planar = make_demonstration_setup()
+    planar_path = tmp_path/'planar.json'
+    save_setup(planar, planar_path)
+    document = json.loads(planar_path.read_text())
+    assert document['model_version'] == MODEL_VERSION
+    assert all(len(body['r']) == 2 and len(body['v']) == 2 for body in document['setup']['bodies'])
+    assert setup_digest(load_setup(planar_path)) == setup_digest(planar)
+    spatial = make_inclined_circular_setup()
+    spatial_path = tmp_path/'spatial.json'
+    save_setup(spatial, spatial_path)
+    spatial_document = json.loads(spatial_path.read_text())
+    assert spatial_document['model_version'] == SPATIAL_MODEL_VERSION
+    assert all(len(body['r']) == 3 and len(body['v']) == 3 for body in spatial_document['setup']['bodies'])
+    loaded = load_setup(spatial_path)
+    assert loaded.bodies[1].r[2] == pytest.approx(spatial.bodies[1].r[2])
+    assert setup_digest(loaded) == setup_digest(spatial)
+
+
+def test_overhead_view_refuses_a_spatial_sample():
+    experiment = FormationExperiment(make_inclined_circular_setup(), ejection_radius=5.)
+    with pytest.raises(ValueError, match='overhead'):
+        frame_transform(StateFrame.capture(experiment.prepared), 'world')
+
+
+def test_physical_probe_reports_a_short_rocky_run():
+    report = run_physical_probe()
+    assert report.embryo_count == PHYSICAL_PROBE_COUNT
+    assert report.body_count == PHYSICAL_PROBE_COUNT+1
+    assert report.requested_years == .25
+    assert report.calculation_seconds > 0
+    assert report.rocky_radius < report.encounter_radius/500
+    assert report.maximum_step >= report.minimum_step
+    assert report.status in ('complete', 'halted')
+    assert any('tree' in note.lower() for note in report.notes)
+    assert any('#69' in note and '#71' in note and '#79' in note for note in report.notes)
+
+
+def test_numerics_note_states_the_integrator_decision():
+    text = (Path(__file__).resolve().parents[1]/'docs'/'formation-numerics.md').read_text(encoding='utf-8')
+    lowered = text.lower()
+    assert 'rebound' in lowered
+    assert 'adaptive' in lowered
+    assert 'rocky' in lowered
+    assert 'three-dimensional' in lowered or '3d' in lowered
+    assert '#69' in text and '#71' in text and '#79' in text
+    assert 'tree' in lowered
+    assert 'planar' in lowered

@@ -42,6 +42,8 @@ class DisplayTransform:
 def frame_transform(frame, mode='sun-relative', origin_id=None, sun_id=None, jupiter_id=None):
     if mode not in MODES:
         raise ValueError(f'Unknown display frame: {mode}.')
+    if frame.r.ndim != 2 or frame.r.shape[1] != 2 or frame.v.shape != frame.r.shape:
+        raise ValueError('The overhead view draws planar motion. Three-dimensional samples stay in the formation record and are not projected here.')
     if mode == 'world':
         return DisplayTransform(np.zeros(2), np.eye(2))
     if mode == 'rotating':

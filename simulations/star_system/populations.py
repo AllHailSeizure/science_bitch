@@ -51,6 +51,8 @@ def with_population(system, settings, reference_radius=0.):
     This is initialization, not an insertion API for a running trajectory.
     The caller supplies the reference's physical radius in AU if known.
     """
+    if system.r.ndim != 2 or system.r.shape[1] != 2:
+        raise ValueError('Populations are planar. Three-dimensional systems keep explicit initial vectors.')
     reference = settings.reference
     if reference >= len(system.masses) or not np.isfinite(system.masses[reference]) or system.masses[reference] <= 0:
         raise ValueError('Population reference must identify a massive body.')

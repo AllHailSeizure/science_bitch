@@ -1,6 +1,8 @@
 """Unsoftened Newtonian gravity in AU, solar masses, Julian years.
 
 Positive masses mutually interact; zero-mass test particles only receive gravity.
+Positions are planar (two components) or three-dimensional (three components).
+The overhead presets stay planar. A third component is an explicit initial state.
 
 Fixed-step Yoshida fourth-order composition of velocity Verlet.
 Steps stay fixed within each uninterrupted segment; insertion can begin a new
@@ -51,8 +53,8 @@ class System:
         """Largest supported step from pair gravity and relative crossing time."""
         if not np.isfinite(self.masses).all() or np.any(self.masses < 0) or not np.isfinite(self.r).all() or not np.isfinite(self.v).all():
             raise ValueError('Nonfinite or negative numeric state; correct the starting vectors.')
-        if self.r.shape != (len(self.masses), 2) or self.v.shape != self.r.shape:
-            raise ValueError('Expected one 2D position and velocity per mass.')
+        if self.r.ndim != 2 or self.r.shape[0] != len(self.masses) or self.r.shape[1] not in (2, 3) or self.v.shape != self.r.shape:
+            raise ValueError('Expected one 2D or 3D position and velocity per mass.')
         sources = np.flatnonzero(self.masses > 0)
         if not len(sources):
             return np.inf
@@ -100,6 +102,7 @@ class System:
                 if self.masses[i] > 0 and self.masses[j] > 0:
                     energy -= G*self.masses[i]*self.masses[j]/np.linalg.norm(self.r[i]-self.r[j])
         momentum = np.sum(self.masses[:,None]*self.v, axis=0)
+        # Signed z component. It is the whole angular momentum for planar motion.
         angular = np.sum(self.masses*(self.r[:,0]*self.v[:,1]-self.r[:,1]*self.v[:,0]))
         return energy, momentum, angular
 
