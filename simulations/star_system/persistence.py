@@ -46,6 +46,13 @@ def _population(pop):
             'version': GENERATOR_VERSION, 'settings': _record(pop.settings)}
 
 
+def _numerical_version(setup):
+    # binary_star_merger uses the same positive-time contact solver as perfect_merge.
+    if setup.collision_mode in ('perfect_merge', 'binary_star_merger'):
+        return setup.collision_policy.numerical
+    return NUMERICAL_VERSION
+
+
 def _current_environment():
     """NumPy identity of this interpreter. This is not a setup digest."""
     return {'numpy': np.__version__}
@@ -68,7 +75,7 @@ def _document(setup):
         bodies.append({'id': body.id, 'spec': spec, 'r': list(body.r), 'v': list(body.v),
                        'reference_id': body.reference_id})
     document = {'schema_version': SCHEMA_VERSION, 'units': UNITS, 'source_version': SOURCE_VERSION,
-            'model_version': MODEL_VERSION, 'numerical_version': (setup.collision_policy.numerical if setup.collision_mode == 'perfect_merge' else NUMERICAL_VERSION),
+            'model_version': MODEL_VERSION, 'numerical_version': _numerical_version(setup),
             'environment': _recorded_environment(setup),
             'setup': {'name': setup.name, 'preset_id': setup.preset_id, 'dt': setup.dt,
                       'collision_mode': setup.collision_mode, 'bodies': bodies,
@@ -182,10 +189,11 @@ def _decode(document):
     _string(value['name'], 'Setup name')
     _string(value['preset_id'], 'Preset ID', nullable=True)
     _string(value['collision_mode'], 'Collision mode')
-    if value['collision_mode'] == 'perfect_merge' and 'collision_policy' not in value:
+    if value['collision_mode'] in ('perfect_merge', 'binary_star_merger') and 'collision_policy' not in value:
         raise ValueError('Physical collision mode requires an explicit versioned collision policy.')
     policy = CollisionPolicy(**_object(value['collision_policy'], {field.name for field in fields(CollisionPolicy)}, 'Collision policy')) if 'collision_policy' in value else CollisionPolicy()
-    if document['numerical_version'] != (policy.numerical if value['collision_mode'] == 'perfect_merge' else NUMERICAL_VERSION):
+    contact = value['collision_mode'] in ('perfect_merge', 'binary_star_merger')
+    if document['numerical_version'] != (policy.numerical if contact else NUMERICAL_VERSION):
         raise ValueError('Unsupported numerical_version for selected collision mode.')
     _number(value['dt'], 'Fixed dt', positive=True)
     if type(value['bodies']) is not list or not value['bodies']:

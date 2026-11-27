@@ -9,6 +9,8 @@ from .experiments import custom_copy
 from .initialization import build_system, circular_relative_velocity, legacy_setup, recommended_moon_step
 from .model import InitialBody, PopulationSpec, PropertySource
 from .populations import Population
+from .stellar_merger import DESCRIPTION as MERGER_DESCRIPTION, OBSERVE as MERGER_OBSERVE
+from .stellar_merger import SCENARIO_KEY, TITLE as MERGER_TITLE, binary_star_merger_setup
 
 SOLAR_PLANETS = ('mercury', 'venus', 'earth', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune')
 
@@ -42,6 +44,7 @@ EXPERIMENTS = (
         'Use Rotating view to hold the Sun–Jupiter direction fixed. Hollow L4 and L5 marks are guides, not rocks. '
         'Select a rock to read its separation from Jupiter and the trail duration. '
         'Matched no-Jupiter run keeps the same rock vectors. These starts do not promise capture.'),
+    ExperimentTemplate(SCENARIO_KEY, MERGER_TITLE, MERGER_DESCRIPTION, MERGER_OBSERVE),
 )
 
 
@@ -62,6 +65,10 @@ def get_experiment(key='solar-system'):
     if key == 'sun-jupiter-ring':
         from .jupiter_experiment import ring_setup
         result = ring_setup()
+        build_system(result)
+        return result
+    if key == SCENARIO_KEY:
+        result = binary_star_merger_setup()
         build_system(result)
         return result
     setup = _solar_system()

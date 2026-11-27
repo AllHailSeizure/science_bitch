@@ -73,9 +73,13 @@ def main(argv=None):
             scene = draw_system(ax, prepared, result.frames if result else ())
             ax.set_title(setup.name, color='#edf4f7')
             if result:
+                detail = result.reason
+                if result.status == 'complete':
+                    from .stellar_merger import outcome_text
+                    detail = outcome_text(prepared) or detail
                 scene.result_info.set_text(f'{result.status.upper()} / {result.completed_steps:,} steps\n'
                     f'Requested {result.requested_end_time:.8g} yr / actual {result.actual_end_time:.8g} yr\n'
-                    f'Source {result.setup_digest[:12]}\n{result.reason}')
+                    f'Source {result.setup_digest[:12]}\n{detail}')
             args.output.parent.mkdir(parents=True,exist_ok=True)
             fig.savefig(args.output,dpi=150)
             plt.close(fig)

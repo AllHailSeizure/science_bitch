@@ -145,7 +145,7 @@ def build_system(setup):
     if system.dt > moon_limit*(1+1e-12):
         raise ValueError(f'Moon timescale unresolved: fixed dt must be <= {moon_limit:.9g} yr (initial relative period / 600).')
     prepared = PreparedSystem(system, ids, specs, setup, reference_ids=references)
-    if setup.collision_mode == 'perfect_merge':
+    if setup.collision_mode in ('perfect_merge', 'binary_star_merger'):
         from .collisions import validate_collision_state
         validate_collision_state(prepared)
     else:
@@ -178,7 +178,7 @@ def insert_body(prepared, body):
     # associations are inspection metadata, including if a parent later vanishes.
     if body.spec.kind == 'moon':
         system.dt = min(system.dt, _moon_step_limit(system, ids, specs, references, (len(ids)-1,)))
-    if mode == 'perfect_merge':
+    if mode in ('perfect_merge', 'binary_star_merger'):
         from .collisions import validate_collision_state
         validate_collision_state(PreparedSystem(system, ids, specs, prepared.setup, reference_ids=references))
     else:

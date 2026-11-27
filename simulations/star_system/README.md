@@ -36,7 +36,8 @@ python -m pytest -q
 
 `python -m simulations.star_system` with no arguments opens the native Qt
 **Observatory** window. **Choose experiment** lists prepared templates (Solar
-System, doubled stellar mass, added Moon, test-particle ring, Sun–Jupiter ring, and others). **Load
+System, doubled stellar mass, added Moon, test-particle ring, the Sun–Jupiter
+ring, and a head-on merger of two solar-type stars). **Load
 saved experiment** opens validated JSON starting setups from disk.
 
 **Sun–Jupiter ring** is the Sun, Jupiter, and 32 mass-zero rocks evenly spaced at 3.2 AU, seed 7. Collision mode is none. **Rotating view** keeps the current Sun–Jupiter direction on the positive horizontal axis; ordinary view uses inertial axes. Switching views does not change positions, velocities, or time. Hollow L4/L5 marks are ideal circular reference geometry, distinct from the rock markers, and they do not mean a rock is captured. Select a rock for its Jupiter separation, Jupiter-relative inertial velocity, and the trail's actual time span. **Matched no-Jupiter run** removes Jupiter and keeps the same rock vectors and fixed step. Compare only the shared recorded time; a halt or a cancelled run stays labeled and is not an equal-time result.
@@ -512,6 +513,8 @@ block this mode; tracers are points and may have no radius.
 | Any contact involving a star | Halt the entire macro step unchanged, explicitly referencing deferred stellar-merger #14 |
 
 Ordinary binary gravity remains supported; an orbit is not a stellar-merger model.
+`perfect_merge` still halts when a star is involved. The only modeled stellar
+merger is the separate [Binary-star merger](#binary-star-merger) experiment.
 The versioned policy is `nonstellar-perfect-merge-v1`, pair rule
 `nonstellar-massive-merge-point-tracer-absorb-star-halt-v1`, and remnant rule
 `volume-com-planet-reference-map-v1`. Simultaneous physical contacts form connected
@@ -597,6 +600,47 @@ Pathological encounters can require many more subdivisions and take much longer
 before the bounded halt. This measurement does not establish interactive pacing
 for arbitrary body counts/encounters. The in-memory event frames also consume
 budget beyond normal output samples.
+
+### Binary-star merger
+
+**Choose experiment** includes **Binary-star merger**. Two catalog-Sun
+main-sequence stars start at rest, separated by ten times the sum of their
+radii. The saved macro step is half the initial close-encounter limit. The run
+is meant to be watched for 1.5 times the analytic contact time. Newtonian
+point-mass gravity pulls them together until the spherical surfaces touch; the
+positive-time contact solver then replaces that pair with one remnant. No other
+pair uses this response.
+
+The remnant mass is the sum of the parents, and its position and velocity are
+the center of mass. Its radius is the estimate `R_sun * (M/M_sun)^0.8`,
+normalized to the catalog Sun, not a stellar-structure integration. Temperature,
+composition, mass loss, spin, tides, mass transfer, radiation, hydrodynamics,
+and stellar evolution are omitted. The readout names both stars, the physical
+contact time, and the remnant. The event also stores the lost relative kinetic
+energy and the orbital angular momentum left as unmodeled spin. Total energy is
+not claimed to be conserved across the merger.
+
+The contact-time reference is the radial two-body fall from rest,
+`t = sqrt(r0^3 / (8GM)) (η + sin η)` with `cos η = 2r/r0 - 1`. Point masses
+would reach the center in `π sqrt(r0^3 / (8GM))`. On this fixture the analytic
+contact time is 0.003496599597 yr. Halving the macro step moves the simulated
+contact toward that value:
+
+| Macro dt (yr) | Contact time (yr) | Difference from the analytic fall |
+| ---: | ---: | ---: |
+| 1.59612409795e-4 | 0.003496628450 | 2.89e-8 yr |
+| half | 0.003496616391 | 1.68e-8 yr |
+| quarter | 0.003496611297 | 1.17e-8 yr |
+
+The test requires the quarter-step absolute error to stay under 1e-7 yr and
+below the full-step error. These digits are from this implementation; they are
+not a cross-platform bitwise guarantee. The checked case is this separation,
+these two stellar types, and model id `solar-type-head-on-contact-v1`. A
+different mass or radius, an extra body, or a missing model id halts as
+unsupported contact and does not build a remnant. Exhausting the solver's
+subdivision budget halts numerically, rolls back the unfinished step, and is
+not labeled a merger. Other stellar types, compact objects, and random
+encounters are outside this scenario.
 
 ### Final dependency-stack acceptance audit
 
