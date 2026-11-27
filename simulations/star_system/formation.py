@@ -70,7 +70,7 @@ _NOT_MODELED = (
     'Grain growth and any rule that turns a swarm into one body.',
     'Tree-code grouping of distant mass.',
     'Fragmentation, hit-and-run, erosion, and partial accretion.',
-    'Three-dimensional orbits, tides, and relativity.',
+    'Three-dimensional orbits and relativity. Optional close-pass tidal dissipation is a separate experiment choice and stays off in this prototype.',
     'Stellar mergers and stellar internal structure.',
 )
 _SCOPE = (

@@ -261,7 +261,8 @@ class ExperimentEditor:
             label.set_fontsize(9)
         self.widgets.append(self.collision_picker)
         self._button((.50, .45, .42, .04), 'Apply collisions + RESET', self.collisions)
-        self.fig.text(.07, .435, 'Perfect merge: nonstellar spheres / point tracers; stellar contact halts (#14).', color=MUTED, fontsize=8, va='top')
+        self.fig.text(.07, .435, 'Perfect merge: nonstellar spheres / point tracers; stellar contact halts (#14). '
+                      'Tides are a separate saved choice.', color=MUTED, fontsize=8, va='top')
         self._button((.07, .26, .85, .045), 'Save current state as new setup', self.save_current)
         self.fig.text(.07, .245, 'Capture writes a separate named epoch at time zero, including explicit particles.\n'
                       'The current experiment stays selected. Load the file to use the new epoch.', color=MUTED, fontsize=10, va='top')

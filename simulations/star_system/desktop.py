@@ -30,7 +30,7 @@ from .experiments import ExperimentSession, capture_current_setup, custom_copy
 from .history import MAX_HISTORY, StateFrame, relative_state
 from .initialization import PreparedSystem, circular_relative_velocity, insert_body
 from .jupiter_experiment import assumptions_text, comparison_readout, is_jupiter_experiment, matched_control, rock_report
-from .model import InitialBody
+from .model import InitialBody, TidalPolicy
 from .persistence import load_setup, save_setup, setup_digest
 from .playback import Playback
 from .recording import Calculation, CalculationRequest
@@ -402,8 +402,12 @@ class Observatory(QMainWindow):
         self.collision_button = action('Apply collisions + reset', self.apply_collision_mode)
         collision.addWidget(self.collision_button)
         form.addLayout(collision)
+        self.tides_check = QCheckBox('Tidal dissipation on close passes')
+        form.addWidget(self.tides_check)
         self.collision_note = label(
-            'Choose none or perfect merge, then apply. Applying resets to the starting setup and keeps earlier recordings. '
+            'Choose none or perfect merge, and whether close passes lose tidal energy, then apply. '
+            'Applying resets to the starting setup and keeps earlier recordings. '
+            'Tidal dissipation is off unless checked. It is not part of perfect merge. '
             'Perfect merge joins nonstellar bodies on contact and absorbs point tracers with no mass feedback. '
             'Particle/particle contact is ignored. Contact with a star halts. Marker overlap is not a physical collision.',
             'muted')
@@ -650,9 +654,16 @@ class Observatory(QMainWindow):
         self.save_current_button.setEnabled(not calculating and not placing)
         self.collision_mode.setEnabled(not calculating and not placing)
         self.collision_button.setEnabled(not calculating and not placing)
+        self.tides_check.setEnabled(not calculating and not placing)
+        if self.setup.tides.enabled and self.setup.collision_mode == 'none':
+            tide_line = f'Tidal dissipation is on ({self.setup.tides.version}). '
+        elif self.setup.tides.enabled:
+            tide_line = 'Tidal dissipation is stored and is not applied inside the contact solver. '
+        else:
+            tide_line = 'Tidal dissipation is off. '
         self.collision_note.setText(
-            f'Active collision mode: {self.setup.collision_mode}. '
-            'Apply collisions + reset rebuilds the starting setup and keeps earlier recordings. '
+            f'Active collision mode: {self.setup.collision_mode}. {tide_line}'
+            'Apply collisions + reset rebuilds the starting setup, stores the tide checkbox, and keeps earlier recordings. '
             'Perfect merge joins nonstellar bodies on contact and absorbs point tracers with no mass feedback. '
             'Particle/particle contact is ignored. Contact with a star halts. Marker overlap is not a physical collision.')
         self.calculate_button.setEnabled(not placing)
@@ -1234,6 +1245,7 @@ class Observatory(QMainWindow):
         index = self.collision_mode.findData(self.setup.collision_mode)
         if index >= 0:
             self.collision_mode.setCurrentIndex(index)
+        self.tides_check.setChecked(self.setup.tides.enabled)
 
     def apply_collision_mode(self):
         """Rebuild the starting setup in preparation. Recordings keep their own mode."""
@@ -1243,7 +1255,11 @@ class Observatory(QMainWindow):
             self.tell('Cancel or finish the calculation before changing collision handling.')
             return
         mode = self.collision_mode.currentData()
-        candidate = custom_copy(replace(self.setup, collision_mode=mode), self.setup)
+        if self.tides_check.isChecked():
+            tides = self.setup.tides if self.setup.tides.enabled else TidalPolicy(enabled=True)
+        else:
+            tides = TidalPolicy()
+        candidate = custom_copy(replace(self.setup, collision_mode=mode, tides=tides), self.setup)
         previous = self.setup
         try:
             prepared = self.session.select(candidate)

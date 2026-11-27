@@ -10,7 +10,7 @@ from collections.abc import Mapping
 
 import numpy as np
 
-from .model import BodySpec, InitialBody, InitialSetup, PopulationSpec, PropertySource, CollisionPolicy
+from .model import BodySpec, InitialBody, InitialSetup, PopulationSpec, PropertySource, CollisionPolicy, TidalPolicy
 from .populations import Population
 from .initialization import build_system
 
@@ -83,6 +83,9 @@ def _document(setup):
     # Preserve byte-for-byte canonical legacy mode-none documents/digests.
     if setup.collision_mode != 'none' or setup.collision_policy != CollisionPolicy():
         document['setup']['collision_policy'] = _record(setup.collision_policy)
+    # Absent when off, so a tide-free document and its digest stay as they were.
+    if setup.tides.enabled:
+        document['setup']['tides'] = _record(setup.tides)
     return document
 
 
@@ -185,6 +188,8 @@ def _decode(document):
     keys = {'name', 'preset_id', 'dt', 'collision_mode', 'bodies', 'population', 'provenance'}
     if type(document['setup']) is dict and 'collision_policy' in document['setup']:
         keys.add('collision_policy')
+    if type(document['setup']) is dict and 'tides' in document['setup']:
+        keys.add('tides')
     value = _object(document['setup'], keys, 'Setup')
     _string(value['name'], 'Setup name')
     _string(value['preset_id'], 'Preset ID', nullable=True)
@@ -192,6 +197,13 @@ def _decode(document):
     if value['collision_mode'] in ('perfect_merge', 'binary_star_merger') and 'collision_policy' not in value:
         raise ValueError('Physical collision mode requires an explicit versioned collision policy.')
     policy = CollisionPolicy(**_object(value['collision_policy'], {field.name for field in fields(CollisionPolicy)}, 'Collision policy')) if 'collision_policy' in value else CollisionPolicy()
+    if 'tides' in value:
+        raw = _object(value['tides'], {field.name for field in fields(TidalPolicy)}, 'Tidal policy')
+        if raw['enabled'] is not True:
+            raise ValueError('A stored tidal policy is the enabled model. Omit tides to leave dissipation off.')
+        tides = TidalPolicy(**raw)
+    else:
+        tides = TidalPolicy()
     contact = value['collision_mode'] in ('perfect_merge', 'binary_star_merger')
     if document['numerical_version'] != (policy.numerical if contact else NUMERICAL_VERSION):
         raise ValueError('Unsupported numerical_version for selected collision mode.')
@@ -208,7 +220,7 @@ def _decode(document):
                                   _string(body['reference_id'], 'Body reference', nullable=True)))
     setup = InitialSetup(value['name'], tuple(bodies), value['dt'], value['preset_id'],
                          _decode_population(value['population']), value['collision_mode'], value['provenance'], policy,
-                         source_environment={'numpy': document['environment']['numpy']})
+                         source_environment={'numpy': document['environment']['numpy']}, tides=tides)
     # Validate references, overlap, known masses and numerical resolution before install.
     build_system(setup)
     return setup

@@ -57,6 +57,14 @@ def assumptions_text(setup):
     lines.append(
         'Forces are the declared unsoftened Newtonian model. '
         'Test particles do not attract the Sun, Jupiter, or each other.')
+    if setup.tides.enabled and setup.collision_mode == 'none':
+        lines.append(
+            f'Tidal dissipation is on ({setup.tides.version}). Close passes of massive bodies can lose orbital energy. '
+            'This ring is not itself a tidal-capture result.')
+    elif setup.tides.enabled:
+        lines.append('Tidal dissipation is stored and is not applied inside the contact solver.')
+    else:
+        lines.append('Tidal dissipation is off.')
     lines.append('This fixture can show perturbation. It does not promise Trojan occupancy, stability, or capture.')
     lines.append(f'Fixed step {setup.dt:.6g} yr. Halts and cancelled runs stay labeled and are not treated as complete.')
     return '\n'.join(lines)

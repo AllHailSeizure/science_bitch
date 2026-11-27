@@ -89,6 +89,34 @@ class PopulationSpec:
         # A numeric row has no meaning in authored metadata or a reordered setup.
         object.__setattr__(self, 'settings', replace(self.settings, reference=0))
 
+# Optional close-pass energy sink. Off unless an experiment enables it.
+# Strength is a dimensionless stand-in, not a measured k2/Q.
+TIDAL_MODEL_ID = 'close-pass-energy-dissipation-v1'
+TIDAL_STRENGTH = 80.0
+TIDAL_REACH = 6.0
+
+
+@dataclass(frozen=True)
+class TidalPolicy:
+    """Energy removed at resolved close pericenters. Disabled policies are not stored."""
+    enabled: bool = False
+    version: str = TIDAL_MODEL_ID
+    strength: float = TIDAL_STRENGTH
+    reach: float = TIDAL_REACH
+
+    def __post_init__(self):
+        if type(self.enabled) is not bool:
+            raise ValueError('Tidal dissipation must be explicitly on or off.')
+        if self.version != TIDAL_MODEL_ID:
+            raise ValueError('Unsupported tidal model.')
+        if type(self.strength) not in (int, float) or not np.isfinite(self.strength) or not 0 < self.strength <= 1e6:
+            raise ValueError('Tidal strength must be a finite number in (0, 1000000].')
+        if type(self.reach) not in (int, float) or not np.isfinite(self.reach) or not 1 <= self.reach <= 100:
+            raise ValueError('Tidal reach must be a finite number from 1 to 100, in units of the larger radius.')
+        if not self.enabled and (self.strength != TIDAL_STRENGTH or self.reach != TIDAL_REACH):
+            raise ValueError('Turn tidal dissipation on to store a strength or reach. Off uses the default policy only.')
+
+
 @dataclass(frozen=True)
 class CollisionPolicy:
     """Versioned, deliberately bounded nonstellar contact model."""
@@ -129,6 +157,7 @@ class InitialSetup:
     collision_mode: str = 'none'
     provenance: Mapping[str, object] = field(default_factory=dict, compare=False, hash=False)
     collision_policy: CollisionPolicy = field(default_factory=CollisionPolicy)
+    tides: TidalPolicy = field(default_factory=TidalPolicy)
     # NumPy provenance of the document that produced this setup. Absent on a
     # setup built in memory; load_setup copies it from the file. Not physical
     # state, so equality ignores it.
@@ -144,6 +173,8 @@ class InitialSetup:
             raise ValueError('Supported collision modes: none, perfect_merge, binary_star_merger.')
         if not isinstance(self.collision_policy, CollisionPolicy):
             raise ValueError('A supported CollisionPolicy is required.')
+        if not isinstance(self.tides, TidalPolicy):
+            raise ValueError('A supported TidalPolicy is required.')
         if not isinstance(self.provenance, Mapping):
             raise ValueError('Setup provenance must be an object.')
         object.__setattr__(self, 'provenance', freeze_metadata(self.provenance))
