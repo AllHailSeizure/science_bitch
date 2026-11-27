@@ -213,6 +213,28 @@ def test_resolution_keeps_remnant_mass_across_two_steps():
     assert all(point.survivor_count == 1 for point in points)
 
 
+def test_explicit_parcels_survive_a_merge():
+    star = InitialBody('star', BodySpec('Star', 'star', 1., SOLAR_RADIUS_AU), (0., 0.), (0., 0.))
+    left = InitialBody('left', BodySpec('Left', 'planet', 3e-5, .08), (5., 0.), (2.5, 0.))
+    right = InitialBody('right', BodySpec('Right', 'planet', 2e-5, .08), (5.5, 0.), (-2.5, 0.))
+    composition = {'star': {'star': 1.}, 'left': {'dust-a': 1e-5, 'dust-b': 2e-5}, 'right': {'dust-c': 2e-5}}
+    experiment = FormationExperiment(InitialSetup('Parcel handoff', (star, left, right), .02, collision_mode='perfect_merge'),
+                                     ejection_radius=30., composition=composition)
+    experiment.integrate(.2)
+    merge = next(event for event in experiment.events if event.kind == 'merge')
+    amounts = {item.parcel_id: item.mass for item in merge.contributions}
+    assert amounts == pytest.approx({'dust-a': 1e-5, 'dust-b': 2e-5, 'dust-c': 2e-5})
+    assert experiment.accounting().parcel_error == pytest.approx(0., abs=1e-15)
+
+
+def test_composition_must_match_body_mass():
+    star = InitialBody('star', BodySpec('Star', 'star', 1., SOLAR_RADIUS_AU), (0., 0.), (0., 0.))
+    rock = InitialBody('rock', BodySpec('Rock', 'planet', 1e-5, .05), (2., 0.), (0., 3.))
+    setup = InitialSetup('Short ledger', (star, rock), .02, collision_mode='perfect_merge')
+    with pytest.raises(ValueError, match='add up'):
+        FormationExperiment(setup, ejection_radius=20., composition={'star': {'star': 1.}, 'rock': {'dust-a': 1e-6}})
+
+
 def test_stellar_contact_halts_without_merging():
     star = InitialBody('star', BodySpec('Star', 'star', 1., SOLAR_RADIUS_AU), (0., 0.), (0., 0.))
     rock = InitialBody('rock', BodySpec('Rock', 'planet', 1e-6, .02), (.15, 0.), (-6., 0.))
