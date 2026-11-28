@@ -9,7 +9,7 @@ from simulations.star_system.experiment_file import main
 
 
 def _write(path, *, dimensions=2, bodies=('sun', 'earth', 'jupiter'), collision=None,
-           tides=False, drag=False, relativistic=False, mass_loss=False, variable=None, years=0.01,
+           tides=False, drag=False, relativistic=False, mass_loss=False, outside=None, variable=None, years=0.01,
            scan=None, watch=(), custom=None):
     document = {
         'schema': 'sidereel-experiment-v1',
@@ -17,7 +17,7 @@ def _write(path, *, dimensions=2, bodies=('sun', 'earth', 'jupiter'), collision=
         'bodies': {'catalog': list(bodies), 'new': custom},
         'physics': {
             'collision': collision, 'tides': tides, 'gas_dust_drag': drag,
-            'relativistic_corrections': relativistic, 'stellar_mass_loss': mass_loss,
+            'relativistic_corrections': relativistic, 'stellar_mass_loss': mass_loss, 'outside_pulls': outside,
         },
         'experiment': {
             'independent_variable': variable,
@@ -56,10 +56,10 @@ def test_new_writes_every_section_blank_and_in_order(tmp_path):
     assert list(document['bodies']) == ['catalog', 'new']
     assert document['bodies'] == {'catalog': [], 'new': None}
     assert list(document['physics']) == [
-        'collision', 'tides', 'gas_dust_drag', 'relativistic_corrections', 'stellar_mass_loss']
+        'collision', 'tides', 'gas_dust_drag', 'relativistic_corrections', 'stellar_mass_loss', 'outside_pulls']
     assert document['physics'] == {
         'collision': None, 'tides': None, 'gas_dust_drag': None,
-        'relativistic_corrections': None, 'stellar_mass_loss': None}
+        'relativistic_corrections': None, 'stellar_mass_loss': None, 'outside_pulls': None}
     assert list(document['experiment']) == ['independent_variable', 'fixed_duration', 'open_scan', 'watch_for']
     assert document['experiment'] == {
         'independent_variable': None, 'fixed_duration': None, 'open_scan': None, 'watch_for': []}
@@ -396,4 +396,22 @@ def test_build_runs_both_modules_with_tides_in_three_dimensions(tmp_path):
     assert playback['physics']['stellar_mass_loss'] is True
     assert playback['physics']['tides'] is True
     assert len(run['samples'][-1]['r'][0]) == 3
+    assert run['samples'][-1]['mass'][0] < run['samples'][0]['mass'][0]
+
+
+@pytest.mark.parametrize('collision', [None, 'speed_angle'])
+def test_all_optional_modules_coexist_in_three_dimensions(tmp_path, collision):
+    playback, _output = _build(
+        tmp_path, dimensions=3, bodies=('sun', 'earth'), collision=collision,
+        tides=collision is not None, drag=collision is not None,
+        relativistic=True, mass_loss=True, outside={'flybys': {'seed': 3}}, years=0.05)
+    physics = playback['physics']
+    assert physics['relativistic_corrections'] is True
+    assert physics['stellar_mass_loss'] is True
+    assert physics['outside_pulls']['enabled'] is True
+    assert physics['outside_pulls']['flybys'] is True
+    assert physics['path'] == ('yoshida' if collision is None else 'formation')
+    assert playback['experiment']['physics']['outside_pulls'] == {'flybys': {'seed': 3}}
+    run = playback['runs'][0]
+    assert run['status'] == 'complete'
     assert run['samples'][-1]['mass'][0] < run['samples'][0]['mass'][0]

@@ -4,6 +4,8 @@ Positive masses mutually interact; zero-mass test particles only receive gravity
 Positions are planar (two components) or three-dimensional (three components).
 Regular presets store three components with a disclosed inclination.
 ``make_system`` stays the planar circular helper. A planar recording is not padded.
+``external_acceleration`` is an optional extra force. It stays unset unless a
+caller attaches one, so a plain system feels only its own bodies.
 
 Fixed-step Yoshida fourth-order composition of velocity Verlet.
 Steps stay fixed within each uninterrupted segment; insertion can begin a new
@@ -75,6 +77,18 @@ class System:
     v: np.ndarray
     dt: float
     time: float = 0.
+    external_acceleration: object = None
+
+    def with_state(self, r, v, time, masses=None, dt=None):
+        """A new system with this state that keeps an attached external acceleration."""
+        return System(
+            self.masses if masses is None else masses,
+            r,
+            v,
+            self.dt if dt is None else dt,
+            time,
+            self.external_acceleration,
+        )
 
     def accelerations(self, separation_floor=None):
         sources = np.flatnonzero(self.masses > 0)
@@ -89,12 +103,17 @@ class System:
             dist = np.maximum(np.sqrt(d2), np.asarray(separation_floor, dtype=float)[:, sources])
             newton = G*np.sum(delta * (self.masses[None, sources]/(dist*dist*dist))[:, :, None], axis=1)
         extra = _extra_acceleration
+        if extra is not None:
+            correction = extra(self)
+            if correction is not None:
+                newton = newton + correction
+        extra = self.external_acceleration
         if extra is None:
             return newton
-        correction = extra(self)
-        if correction is None:
-            return newton
-        return newton + correction
+        added = np.asarray(extra(self), dtype=float)
+        if added.shape != newton.shape or not np.isfinite(added).all():
+            raise ValueError('Outside pull produced a nonfinite or mis-shaped acceleration. The state was not advanced.')
+        return newton + added
 
     def resolution_limit(self, separation_floor=None):
         """Largest supported step from pair gravity and relative crossing time."""
@@ -127,7 +146,7 @@ class System:
             self.validate_step()
             # Commit only a whole validated Yoshida step. An intermediate failure
             # must not leave a partially kicked/drifted live or recorded state.
-            trial = System(self.masses, self.r.copy(), self.v.copy(), self.dt, self.time)
+            trial = self.with_state(self.r.copy(), self.v.copy(), self.time)
             for w in (_YOSHIDA_W1, _YOSHIDA_W0, _YOSHIDA_W1):
                 h = w*self.dt
                 trial.v += .5*h*trial.accelerations()

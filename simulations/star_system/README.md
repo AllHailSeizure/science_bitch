@@ -1,27 +1,63 @@
 # Sidereel
 
 Run from the repository root with `requirements.txt` installed, or from an
-install of this package. `sidereel` opens the Qt desktop (on Windows
+install of this package. `sidereel` opens the player (on Windows
 that launcher uses `pythonw`, so no console window stays open).
 `sidereel-cli` is the command line below, including headless `--output`.
 `python -m simulations.star_system` is the same program; the import package name is unchanged.
 
 ```powershell
+sidereel experiment.sidereel
 sidereel
+sidereel --build experiments/heavier-star.json
 sidereel-cli --star sun --planet earth --planet jupiter --years 1 --output output/sidereel.png
-python -m simulations.star_system
+python -m simulations.star_system experiment.sidereel
 python -m simulations.star_system --star sun --planet earth --planet jupiter --years 1 --output output/sidereel.png
 python -m simulations.star_system --load output/experiment.json --years 0.01 --output output/restored.png
 ```
 
-Dispatch is argument-dependent: no flags opens the Qt desktop; any explicit selector uses the
+Dispatch is argument-dependent: no flags, or one playback path, opens the player. Any explicit selector uses the
 legacy Matplotlib controller or headless export described below.
 
 | Entry | Example | First screen |
 | --- | --- | --- |
-| Qt desktop (default) | `python -m simulations.star_system` | **Choose experiment** / **Load saved experiment** |
+| Player (default) | `sidereel` or `sidereel experiment.sidereel` | Home list of preset sweep files, or **Live view** of that playback |
 | Legacy Matplotlib GUI | `python -m simulations.star_system --star sun --planet earth --planet jupiter` | Overhead scene in **PREP** at t=0; **Menu [M]** toggles the sidebar |
 | Headless PNG | `python -m simulations.star_system --load output/experiment.json --years 0.01 --output output/restored.png` | No window; Agg writes the file |
+
+## Playing a .sidereel file
+
+`sidereel experiment.sidereel` opens the player on a finished recording. The player reads the samples in the file. It does not call the integrator. `sidereel` with no file opens a home screen: the preset sweep files under `experiments/`, the `sidereel --build` command for the one you select, and **Open playback file**. A source `.json` is refused until `--build` has written the `.sidereel` file beside it.
+
+**Live view** is the default. One top-down plot, no axis values, orbit trails as lines, duration underneath. The field is dark and the run label is gold. A three-dimensional recording uses the same view: the first two components, a top-down projection.
+
+**Overlay** draws every equal-time run on one plot, colored by swept value, with the observable you choose: heliocentric distance (the default), speed, or trajectories only. A halted, cancelled, or otherwise shorter member stays labeled and is omitted from that overlay. A completed run that recorded a collision stays in the overlay and is marked with when and why. Export PNG, SVG, and CSV.
+
+**Inner/outer split view (name TBD)** is the true-scale pair. The inner panel is fixed at ±2 AU (Mercury through Mars). The outer panel is fixed at ±35 AU (Jupiter through Neptune). Axis values are in AU and stay put when the run slider moves. Export PNG or GIF.
+
+The control board:
+
+| Control | Action |
+| --- | --- |
+| Within the run | Simulated years advanced per wall-clock second |
+| Between runs | How long the player dwells after a run ends before it steps to the next |
+| Reset each run | Each run, including one chosen with the slider, starts at its first sample. Clear it and the playhead keeps its timestamp, clamped to that run |
+| Pause | Hold the playhead. The button then reads Play |
+| Run slider | Switch which recorded member is on screen. Hidden when the file has one run. It does not recalculate |
+| Compare | Live view and the inner/outer split show one chosen run on the left and another on the right. The left side follows the slider. Overlay stays a single plot of the equal-time runs |
+
+Preset files in `experiments/` are the current three-dimensional presets as controlled-variable sweeps. `--build` records them. The capture flyby example stays on the planar legacy setup. Where an endpoint was left open, the file is one run at the value that preset already uses. The duration written in those files is a proposal: one year, and half a year for the capture flyby. Capture flyby sweeps approach speed and is an example in the same shape. It is not a menu preset, and it can show a temporary flyby.
+
+| File | Swept value |
+| --- | --- |
+| `experiments/solar-system.json` | Sun mass, one run at the catalog value; planets fixed |
+| `experiments/heavier-star.json` | Sun mass from 1 to 2, step 0.1; catalog vectors fixed |
+| `experiments/earth-moon.json` | Earth mass, one run at the catalog value; Moon at 384,400 km |
+| `experiments/asteroid-ring.json` | Ring radius, one run at 3.2 AU; 32 even angles, seed 7 |
+| `experiments/sun-earth-jupiter.json` | Sun mass, one run at the catalog value |
+| `experiments/sun-jupiter-ring.json` | Jupiter mass from 0 (Jupiter removed) to the catalog mass, five equal steps; ring fixed |
+| `experiments/binary-star-merger.json` | One run, no swept variable, published head-on window |
+| `experiments/capture-flyby.json` | Approach speed from 0.5 to 2 AU per Julian year, step 0.5 |
 
 `--years`, `--sample-stride`, and `--max-recording-mib` take effect only with
 `--output`. They drive the shared incremental calculator before the PNG is saved.
@@ -32,10 +68,10 @@ evolve through **Calculate...** (Qt or Matplotlib) or **Run live**.
 python -m pytest -q
 ```
 
-## Qt desktop (default)
+## Observatory authoring window
 
-`python -m simulations.star_system` with no arguments opens the native Qt
-**Observatory** window. **Choose experiment** lists prepared templates (Solar
+The Observatory is the earlier experiment sandbox. `sidereel` opens the player
+above; tests construct this window directly. **Choose experiment** lists prepared templates (Solar
 System, doubled stellar mass, added Moon, test-particle ring, the Sun–Jupiter
 ring, and a head-on merger of two solar-type stars). **Load
 saved experiment** opens validated JSON starting setups from disk.
@@ -75,8 +111,7 @@ python -m simulations.star_system --star sun --planet earth --planet jupiter --y
 python -m simulations.star_system --load output/experiment.json --years 0.01 --output output/restored.png
 ```
 
-With no arguments, the Qt Observatory opens. Its overhead scene fills the
-window. **Menu** (keyboard **M**, unless a text field is focused) opens and
+The Observatory overhead scene fills its window. **Menu** (keyboard **M**, unless a text field is focused) opens and
 closes a sidebar drawn over that scene. Opening or closing the sidebar does
 not resize the canvas or move the camera. The sidebar heading is the current
 experiment name, such as **Solar System**. Passing selectors without `--output`
@@ -676,7 +711,7 @@ budget beyond normal output samples.
 
 ### Binary-star merger
 
-**Choose experiment** includes **Binary-star merger**. Two catalog-Sun
+`experiments/binary-star-merger.json` is the head-on merger as one run, with no swept variable. Two catalog-Sun
 main-sequence stars start at rest, separated by ten times the sum of their
 radii. The saved macro step is half the initial close-encounter limit. The run
 is meant to be watched for 1.5 times the analytic contact time. Newtonian
