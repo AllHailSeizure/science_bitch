@@ -121,21 +121,57 @@ def test_build_rejects_ignore(tmp_path, capsys):
 
 
 @pytest.mark.parametrize('collision', ['perfect_merge', 'speed_angle'])
-def test_build_rejects_tides_with_a_contact_rule_and_names_84(tmp_path, capsys, collision):
-    error = _refuse(tmp_path, capsys, collision=collision, tides=True)
-    assert '#84' in error
-    assert collision in error
+def test_build_runs_tides_with_a_contact_rule(tmp_path, collision):
+    playback, _output = _build(
+        tmp_path, bodies=('sun', 'earth'), collision=collision, tides=True, years=0.005)
+    run = playback['runs'][0]
+    assert run['status'] == 'complete'
+    assert playback['physics']['tides'] is True
+    assert playback['physics']['engine_collision_mode'] == collision
+    assert playback['physics']['path'] == 'formation'
+    assert '#84' not in playback['physics']['note']
 
 
-def test_build_rejects_tides_in_three_dimensions_and_names_84(tmp_path, capsys):
-    error = _refuse(tmp_path, capsys, dimensions=3, bodies=('sun', 'earth'), tides=True, collision='stop_on_contact')
-    assert '#84' in error
+def test_build_runs_tides_in_three_dimensions(tmp_path):
+    playback, _output = _build(
+        tmp_path, dimensions=3, bodies=('sun', 'earth'), tides=True, collision='stop_on_contact', years=0.005)
+    run = playback['runs'][0]
+    assert run['status'] == 'complete'
+    assert len(run['samples'][0]['r'][0]) == 3
+    assert playback['physics']['tides'] is True
+    assert playback['physics']['engine_collision_mode'] == 'stop_on_contact'
+    assert playback['physics']['path'] == 'formation'
+    assert '#84' not in playback['physics']['note']
 
 
-def test_build_rejects_gas_dust_drag_and_names_84(tmp_path, capsys):
-    error = _refuse(tmp_path, capsys, drag=True, collision='perfect_merge')
-    assert '#84' in error
-    assert 'gas' in error.lower()
+def test_build_runs_gas_dust_drag_with_a_collision_rule(tmp_path):
+    playback, _output = _build(
+        tmp_path, bodies=('sun', 'earth'), drag=True, collision='perfect_merge', years=0.02)
+    run = playback['runs'][0]
+    assert run['status'] == 'complete'
+    assert playback['physics']['gas_dust_drag'] is True
+    assert playback['physics']['engine_collision_mode'] == 'perfect_merge'
+    assert playback['physics']['path'] == 'formation'
+    assert run['dissipated_kinetic'] > 0
+    assert '#84' not in playback['physics']['note']
+
+
+def test_build_runs_collision_drag_and_tides_in_three_dimensions(tmp_path):
+    playback, _output = _build(
+        tmp_path, dimensions=3, bodies=('sun', 'earth'), collision='speed_angle',
+        tides=True, drag=True, years=0.02)
+    run = playback['runs'][0]
+    physics = playback['physics']
+    assert run['status'] == 'complete'
+    assert len(run['samples'][0]['r'][0]) == 3
+    assert run['samples'][0]['r'][0][2] == 0
+    assert physics['tides'] is True
+    assert physics['gas_dust_drag'] is True
+    assert physics['engine_collision_mode'] == 'speed_angle'
+    assert physics['path'] == 'formation'
+    assert 'Combined formation path' in physics['note']
+    assert run['dissipated_kinetic'] > 0
+    assert '#84' not in physics['note']
 
 
 def test_build_requires_a_duration_or_an_open_scan(tmp_path, capsys):

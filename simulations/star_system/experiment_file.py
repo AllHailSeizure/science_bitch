@@ -5,9 +5,9 @@
 solver. The ``.sidereel`` result is JSON: one run, or several when the file
 sweeps a variable or scans until a watched outcome.
 
-Relativistic gravity and custom bodies are reserved and refused. A physics
-combination the current integrator cannot run together is refused with a
-message that names #84, rather than skipping a selected module.
+Relativistic gravity, custom bodies, and collision mode ``ignore`` are
+reserved and refused. Collision rules, gas-dust drag, and tides, including a
+3D state, run together on the combined formation path.
 """
 import argparse
 import json
@@ -24,7 +24,7 @@ from .collisions import CollisionEvent
 from .core import G, SOLAR_RADIUS_AU, make_system
 from .data import CATALOG, PLANETS, STARS
 from .initialization import build_system
-from .model import InitialBody, InitialSetup, PropertySource, TidalPolicy
+from .model import DragPolicy, InitialBody, InitialSetup, PropertySource, TidalPolicy
 from .recording import Calculation, CalculationRequest
 from .tides import TideEvent
 
@@ -34,11 +34,9 @@ PLAYBACK_SUFFIX = '.sidereel'
 GRAVITY_NEWTONIAN = 'newtonian'
 GRAVITY_RELATIVISTIC = 'relativistic'
 COLLISION_MODES = ('stop_on_contact', 'perfect_merge', 'speed_angle', 'ignore')
-ENGINE_COLLISION = {
-    'stop_on_contact': 'none',
-    'perfect_merge': 'perfect_merge',
-    'speed_angle': 'speed_angle',
-}
+_FORMATION_COLLISION = ('stop_on_contact', 'perfect_merge', 'speed_angle')
+# Far enough that a short catalog orbit is not dropped as an ejection.
+_EJECTION_AU = 10000.0
 PARAMETERS = ('distance', 'mass', 'speed')
 PARAMETER_UNITS = {'distance': 'AU', 'mass': 'solar_mass', 'speed': 'catalog_velocity'}
 WATCH_KINDS = ('capture', 'collision', 'merger', 'escape', 'graze', 'fragment', 'tide', 'close_encounter')
@@ -177,8 +175,7 @@ def playback_path(source):
 
 
 def build_experiment(experiment):
-    """Validate the physics combination, integrate, and return the playback document."""
-    _refuse_unsupported(experiment)
+    """Integrate a validated experiment and return the playback document."""
     base = _catalog_setup(experiment.catalog, experiment.dimensions)
     if experiment.scan is not None:
         runs, stopped = _open_scan(experiment, base)
@@ -433,19 +430,25 @@ def _variable(value, keys, increment):
     return _Variable(parameter, body, start, stop, step)
 
 
-def _refuse_unsupported(experiment):
+def _uses_combined_path(experiment):
+    """Drag, or tides with a contact rule or a 3D state, uses the formation path."""
     if experiment.drag_on:
-        raise ValueError(
-            'Gas-dust drag cannot run together with this catalog-body experiment yet (#84). '
-            'The gas-dust code is a separate planar disk and is not combined with this path.')
-    if experiment.tides_on and experiment.collision in ('perfect_merge', 'speed_angle'):
-        raise ValueError(
-            f'Tides cannot run together with collision mode {experiment.collision} yet (#84). '
-            'A stored tide is not applied on the contact-solver path.')
-    if experiment.tides_on and experiment.dimensions == 3:
-        raise ValueError(
-            'Tides cannot run together with a 3-dimensional state yet (#84). '
-            'Close-pass tides stay on the fixed-step planar path.')
+        return True
+    if not experiment.tides_on:
+        return False
+    return experiment.dimensions == 3 or experiment.collision in ('perfect_merge', 'speed_angle')
+
+
+def _engine_mode(experiment):
+    """Collision mode the integrator actually stores for this experiment."""
+    if _uses_combined_path(experiment):
+        if experiment.collision in _FORMATION_COLLISION:
+            return experiment.collision
+        # A blank collision module does not merge and does not let bodies pass through.
+        return 'stop_on_contact'
+    if experiment.collision in (None, 'stop_on_contact'):
+        return 'none'
+    return experiment.collision
 
 
 def _catalog_setup(names, dimensions):
@@ -468,8 +471,9 @@ def _setup_for_value(experiment, base, value):
     setup = base
     if experiment.variable is not None:
         setup = _apply_variable(setup, experiment.variable.parameter, experiment.variable.body, value)
-    mode = 'none' if experiment.collision in (None, 'stop_on_contact') else experiment.collision
+    mode = _engine_mode(experiment)
     tides = TidalPolicy(enabled=True) if experiment.tides_on else TidalPolicy()
+    drag = DragPolicy(enabled=True) if experiment.drag_on else DragPolicy()
     probed = build_system(replace(setup, dt=1e-12, collision_mode='none', tides=TidalPolicy()))
     limit = probed.system.resolution_limit()
     # Keep the catalog step when it still resolves the initial state. Shrink it
@@ -480,7 +484,7 @@ def _setup_for_value(experiment, base, value):
         dt = setup.dt
     if not math.isfinite(dt) or dt <= 0:
         raise ValueError('The varied initial state has no usable fixed step.')
-    prepared = replace(setup, dt=dt, collision_mode=mode, tides=tides)
+    prepared = replace(setup, dt=dt, collision_mode=mode, tides=tides, drag=drag)
     build_system(prepared)
     return prepared
 
@@ -532,10 +536,20 @@ def _integrate(setup, years):
     return calculation.result
 
 
+def _integrate_formation(setup, years):
+    from .formation import FormationExperiment
+    experiment = FormationExperiment(setup, ejection_radius=_EJECTION_AU, sample_stride=1)
+    experiment.integrate(years, finish=True)
+    return experiment
+
+
 def _one_run(experiment, base, value, index, years):
     try:
         setup = _setup_for_value(experiment, base, value)
-        result = _integrate(setup, years)
+        if _uses_combined_path(experiment):
+            record = _formation_record(experiment, setup, years)
+        else:
+            record = _yoshida_record(experiment, setup, years)
     except ValueError as exc:
         if value is None:
             raise
@@ -548,13 +562,15 @@ def _one_run(experiment, base, value, index, years):
             'value': value,
             'unit': PARAMETER_UNITS[experiment.variable.parameter],
         }
+    record['index'] = index
+    record['variable'] = variable
+    return record
+
+
+def _yoshida_record(experiment, setup, years):
+    result = _integrate(setup, years)
     primary = next(body.id for body in setup.bodies if body.id in STARS)
-    events = collect_watch_events(
-        result.frames, experiment.watch_for, status=result.status, reason=result.reason,
-        user_collision=experiment.collision, primary_id=primary)
     return {
-        'index': index,
-        'variable': variable,
         'status': result.status,
         'reason': result.reason,
         'requested_years': result.requested_end_time,
@@ -565,8 +581,37 @@ def _one_run(experiment, base, value, index, years):
         'sample_stride': result.sample_stride,
         'setup_digest': result.setup_digest,
         'solver_build': result.solver_build,
+        'dissipated_kinetic': 0.0,
         'bodies': _body_definitions(result.frames),
         'samples': [_sample(frame) for frame in result.frames],
+        'events': collect_watch_events(
+            result.frames, experiment.watch_for, status=result.status, reason=result.reason,
+            user_collision=experiment.collision, primary_id=primary),
+    }
+
+
+def _formation_record(experiment, setup, years):
+    result = _integrate_formation(setup, years)
+    primary = next(body.id for body in setup.bodies if body.id in STARS)
+    views = [_FormationView(sample) for sample in result.samples]
+    wanted = set(experiment.watch_for)
+    events = _formation_watch(result.events, wanted)
+    events.extend(_trajectory_watch(views, wanted, primary))
+    events.sort(key=lambda event: (event['time'], event['kind'], event['bodies']))
+    return {
+        'status': result.status,
+        'reason': result.reason,
+        'requested_years': float(years),
+        'duration_years': float(views[-1].time - views[0].time),
+        'time_start': float(views[0].time),
+        'time_end': float(views[-1].time),
+        'completed_steps': result.completed_steps,
+        'sample_stride': result.sample_stride,
+        'setup_digest': result.provenance['setup_digest'],
+        'solver_build': result.provenance['solver_build'],
+        'dissipated_kinetic': float(result.dissipated_kinetic),
+        'bodies': _formation_bodies(result.samples),
+        'samples': [_formation_sample(sample, result.dt_max) for sample in result.samples],
         'events': events,
     }
 
@@ -591,8 +636,17 @@ def _open_scan(experiment, base):
 
 def _physics_report(experiment):
     mode = experiment.collision
-    engine = 'none' if mode in (None, 'stop_on_contact') else mode
-    if mode == 'stop_on_contact':
+    engine = _engine_mode(experiment)
+    combined = _uses_combined_path(experiment)
+    if combined:
+        drag = 'annular' if experiment.drag_on else 'off'
+        tides = 'close-pass-energy-dissipation-v1' if experiment.tides_on else 'off'
+        note = (
+            f'Combined formation path: collision {engine}, gas drag {drag}, tides {tides}, '
+            f'{experiment.dimensions}D, fixed step.')
+        if mode is None:
+            note += ' No collision module was selected, so contact ends the run and does not merge.'
+    elif mode == 'stop_on_contact':
         note = (
             'stop_on_contact uses the existing Yoshida integrator (collision mode none). '
             'An unresolved close encounter halts the run and keeps the last good state.')
@@ -602,13 +656,14 @@ def _physics_report(experiment):
         note = (
             'No collision module was selected. The run uses the existing Yoshida integrator '
             'and halts if a close encounter is unresolved.')
-    if experiment.tides_on:
+    if experiment.tides_on and not combined:
         note += ' Tides use close-pass-energy-dissipation-v1 on the fixed-step planar path.'
     return {
         'collision': mode,
         'engine_collision_mode': engine,
         'tides': experiment.tides_on,
-        'gas_dust_drag': False,
+        'gas_dust_drag': experiment.drag_on if combined else False,
+        'path': 'formation' if combined else 'yoshida',
         'note': note,
     }
 
@@ -631,6 +686,76 @@ def _body_definitions(frames):
                 'mass': None if spec.mass is None else float(spec.mass),
             })
     return definitions
+
+
+class _FormationView:
+    """Sample shaped like the fields the escape and capture scan reads."""
+
+    def __init__(self, sample):
+        self.time = float(sample.time)
+        self.body_ids = tuple(body.id for body in sample.bodies)
+        self.masses = np.array([body.mass for body in sample.bodies], dtype=float)
+        self.r = np.array([body.r for body in sample.bodies], dtype=float)
+        self.v = np.array([body.v for body in sample.bodies], dtype=float)
+
+
+def _formation_sample(sample, dt):
+    return {
+        'time': float(sample.time),
+        'dt': float(dt),
+        'phase': sample.phase,
+        'ids': [body.id for body in sample.bodies],
+        'mass': [float(body.mass) for body in sample.bodies],
+        'r': [list(body.r) for body in sample.bodies],
+        'v': [list(body.v) for body in sample.bodies],
+    }
+
+
+def _formation_bodies(samples):
+    definitions = []
+    seen = set()
+    for sample in samples:
+        for body in sample.bodies:
+            if body.id in seen:
+                continue
+            seen.add(body.id)
+            catalog = CATALOG.get(body.id)
+            definitions.append({
+                'id': body.id,
+                'name': body.name,
+                'kind': body.kind,
+                'catalog_key': body.id if catalog is not None else None,
+                'color': None if catalog is None else catalog.color,
+                'radius': None if body.radius is None else float(body.radius),
+                'mass': None if body.mass is None else float(body.mass),
+            })
+    return definitions
+
+
+_FORMATION_KINDS = {
+    'merge': ('merger', 'collision'),
+    'fragment': ('fragment', 'collision'),
+    'graze': ('graze', 'collision'),
+    'unmodeled': ('collision',),
+    'stop': ('collision',),
+    'tide': ('tide',),
+    'close_encounter': ('close_encounter',),
+}
+
+
+def _formation_watch(events, wanted):
+    recorded = []
+    for event in events:
+        for kind in _FORMATION_KINDS.get(event.kind, ()):
+            if kind not in wanted:
+                continue
+            recorded.append({
+                'time': float(event.time),
+                'kind': kind,
+                'bodies': list(event.parent_ids),
+                'message': event.message,
+            })
+    return recorded
 
 
 def _sample(frame):
