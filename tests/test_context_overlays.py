@@ -35,7 +35,7 @@ def test_planet_selection_uses_its_pair_and_its_moon_orbit():
     result = selection_context(frame, 'earth')
     assert result.pair == ('sun', 'earth')
     assert set(result.orbits) == {'moon'}
-    assert result.guides.shape == (2, 2)
+    assert result.guides.shape == (2, frame.r.shape[1])
     r = np.linalg.norm(frame.r[frame.body_ids.index('earth')]-frame.r[0])
     np.testing.assert_allclose(np.linalg.norm(result.guides-frame.r[0], axis=1), r)
     np.testing.assert_array_equal(frame.r, before[0])

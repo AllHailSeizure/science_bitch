@@ -164,7 +164,7 @@ def test_build_runs_collision_drag_and_tides_in_three_dimensions(tmp_path):
     physics = playback['physics']
     assert run['status'] == 'complete'
     assert len(run['samples'][0]['r'][0]) == 3
-    assert run['samples'][0]['r'][0][2] == 0
+    assert any(abs(component[2]) > 0 for component in run['samples'][0]['v'])
     assert physics['tides'] is True
     assert physics['gas_dust_drag'] is True
     assert physics['engine_collision_mode'] == 'speed_angle'
@@ -254,13 +254,13 @@ def test_build_open_scan_stops_at_max_runs_when_the_condition_is_absent(tmp_path
     assert all(run['events'] == [] for run in playback['runs'])
 
 
-def test_build_three_dimensional_speed_angle_stores_planar_samples(tmp_path):
+def test_build_three_dimensional_speed_angle_stores_spatial_samples(tmp_path):
     playback, _output = _build(
         tmp_path, dimensions=3, bodies=('sun', 'earth'), collision='speed_angle', years=0.005)
     run = playback['runs'][0]
     assert run['status'] == 'complete'
     assert len(run['samples'][0]['r'][0]) == 3
-    assert run['samples'][0]['r'][0][2] == 0
+    assert any(abs(component[2]) > 0 for component in run['samples'][0]['v'])
     assert playback['physics']['engine_collision_mode'] == 'speed_angle'
     assert '#84' not in playback['physics']['note']
 

@@ -1,4 +1,9 @@
-"""Seeded planar, circular test-particle populations in AU and Julian years."""
+"""Seeded circular test-particle populations in AU and Julian years.
+
+A planar system keeps the two-component ring. On a three-dimensional system
+the same angles lie in the plane through the reference parallel to xy, so
+every particle's z matches the reference and the relative height is zero.
+"""
 from dataclasses import dataclass
 
 import numpy as np
@@ -51,8 +56,8 @@ def with_population(system, settings, reference_radius=0.):
     This is initialization, not an insertion API for a running trajectory.
     The caller supplies the reference's physical radius in AU if known.
     """
-    if system.r.ndim != 2 or system.r.shape[1] != 2:
-        raise ValueError('Populations are planar. Three-dimensional systems keep explicit initial vectors.')
+    if system.r.ndim != 2 or system.r.shape[1] not in (2, 3):
+        raise ValueError('A population needs positions with two or three components.')
     reference = settings.reference
     if reference >= len(system.masses) or not np.isfinite(system.masses[reference]) or system.masses[reference] <= 0:
         raise ValueError('Population reference must identify a massive body.')
@@ -69,10 +74,15 @@ def with_population(system, settings, reference_radius=0.):
         angles = rng.uniform(0, 2*np.pi) + np.arange(settings.count)*2*np.pi/settings.count
     else:
         angles = rng.uniform(0, 2*np.pi, settings.count)
-    radial = np.column_stack((np.cos(angles), np.sin(angles)))
+    if system.r.shape[1] == 3:
+        radial = np.column_stack((np.cos(angles), np.sin(angles), np.zeros(settings.count)))
+        tangent = np.column_stack((-np.sin(angles), np.cos(angles), np.zeros(settings.count)))
+    else:
+        radial = np.column_stack((np.cos(angles), np.sin(angles)))
+        tangent = radial[:, ::-1]*[-1, 1]
     mu = G*system.masses[reference]
     positions = system.r[reference] + radii[:, None]*radial
-    velocities = system.v[reference] + np.sqrt(mu/radii)[:, None]*radial[:, ::-1]*[-1, 1]
+    velocities = system.v[reference] + np.sqrt(mu/radii)[:, None]*tangent
     dt = min(system.dt, kepler_period(settings.inner, mu)/600)
     return System(np.concatenate((system.masses, np.zeros(settings.count))),
                   np.vstack((system.r, positions)), np.vstack((system.v, velocities)),

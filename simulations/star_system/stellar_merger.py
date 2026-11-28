@@ -13,7 +13,7 @@ import numpy as np
 from .collisions import CollisionEvent
 from .core import G, System
 from .data import CATALOG
-from .initialization import PreparedSystem
+from .initialization import PRESET_INCLINATION, PreparedSystem
 from .model import BodySpec, InitialBody, InitialSetup
 
 MODE = 'binary_star_merger'
@@ -37,7 +37,10 @@ OBSERVE = (
     'Any other contact in this scenario halts as unsupported. '
     'A solver limit halts numerically and keeps the last accepted state. '
     'Mass is the sum of the parents. Radius is an M^0.8 estimate. '
-    'Temperature, composition, mass loss, spin, tides, and stellar evolution are omitted.')
+    'Temperature, composition, mass loss, spin, tides, and stellar evolution are omitted. '
+    f'The line of centers is inclined by {PRESET_INCLINATION:g} rad about the y axis, so the fall stays head-on '
+    'and the stored motion is three-dimensional. The adaptive step is off unless selected. '
+    'The overhead view projects onto the plane.')
 UNSUPPORTED = (
     'Unsupported contact: outside the supported binary-star merger scenario (#14); '
     'state preserved.')
@@ -94,7 +97,7 @@ def _pair_geometry(setup):
 def analytic_contact_time(setup):
     """Contact time of the published from-rest initial conditions."""
     for body in setup.bodies:
-        if body.v != (0., 0.):
+        if any(component != 0. for component in body.v):
             raise ValueError('The analytic contact time is for release from rest.')
     separation, contact, mass_1, mass_2 = _pair_geometry(setup)
     return head_on_rest_contact_time(separation, contact, mass_1, mass_2)
@@ -114,9 +117,12 @@ def binary_star_merger_setup():
     # Half the initial gravity/crossing resolution limit. The contact solver
     # may subdivide further as the stars fall; this is the saved macro step.
     dt = 0.5 * math.sqrt(separation ** 3 / (G * (sun.mass + sun.mass))) / 10
+    cosine, sine = math.cos(PRESET_INCLINATION), math.sin(PRESET_INCLINATION)
     stars = (
-        InitialBody('primary', _named(sun, 'Solar-type primary'), (-half, 0.), (0., 0.)),
-        InitialBody('secondary', _named(sun, 'Solar-type secondary'), (half, 0.), (0., 0.)),
+        InitialBody('primary', _named(sun, 'Solar-type primary'),
+                    (-half * cosine, 0., half * sine), (0., 0., 0.)),
+        InitialBody('secondary', _named(sun, 'Solar-type secondary'),
+                    (half * cosine, 0., -half * sine), (0., 0., 0.)),
     )
     provenance = {
         'origin_preset': SCENARIO_KEY,
@@ -126,6 +132,10 @@ def binary_star_merger_setup():
         'merger_model': MODEL_ID,
         'stellar_types': 'two catalog-Sun main-sequence stars',
         'mechanism': 'head-on Newtonian fall from rest until the spherical surfaces touch',
+        'line_of_centers': 'inclined about the y axis; separation, rest, and contact time are unchanged',
+        'dimensions': 3,
+        'inclination_rad': float(PRESET_INCLINATION),
+        'adaptive': False,
         'separation_over_contact': SEPARATION_FACTOR,
         'remnant_radius_exponent': REMNANT_RADIUS_EXPONENT,
         'omitted': 'temperature, composition, mass loss, spin, tides, mass transfer, radiation, hydrodynamics, stellar evolution',

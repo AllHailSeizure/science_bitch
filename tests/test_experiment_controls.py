@@ -124,7 +124,13 @@ def test_capture_preserves_evolved_particles_live_insertion_and_original(tmp_pat
     initial = replace(get_scenario(COMPATIBILITY), population=PopulationSpec('rocks', 'sun', Population(count=8, seed=123)))
     session = ExperimentSession(initial)
     session.prepared.system.step(6)
-    session.prepared = insert_body(session.prepared, InitialBody('live', CATALOG['earth'], (8, 3), (.3, .2), 'sun'))
+    dimension = session.prepared.system.r.shape[1]
+    position, velocity = np.zeros(dimension), np.zeros(dimension)
+    position[:2] = (8, 3)
+    velocity[:2] = (.3, .2)
+    session.prepared = insert_body(session.prepared, InitialBody(
+        'live', CATALOG['earth'], tuple(float(component) for component in position),
+        tuple(float(component) for component in velocity), 'sun'))
     initial_path, current_path = tmp_path/'initial.json', tmp_path/'current.json'
     session.save_initial(initial_path)
     current = session.save_current(current_path, 'Evolved custom epoch')
@@ -246,7 +252,9 @@ def test_calculation_cancel_halt_and_previous_results(app):
     assert cancelled.frames[-1].time > 0
     app.start_calculation(request)
     app.calculation.advance(2)
-    app.calculation.prepared.system.v[1] = (1e8,0)
+    spike = np.zeros(app.calculation.prepared.system.v.shape[1])
+    spike[0] = 1e8
+    app.calculation.prepared.system.v[1] = spike
     finish_calculation(app)
     halted = app.playback.recording
     assert halted.status == 'halted' and halted.completed_steps == 2
