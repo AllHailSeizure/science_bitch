@@ -23,7 +23,7 @@ Merging to `master` requires these four checks:
 - `Tests (ubuntu-latest, Python 3.14)`
 - `Tests (windows-latest, Python 3.14)`
 
-Pull requests must be up to date with `master`. History stays linear. Force-pushes are blocked, and the default branch cannot be deleted. Repository admins can bypass the ruleset.
+Pull requests must be up to date with `master`. A pull request labelled `automerge` that falls behind is updated by the automerge workflow, which then reruns CI on the new head before it merges. History stays linear. Force-pushes are blocked, and the default branch cannot be deleted. Repository admins can bypass the ruleset.
 
 A `Wheel` job builds the sdist and wheel and smoke-tests `sidereel-cli`. It is separate from the four checks above.
 
