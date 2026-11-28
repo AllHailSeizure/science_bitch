@@ -101,7 +101,7 @@ One measurement on this host: Linux-6.12.113+-x86_64-with-glibc2.39; Intel(R) Xe
 | Unmodeled stellar contacts | 0 |
 | Dissipated kinetic energy | 1.9262137457981554e-12 |
 
-The stored clock is past 1 yr by less than one authored step. The run completed. Nothing merged, nothing was ejected, and no body met the star. No close pass reached the tidal reach, so the tide switch recorded no event. Drag removed 1.9262137457981554e-12 of kinetic energy. At a rocky radius that cross-section is about a million times smaller than the inflated encounter radius, so this year does not show drag changing an orbit. The clock, the step range, and the event counts are the stable results. Wall time was 2.93 s on this host and can differ on another run. Direct summation is what this year used. Tree gravity stays deferred.
+The stored clock is past 1 yr by less than one authored step. The run completed. Nothing merged, nothing was ejected, and no body met the star. No close pass reached the tidal reach, so the tide switch recorded no event. Drag removed 1.9262137457981554e-12 of kinetic energy. At a rocky radius that cross-section is about a million times smaller than the inflated encounter radius, so this year does not show drag changing an orbit. The same year on Windows with Python 3.14 also completed, with the same body count and the same event counts, and stored 1.005128483931164 yr. The two clocks agree through 1.005128483931 yr and differ in the last digit. Wall time was 2.93 s on the Linux host and can differ on another run. Direct summation is what this year used. Tree gravity stays deferred.
 
 ## Sun–Jupiter flyby
 
