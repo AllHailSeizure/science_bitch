@@ -83,7 +83,7 @@ _ASSUMPTIONS = (
     'Ejection is a bookkeeping cut. After it, the frozen body no longer exchanges gravity with the active set.',
     'Stellar contact is logged as unmodeled and the run continues, including when gas drag is on. This prototype does not merge stars. Stop on contact is the only collision choice that ends the run.',
     'Gravity is unsoftened Newtonian gravity. A run is planar unless its positions have a third component. The authored dt is the fixed step, or the maximum step when adaptive control is on. During an unmodeled stellar overlap that pair is evaluated at the contact separation so the step can cross it.',
-    'The overhead observatory projects a three-dimensional sample by dropping the third component. A planar sample stays two components and is not padded.',
+    'The overhead view projects a three-dimensional sample by dropping the third component. A planar sample stays two components and is not padded. There is no perspective render of the third component.',
 )
 _QUESTIONS = (
     'Which initial parcels make up a surviving body, and how much mass came from each?',
@@ -98,7 +98,7 @@ _NOT_MODELED = (
     'Dust swarms, grain growth, and the swarm-to-body rule. Those stay in the gas-and-dust prototype. Bodies on this path use that prototype\'s quadratic drag when drag is enabled.',
     'Tree-code grouping of distant mass. Direct summation stays in use, and a grouped force would still have to keep parcel identity.',
     'Partial accretion and erosion beyond the disclosed speed-angle lost-mass fraction.',
-    'A high-detail three-dimensional render. The observatory stays an overhead projection.',
+    'A perspective render of the third dimension. The overhead view drops that component and does not pad a planar sample.',
     'Relativity and stellar internal structure. A dedicated stellar merger stays in its own scenario.',
 )
 _SCOPE = (
@@ -781,7 +781,7 @@ class FormationExperiment:
         if self.dimensions == 2:
             extras.append('This run is planar: every position and velocity has two components.')
         else:
-            extras.append('This run is three-dimensional. The sample keeps the third component. The overhead view drops it and does not pad a planar sample.')
+            extras.append('This run is three-dimensional. The sample keeps the third component. The overhead view drops it onto the first two components and does not pad a planar sample.')
         if self.adaptive:
             extras.append(
                 f'Adaptive macro step: at most {self.dt_max:.6g} yr, shrinking to the pair resolution limit, '

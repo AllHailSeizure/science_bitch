@@ -1,0 +1,29 @@
+{
+  "schema": "sidereel-preset-sweep-v1",
+  "preset": "capture-flyby",
+  "dimensions": 2,
+  "physics": {
+    "collision": null,
+    "tides": null,
+    "gas_dust_drag": null
+  },
+  "experiment": {
+    "independent_variable": {
+      "parameter": "speed",
+      "body": "tracer",
+      "start": 0.5,
+      "stop": 2.0,
+      "step": 0.5
+    },
+    "fixed_duration": {
+      "years": 0.5
+    },
+    "open_scan": null,
+    "watch_for": [
+      "capture",
+      "collision",
+      "escape"
+    ]
+  },
+  "proposal": "A slow flyby near Jupiter with the Sun included, sweeping approach speed. Not a menu preset, and not a claim that the tracer is captured for good. This example stays on the planar legacy setup."
+}
