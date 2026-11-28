@@ -590,6 +590,11 @@ def _contacted_ids(events):
 
 def _respond(prepared, contacts):
     """One disclosed response. Stars are logged and kept unless the #14 scenario handles them."""
+    if prepared.system.detail is not None:
+        from .body_detail import NO_REMNANT
+        rule = _rule_name(prepared)
+        if rule not in ('ignore', 'stop_on_contact', 'none'):
+            raise ValueError(NO_REMNANT)
     from .stellar_merger import respond_if_stellar_scenario
     handled = respond_if_stellar_scenario(prepared, contacts)
     if handled is not None:
@@ -804,7 +809,9 @@ def advance_prepared(prepared):
     validate_collision_state(prepared)
     policy = prepared.setup.collision_policy
     old = prepared.system
-    trial = replace(prepared, system=System(old.masses.copy(), old.r.copy(), old.v.copy(), old.dt, old.time))
+    # A copy so a rejected step does not advance the caller's spin.
+    detail = None if old.detail is None else old.detail.copy()
+    trial = replace(prepared, system=System(old.masses.copy(), old.r.copy(), old.v.copy(), old.dt, old.time, detail=detail))
     end = old.time+old.dt
     if not math.isfinite(end) or end <= old.time:
         raise ValueError('Collision numerical halt: macro timestep cannot advance clock; state preserved.')
@@ -848,7 +855,7 @@ def advance_prepared(prepared):
             elapsed = contacts[0][0] if contacts else h
             r = s.r+s.v*elapsed+.5*acceleration*elapsed**2
             vhalf = s.v+.5*acceleration*elapsed
-            candidate = System(s.masses.copy(), r, vhalf, old.dt, s.time+elapsed)
+            candidate = System(s.masses.copy(), r, vhalf, old.dt, s.time+elapsed, detail=s.detail)
             # Endpoint force is safe only after the sweep has clipped first contact.
             candidate.v = vhalf+.5*elapsed*candidate.accelerations(floor)
             if not np.isfinite(candidate.r).all() or not np.isfinite(candidate.v).all():
@@ -859,6 +866,8 @@ def advance_prepared(prepared):
                     raise ValueError('Collision numerical halt: endpoint encounter unresolved; state preserved.')
                 continue
             break
+        if s.detail is not None and elapsed > 0:
+            s.detail.advance(candidate, elapsed)
         trial = replace(trial, system=candidate)
         if contacts:
             tolerance = policy.time_tolerance*max(1., abs(old.dt))

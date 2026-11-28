@@ -174,6 +174,7 @@ class Calculation:
         deadline = None if budget_seconds is None else time.perf_counter()+budget_seconds
         advanced = 0
         while not self.done and advanced < max_steps:
+            detail_before = None if self.prepared.system.detail is None else self.prepared.system.detail.copy()
             try:
                 outcome = advance_prepared(self.prepared)
             except ValueError as exc:
@@ -197,7 +198,7 @@ class Calculation:
                 previous = self._checkpoint
                 from dataclasses import replace
                 self.prepared = replace(self.prepared, system=System(previous.masses.copy(), previous.r.copy(),
-                    previous.v.copy(), previous.dt, previous.time), body_ids=previous.body_ids,
+                    previous.v.copy(), previous.dt, previous.time, detail=detail_before), body_ids=previous.body_ids,
                     body_specs=previous.body_specs, events=previous.events, reference_ids=previous.reference_ids)
                 self._finish('halted', 'Recording memory budget reached. Reduce duration or body/count settings, '
                              'increase sample stride, or choose a larger budget. Last accepted step retained.')

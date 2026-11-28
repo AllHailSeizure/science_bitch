@@ -144,6 +144,44 @@ class DragPolicy:
             raise ValueError('Turn gas drag on to store a disk. Off uses the default policy only.')
 
 
+# Body detail is off, at point mass, unless an experiment selects a richer level.
+BODY_DETAIL_MODEL_ID = 'body-detail-v1'
+BODY_DETAIL_LEVELS = ('point_mass', 'fixed_oblateness', 'spin')
+# Secular constant-time-lag tides. Off unless an experiment enables them.
+LASTING_TIDE_MODEL_ID = 'constant-time-lag-v1'
+
+
+@dataclass(frozen=True)
+class BodyDetailPolicy:
+    """Which body interior an experiment uses. Point mass is the default and is not stored.
+
+    ``fixed_oblateness`` adds a constant J2 bulge. ``spin`` tracks spin and a figure
+    axis and applies the torques that go with them. The physical constants live with
+    the catalog defaults in ``body_detail``, not in this policy.
+    """
+    level: str = 'point_mass'
+    version: str = BODY_DETAIL_MODEL_ID
+
+    def __post_init__(self):
+        if self.level not in BODY_DETAIL_LEVELS:
+            raise ValueError("Body detail level must be 'point_mass', 'fixed_oblateness', or 'spin'.")
+        if self.version != BODY_DETAIL_MODEL_ID:
+            raise ValueError('Unsupported body-detail model.')
+
+
+@dataclass(frozen=True)
+class LastingTidePolicy:
+    """Secular constant-time-lag tides. A disabled policy is not stored."""
+    enabled: bool = False
+    version: str = LASTING_TIDE_MODEL_ID
+
+    def __post_init__(self):
+        if type(self.enabled) is not bool:
+            raise ValueError('Lasting tides must be explicitly on or off.')
+        if self.version != LASTING_TIDE_MODEL_ID:
+            raise ValueError('Unsupported lasting-tide model.')
+
+
 # Perfect merge is one disclosed rule. The legacy pairs id said stellar contact
 # halted the run; that behavior is retired, and loaded documents adopt the id below.
 PERFECT_MERGE_VERSION = 'nonstellar-perfect-merge-v1'
@@ -244,6 +282,8 @@ class InitialSetup:
     # setup built in memory; load_setup copies it from the file. Not physical
     # state, so equality ignores it.
     source_environment: Mapping[str, str] | None = field(default=None, compare=False, hash=False)
+    body_detail: BodyDetailPolicy = field(default_factory=BodyDetailPolicy)
+    lasting_tides: LastingTidePolicy = field(default_factory=LastingTidePolicy)
 
     def __post_init__(self):
         object.__setattr__(self, 'bodies', tuple(self.bodies))
@@ -259,6 +299,10 @@ class InitialSetup:
             raise ValueError('A supported TidalPolicy is required.')
         if not isinstance(self.drag, DragPolicy):
             raise ValueError('A supported DragPolicy is required.')
+        if not isinstance(self.body_detail, BodyDetailPolicy):
+            raise ValueError('A supported BodyDetailPolicy is required.')
+        if not isinstance(self.lasting_tides, LastingTidePolicy):
+            raise ValueError('A supported LastingTidePolicy is required.')
         family = collision_policy_identity(self.collision_policy)
         # A perfect-merge policy is the default object, so choosing speed_angle
         # without a second argument still stores that rule on the setup.

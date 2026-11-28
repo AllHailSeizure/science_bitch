@@ -122,7 +122,7 @@ _CHANGE_KEYS = ('kind', 'body_id', 'delta_v', 'note')
 _DOCUMENT_KEYS = ('schema', 'id', 'model', 'name', 'time', 'dt', 'ejection_radius', 'sample_stride',
                   'status', 'reason', 'completed_steps', 'assumptions', 'provenance', 'active',
                   'removed', 'events', 'samples')
-_OPTIONAL_DOCUMENT_KEYS = ('adaptive', 'dt_max', 'dt_min', 'dimensions', 'tides', 'drag')
+_OPTIONAL_DOCUMENT_KEYS = ('adaptive', 'dt_max', 'dt_min', 'dimensions', 'tides', 'drag', 'body_detail')
 _COLLISION_MODEL_IDS = (COLLISION_MODEL_ID, SPEED_ANGLE_VERSION, IGNORE_CONTACT_ID, STOP_ON_CONTACT_ID)
 
 
@@ -792,6 +792,8 @@ class FormationExperiment:
         radii = [body.spec.radius for body in setup.bodies if body.spec.kind != 'star']
         if radii and max(radii) > .001:
             extras.append('At least one embryo radius exceeds 0.001 AU. Treat a radius this large as an inflated encounter radius, not a rocky surface.')
+        if self.prepared.system.detail is not None:
+            extras.append(self.prepared.system.detail.disclosure)
         self.assumptions = _ASSUMPTIONS+tuple(extras)
         self._record_current(None, force=True)
 
@@ -807,6 +809,8 @@ class FormationExperiment:
             'drag': 'off' if not drag.enabled else drag.disk,
             'drag_model': 'off' if not drag.enabled else drag.version,
             'tides': 'off' if not tides.enabled else tides.version,
+            'body_detail': 'point_mass' if self.prepared.system.detail is None else self.prepared.system.detail.level,
+            'lasting_tides': 'off' if self.prepared.system.detail is None or not self.prepared.system.detail.lasting else 'constant-time-lag-v1',
         }
 
     @property
@@ -1037,7 +1041,7 @@ class FormationExperiment:
                 f'delta_v has {len(change.delta_v)} components; this run stores {system.v.shape[1]}.')
         velocity = system.v.copy()
         velocity[index] = velocity[index]+np.asarray(change.delta_v, dtype=float)
-        updated = System(system.masses.copy(), system.r.copy(), velocity, system.dt, system.time)
+        updated = System(system.masses.copy(), system.r.copy(), velocity, system.dt, system.time, detail=system.detail)
         self.prepared = replace(self.prepared, system=updated)
         stored = {'kind': 'velocity', 'body_id': change.body_id, 'delta_v': change.delta_v, 'note': change.note}
         self.provenance = {**self.provenance, 'parent_checkpoint_id': parent_id, 'change': stored,
@@ -1206,8 +1210,9 @@ class FormationExperiment:
     def _drop(self, ids):
         keep = [index for index, body_id in enumerate(self.prepared.body_ids) if body_id not in ids]
         system = self.prepared.system
+        detail = None if system.detail is None else system.detail.sliced(keep)
         updated = System(np.array(system.masses[keep], copy=True), np.array(system.r[keep], copy=True),
-                         np.array(system.v[keep], copy=True), system.dt, system.time)
+                         np.array(system.v[keep], copy=True), system.dt, system.time, detail=detail)
         reserves = tuple(CollisionEvent(system.time, 'reserve', (body_id,), None, (body_id,), 0., 0.,
                                         f'Reserved ejected id {body_id}.') for body_id in sorted(ids))
         self.prepared = PreparedSystem(
@@ -1302,6 +1307,10 @@ class FormationExperiment:
                            'mass': _num(zone.mass), 'radial_momentum': _num(zone.radial_momentum),
                            'angular_momentum': _num(zone.angular_momentum)} for zone in self.zones],
             }
+        from .body_detail import checkpoint_block
+        block = checkpoint_block(self.prepared)
+        if block is not None:
+            fields['body_detail'] = block
         return fields
 
     def _scheduled_dt(self):
@@ -1517,7 +1526,10 @@ def _experiment_from_document(document):
     mode = _mode_from_collision_model(provenance['collision_model'])
     tides = _tides_from_document(document.get('tides'))
     drag = _drag_from_document(document.get('drag'))
-    shell = InitialSetup(name, shell_bodies, dt, collision_mode=mode, tides=tides, drag=drag)
+    from .body_detail import policies_and_motion
+    body_detail, lasting_tides, motion = policies_and_motion(document.get('body_detail'), len(active))
+    shell = InitialSetup(name, shell_bodies, dt, collision_mode=mode, tides=tides, drag=drag,
+                         body_detail=body_detail, lasting_tides=lasting_tides)
     collision_events = []
     for event in events:
         if event.kind in ('merge', 'fragment', 'graze', 'unmodeled', 'ignored', 'stop'):
@@ -1533,7 +1545,7 @@ def _experiment_from_document(document):
                                                    f'Reserved ejected id {parent}.') for parent in event.parent_ids)
     system = System(np.array([body.mass for body in active], dtype=float),
                     np.array([body.r for body in active], dtype=float),
-                    np.array([body.v for body in active], dtype=float), dt, time_value)
+                    np.array([body.v for body in active], dtype=float), dt, time_value, detail=motion)
     prepared = PreparedSystem(system, tuple(active_ids), tuple(body_spec(body) for body in active), shell,
                               tuple(collision_events), 0, tuple(body.reference_id for body in active))
     experiment = FormationExperiment.__new__(FormationExperiment)
@@ -1562,6 +1574,9 @@ def _experiment_from_document(document):
     if len(widths) != 1:
         raise ValueError('Checkpoint vectors must share one dimension.')
     dimension = widths.pop()
+    if motion is not None and motion.level == 'spin' and dimension != 3:
+        from .body_detail import SPIN_NEEDS_3D
+        raise ValueError(SPIN_NEEDS_3D)
     if 'dimensions' in document:
         stated = document['dimensions']
         if type(stated) is not int or isinstance(stated, bool) or stated != dimension:

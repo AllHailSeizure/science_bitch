@@ -756,6 +756,7 @@ Gas drag, fragmenting collisions, and a close-encounter integrator can outweigh 
 none of those are implied by a tidal result.
 A longer encounter in this model is still spin-free and can be reversed by a later scattering.
 It is not, by itself, a permanent capture.
+Lasting tides are a separate module. Both may be on in one run, and when they are, the energy losses add.
 
 The documented comparison is catalog Jupiter and catalog Earth, with the Sun
 omitted so the energy change is only this kick. Both runs use the same vectors.
@@ -782,6 +783,115 @@ Measured on this implementation. The flyby rows share 6867 steps (0.00801789 yr)
 | Eccentric, tides on | 1 | -15.5495 | 0.476 | 1.548e-5 |
 
 The closest sampled separation is about 0.000637 AU, outside the 0.000510 AU sum of the catalog radii. These digits are from this implementation; they are not a cross-platform bitwise guarantee. The checked claims are the energy signs, the pericenter counts, and the drop in eccentricity.
+
+### Optional body detail
+
+`body-detail-v1` is off at point mass unless an experiment selects a richer level.
+`physics.body_detail` is `null` or `point_mass` for the Newtonian point mass,
+`fixed_oblateness` for a constant J2 bulge, or `spin` for a tracked spin and a
+wobbling figure axis. A blank experiment file leaves the key null. Point mass
+adds nothing to the force or the body state. The selected level is named on the
+playback.
+
+Fixed oblateness adds the zonal J2 acceleration of each catalog body that has a
+J2. The bulge is constant. Its figure axis is fixed in inertial space: the
+catalog obliquity, laid in the x–z plane, or +z when the body has no obliquity.
+A planar run pins every axis to +z. There is no J3, J4, or tesseral field.
+Bodies with no listed J2 stay spherical. The monopole is unchanged. The
+companion feels the bulge, and the oblate body receives the opposite force
+scaled by the mass ratio, so linear momentum is kept. Spin is not a state at
+this level, so the torque that moves orbital angular momentum is not stored.
+
+With the pole along +z and `s = p · r`, the acceleration of a companion is
+
+```
+a = (3/2) J2 G M R^2 / r^5 * ((5 s^2 / r^2 - 1) r - 2 s p)
+```
+
+Full spin and wobble needs a 3D state. Each body carries an angular-momentum
+vector and a unit figure axis. The polar moment is `C = k M R^2` and the
+equatorial moment is `A = C - J2 M R^2`. The same J2 acceleration is evaluated
+on the current axis. The quadrupole torque on the body is minus the orbital
+torque of that force,
+
+```
+N = -3 G M_other (C - A) (p · r) (p × r) / r^5
+```
+
+so the change in orbital angular momentum is stored as spin. The figure axis
+rotates about the angular momentum at `|L| / A`. Catalog sidereal periods and
+obliquities are the initial principal-axis spins. A body with no listed spin
+starts at rest. A collision remnant, an inserted body, and a particle
+population are not given a spin or a J2; those combinations stop with a named
+reason. Close-pass tides stay spin-free and do not write into this state.
+Playback samples store positions and velocities. A formation checkpoint stores
+the spin and the figure axis, so a restored run continues the same rotation.
+
+The checked case is a 400 km circular orbit at 51.6° inclination about the
+catalog Earth, with the figure axis held on +z so the inclination is measured
+from the equator. The secular node rate is `-(3/2) n J2 (R/a)^2 cos i`.
+Earth's J2 in this comparison is 1.08263e-3. The analytic rate is -5.00868
+deg/day. Eight orbits at 800 steps per orbit, on the Yoshida path, measured
+-5.03634 deg/day for both fixed oblateness and spin. The same orbit with the
+body-detail level left at point mass held its node to about 1e-13 deg/day.
+Six orbits on the contact path (`collision_mode='ignore'`, 200 steps per
+orbit) measured -5.04090 deg/day. These digits are from this implementation;
+they are not a cross-platform bitwise guarantee.
+
+### Optional lasting tides
+
+`constant-time-lag-v1` is the secular tide. It is off unless
+`physics.lasting_tides` is true, and that choice requires `physics.body_detail`
+`spin`. Point mass and fixed oblateness have no spin rate for a lag to act on,
+and a build refuses them by name. Turning this module on does not turn the
+close-pass kick on, and turning the close-pass kick on does not turn this
+module on.
+
+The force is the quadrupole constant-time-lag tide, kept to first order in the
+lag. For the tide raised on body i by body j, with `r` and `v` the position
+and velocity of j relative to i and `Ω` the spin of i, the force on j is
+
+```
+F = -(3 k2 Δt G m_j^2 R_i^5 / r^10) (3 (r · v) r + r^2 (v - Ω × r))
+```
+
+Body i receives `-F`. The torque on i's spin is `-r × F`, so the orbital
+angular momentum this force exchanges is stored as spin. Both directions are
+evaluated for every pair of positive-mass bodies that have a radius, a Love
+number, and a positive lag. On a circular orbit whose spin is aligned with the
+orbit normal this reduces to
+
+```
+da/dt = 6 k2 Δt m R^5 n (Ω - n) / (M a^4)
+torque = -3 k2 Δt G m^2 R^5 (Ω - n) / a^6
+```
+
+`Ω > n` expands the orbit and slows the spin. `Ω < n` does the opposite.
+`Ω = n` is the tidal-lock fixed point: the torque and `da/dt` vanish.
+
+Earth's default lag is the effective oceanic value that makes this circular,
+spin-aligned, Earth-tide-only rate 3.82 cm/yr for the catalog Earth and Moon
+at 384400 km, with `k2 = 0.299`. It is not a seismic quality factor. The
+product `k2 Δt = 213 s` recedes at 4.466 cm/yr with these rounded masses, so
+the stored lag is 609.274 s, the value that hits 3.82 cm/yr here. Other
+catalog bodies, including the Moon, have a zero default lag and raise no
+lasting tide until a lag is set.
+
+Close-pass tides and lasting tides may both be on in one run. The close-pass
+kick remains the impulsive spin-free sink at a resolved pericenter inside its
+reach. Lasting tides are the continuous force and torque at every separation,
+including inside that reach. The losses add. The sum is not one calibrated
+tide. A run that wants only the secular migration leaves the close-pass kick off.
+
+The checked case integrates the catalog Earth and Moon masses and radii for
+four orbits in three dimensions. Earth's spin is the sidereal day, aligned
+with the orbit. The Moon's spin is the mean motion and its lag is zero. J2 is
+left off so the semi-major-axis change is the tide. The analytic rate is 3.82
+cm/yr. The integrated rate was 3.81900 cm/yr. The instantaneous force on that
+initial state gives the same 3.82 cm/yr, the aligned torque is zero when the
+spin equals the mean motion, and a faster spin loses angular momentum. These
+digits are from this implementation; they are not a cross-platform bitwise
+guarantee.
 
 ### Final dependency-stack acceptance audit
 

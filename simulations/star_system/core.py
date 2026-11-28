@@ -36,8 +36,17 @@ class System:
     v: np.ndarray
     dt: float
     time: float = 0.
+    # Body-detail and lasting-tide state. Unset on a point-mass run, so the
+    # Newtonian acceleration below is unchanged.
+    detail: object = None
 
     def accelerations(self, separation_floor=None):
+        gravity = self._newtonian_accelerations(separation_floor)
+        if self.detail is None:
+            return gravity
+        return gravity + self.detail.acceleration(self)
+
+    def _newtonian_accelerations(self, separation_floor=None):
         sources = np.flatnonzero(self.masses > 0)
         delta = self.r[None, sources, :] - self.r[:, None, :]
         d2 = np.sum(delta**2, axis=-1)
@@ -80,7 +89,7 @@ class System:
             self.validate_step()
             # Commit only a whole validated Yoshida step. An intermediate failure
             # must not leave a partially kicked/drifted live or recorded state.
-            trial = System(self.masses, self.r.copy(), self.v.copy(), self.dt, self.time)
+            trial = System(self.masses, self.r.copy(), self.v.copy(), self.dt, self.time, detail=self.detail)
             for w in (_YOSHIDA_W1, _YOSHIDA_W0, _YOSHIDA_W1):
                 h = w*self.dt
                 trial.v += .5*h*trial.accelerations()
@@ -94,6 +103,8 @@ class System:
             self.r[:] = trial.r
             self.v[:] = trial.v
             self.time += self.dt
+            if self.detail is not None:
+                self.detail.advance(self, self.dt)
 
     def invariants(self):
         energy = .5*np.sum(self.masses[:,None]*self.v**2)

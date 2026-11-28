@@ -11,8 +11,8 @@ from collections.abc import Mapping
 import numpy as np
 
 from .model import (
-    CONTACT_SOLVER_MODES, BodySpec, CollisionPolicy, DragPolicy, InitialBody, InitialSetup,
-    PopulationSpec, PropertySource, TidalPolicy,
+    CONTACT_SOLVER_MODES, BodyDetailPolicy, BodySpec, CollisionPolicy, DragPolicy, InitialBody, InitialSetup,
+    LastingTidePolicy, PopulationSpec, PropertySource, TidalPolicy,
 )
 from .populations import Population
 from .initialization import build_system
@@ -104,6 +104,11 @@ def _document(setup):
     # Absent when off, so a drag-free document and its digest stay as they were.
     if setup.drag.enabled:
         document['setup']['drag'] = _record(setup.drag)
+    # Absent at point mass, so a point-mass document and its digest stay as they were.
+    if setup.body_detail.level != 'point_mass':
+        document['setup']['body_detail'] = _record(setup.body_detail)
+    if setup.lasting_tides.enabled:
+        document['setup']['lasting_tides'] = _record(setup.lasting_tides)
     return document
 
 
@@ -211,6 +216,10 @@ def _decode(document):
         keys.add('tides')
     if type(document['setup']) is dict and 'drag' in document['setup']:
         keys.add('drag')
+    if type(document['setup']) is dict and 'body_detail' in document['setup']:
+        keys.add('body_detail')
+    if type(document['setup']) is dict and 'lasting_tides' in document['setup']:
+        keys.add('lasting_tides')
     value = _object(document['setup'], keys, 'Setup')
     _string(value['name'], 'Setup name')
     _string(value['preset_id'], 'Preset ID', nullable=True)
@@ -232,6 +241,20 @@ def _decode(document):
         drag = DragPolicy(**raw)
     else:
         drag = DragPolicy()
+    if 'body_detail' in value:
+        raw = _object(value['body_detail'], {field.name for field in fields(BodyDetailPolicy)}, 'Body detail policy')
+        if raw['level'] == 'point_mass':
+            raise ValueError('Omit body_detail to leave the point-mass level.')
+        body_detail = BodyDetailPolicy(**raw)
+    else:
+        body_detail = BodyDetailPolicy()
+    if 'lasting_tides' in value:
+        raw = _object(value['lasting_tides'], {field.name for field in fields(LastingTidePolicy)}, 'Lasting tide policy')
+        if raw['enabled'] is not True:
+            raise ValueError('A stored lasting-tide policy is the enabled model. Omit lasting_tides to leave it off.')
+        lasting_tides = LastingTidePolicy(**raw)
+    else:
+        lasting_tides = LastingTidePolicy()
     contact = value['collision_mode'] in CONTACT_SOLVER_MODES
     if document['numerical_version'] != (policy.numerical if contact else NUMERICAL_VERSION):
         raise ValueError('Unsupported numerical_version for selected collision mode.')
@@ -252,7 +275,8 @@ def _decode(document):
                                   _string(body['reference_id'], 'Body reference', nullable=True)))
     setup = InitialSetup(value['name'], tuple(bodies), value['dt'], value['preset_id'],
                          _decode_population(value['population']), value['collision_mode'], value['provenance'], policy,
-                         source_environment={'numpy': document['environment']['numpy']}, tides=tides, drag=drag)
+                         source_environment={'numpy': document['environment']['numpy']}, tides=tides, drag=drag,
+                         body_detail=body_detail, lasting_tides=lasting_tides)
     # Validate references, overlap, known masses and numerical resolution before install.
     build_system(setup)
     return setup

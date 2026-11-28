@@ -9,13 +9,17 @@ from simulations.star_system.experiment_file import main
 
 
 def _write(path, *, dimensions=2, gravity='newtonian', bodies=('sun', 'earth', 'jupiter'), collision=None,
-           tides=False, drag=False, variable=None, years=0.01, scan=None, watch=(), custom=None):
+           tides=False, drag=False, body_detail=None, lasting_tides=None, variable=None, years=0.01,
+           scan=None, watch=(), custom=None):
     document = {
         'schema': 'sidereel-experiment-v1',
         'dimensions': dimensions,
         'gravity_model': gravity,
         'bodies': {'catalog': list(bodies), 'new': custom},
-        'physics': {'collision': collision, 'tides': tides, 'gas_dust_drag': drag},
+        'physics': {
+            'collision': collision, 'tides': tides, 'gas_dust_drag': drag,
+            'body_detail': body_detail, 'lasting_tides': lasting_tides,
+        },
         'experiment': {
             'independent_variable': variable,
             'fixed_duration': None if scan is not None else {'years': years},
@@ -52,8 +56,9 @@ def test_new_writes_every_section_blank_and_in_order(tmp_path):
     assert document['gravity_model'] is None
     assert list(document['bodies']) == ['catalog', 'new']
     assert document['bodies'] == {'catalog': [], 'new': None}
-    assert list(document['physics']) == ['collision', 'tides', 'gas_dust_drag']
-    assert document['physics'] == {'collision': None, 'tides': None, 'gas_dust_drag': None}
+    assert list(document['physics']) == ['collision', 'tides', 'gas_dust_drag', 'body_detail', 'lasting_tides']
+    assert document['physics'] == {
+        'collision': None, 'tides': None, 'gas_dust_drag': None, 'body_detail': None, 'lasting_tides': None}
     assert list(document['experiment']) == ['independent_variable', 'fixed_duration', 'open_scan', 'watch_for']
     assert document['experiment'] == {
         'independent_variable': None, 'fixed_duration': None, 'open_scan': None, 'watch_for': []}
@@ -313,3 +318,57 @@ def test_watch_list_records_a_tide_without_calling_it_a_collision():
         primary_id='sun')
     assert [item['kind'] for item in found] == ['tide']
     assert found[0]['time'] == pytest.approx(0.1)
+
+
+def test_build_discloses_point_mass_when_body_detail_is_unset(tmp_path):
+    playback, _output = _build(tmp_path, years=0.005)
+    assert playback['physics']['body_detail'] == 'point_mass'
+    assert playback['physics']['lasting_tides'] is False
+    assert 'Body detail is point_mass.' in playback['physics']['note']
+
+
+def test_explicit_point_mass_matches_an_unset_body_detail(tmp_path):
+    unset, _output = _build(tmp_path, years=0.005)
+    named, _output = _build(tmp_path, years=0.005, body_detail='point_mass')
+    np.testing.assert_allclose(unset['runs'][0]['samples'][-1]['r'], named['runs'][0]['samples'][-1]['r'])
+    np.testing.assert_allclose(unset['runs'][0]['samples'][-1]['v'], named['runs'][0]['samples'][-1]['v'])
+    assert named['physics']['body_detail'] == 'point_mass'
+
+
+def test_build_honors_fixed_oblateness_in_three_dimensions(tmp_path):
+    playback, _output = _build(
+        tmp_path, dimensions=3, bodies=('sun', 'earth'), body_detail='fixed_oblateness', years=0.005)
+    assert playback['runs'][0]['status'] == 'complete'
+    assert len(playback['runs'][0]['samples'][0]['r'][0]) == 3
+    assert playback['physics']['body_detail'] == 'fixed_oblateness'
+    assert playback['physics']['path'] == 'formation'
+    assert 'Body detail is fixed_oblateness.' in playback['physics']['note']
+
+
+def test_build_refuses_spin_in_a_plane_and_a_remnant_collision(tmp_path, capsys):
+    error = _refuse(tmp_path, capsys, body_detail='spin')
+    assert '3D' in error
+    error = _refuse(tmp_path, capsys, dimensions=3, body_detail='fixed_oblateness', collision='perfect_merge')
+    assert 'remnant' in error
+
+
+def test_build_runs_spin_and_both_tide_modules_together(tmp_path):
+    playback, _output = _build(
+        tmp_path, dimensions=3, bodies=('sun', 'earth'), body_detail='spin', lasting_tides=True,
+        tides=True, collision='stop_on_contact', years=0.005)
+    note = playback['physics']['note']
+    assert playback['runs'][0]['status'] == 'complete'
+    assert playback['physics']['body_detail'] == 'spin'
+    assert playback['physics']['lasting_tides'] is True
+    assert playback['physics']['tides'] is True
+    assert 'Lasting tides are on' in note
+    assert 'both on' in note
+    assert 'losses add' in note
+    assert '#84' not in note
+
+
+def test_build_refuses_lasting_tides_without_spin(tmp_path, capsys):
+    error = _refuse(tmp_path, capsys, dimensions=3, lasting_tides=True)
+    assert 'spin' in error
+    error = _refuse(tmp_path, capsys, dimensions=3, body_detail='fixed_oblateness', lasting_tides=True)
+    assert 'spin' in error
