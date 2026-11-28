@@ -8,12 +8,11 @@ import pytest
 from simulations.star_system.experiment_file import main
 
 
-def _write(path, *, dimensions=2, gravity='newtonian', bodies=('sun', 'earth', 'jupiter'), collision=None,
+def _write(path, *, dimensions=2, bodies=('sun', 'earth', 'jupiter'), collision=None,
            tides=False, drag=False, variable=None, years=0.01, scan=None, watch=(), custom=None):
     document = {
         'schema': 'sidereel-experiment-v1',
         'dimensions': dimensions,
-        'gravity_model': gravity,
         'bodies': {'catalog': list(bodies), 'new': custom},
         'physics': {'collision': collision, 'tides': tides, 'gas_dust_drag': drag},
         'experiment': {
@@ -46,10 +45,10 @@ def test_new_writes_every_section_blank_and_in_order(tmp_path):
     path = tmp_path / 'blank.json'
     assert main(['--new', str(path)]) == 0
     document = json.loads(path.read_text(encoding='utf-8'))
-    assert list(document) == ['schema', 'dimensions', 'gravity_model', 'bodies', 'physics', 'experiment']
+    assert list(document) == ['schema', 'dimensions', 'bodies', 'physics', 'experiment']
+    assert 'gravity_model' not in document
     assert document['schema'] == 'sidereel-experiment-v1'
     assert document['dimensions'] is None
-    assert document['gravity_model'] is None
     assert list(document['bodies']) == ['catalog', 'new']
     assert document['bodies'] == {'catalog': [], 'new': None}
     assert list(document['physics']) == ['collision', 'tides', 'gas_dust_drag']
@@ -97,10 +96,33 @@ def test_build_of_a_blank_file_asks_for_dimensions(tmp_path, capsys):
     assert not (tmp_path / 'experiment.sidereel').exists()
 
 
-def test_build_rejects_relativistic_gravity(tmp_path, capsys):
-    error = _refuse(tmp_path, capsys, gravity='relativistic')
-    assert 'not implemented yet' in error
-    assert 'newtonian' in error
+def test_new_omits_gravity_model_and_build_does_not_require_it(tmp_path):
+    path = tmp_path / 'experiment.json'
+    assert main(['--new', str(path)]) == 0
+    document = json.loads(path.read_text(encoding='utf-8'))
+    assert 'gravity_model' not in document
+    assert list(document) == ['schema', 'dimensions', 'bodies', 'physics', 'experiment']
+    document['dimensions'] = 2
+    document['bodies'] = {'catalog': ['sun', 'earth'], 'new': None}
+    document['experiment']['fixed_duration'] = {'years': 0.005}
+    path.write_text(json.dumps(document), encoding='utf-8')
+    assert main(['--build', str(path)]) == 0
+    playback = json.loads((tmp_path / 'experiment.sidereel').read_text(encoding='utf-8'))
+    assert playback['runs'][0]['status'] == 'complete'
+    assert 'gravity_model' not in playback
+    assert 'gravity_model' not in playback['experiment']
+
+
+def test_build_rejects_a_gravity_model_field(tmp_path, capsys):
+    source = _write(tmp_path / 'experiment.json')
+    document = json.loads(source.read_text(encoding='utf-8'))
+    document['gravity_model'] = 'newtonian'
+    source.write_text(json.dumps(document), encoding='utf-8')
+    assert main(['--build', str(source)]) == 2
+    error = capsys.readouterr().err
+    assert 'gravity_model' in error
+    assert '#77' in error
+    assert not (tmp_path / 'experiment.sidereel').exists()
 
 
 def test_build_rejects_a_custom_body(tmp_path, capsys):
