@@ -3,18 +3,25 @@ from dataclasses import dataclass, replace
 from types import MappingProxyType
 import numpy as np
 
-from .initialization import legacy_setup, build_system
+from .initialization import PRESET_INCLINATION, legacy_setup, build_system, with_preset_inclination
 from .model import InitialBody
 from .populations import Population
 from .frames import reference_id
 
 COMPATIBILITY = 'sun-earth-jupiter'
 JUPITER_RING = 'sun-jupiter-ring'
+_SPATIAL = (
+    f' Stored as three-dimensional motion inclined by {PRESET_INCLINATION:g} rad. '
+    'The adaptive step is off unless selected. The overhead view projects onto the plane.'
+)
 DESCRIPTIONS = MappingProxyType({COMPATIBILITY:
     'Sun, Earth and Jupiter with prograde circular two-body velocity guesses, '
-    'separated initial angles and a barycentric shift. Illustrative, not an ephemeris or stability guarantee.',
+    'separated initial angles and a barycentric shift. Illustrative, not an ephemeris or stability guarantee.'
+    + _SPATIAL,
     JUPITER_RING: 'Sun / Jupiter / 32 mass-zero test particles at 3.2 AU, evenly spaced, seed 7. '
-    'Demonstrates gravitational perturbation; arbitrary starting conditions do not guarantee Trojan occupancy or capture.'})
+    'The ring lies in the plane through the Sun parallel to xy. '
+    'Demonstrates gravitational perturbation; arbitrary starting conditions do not guarantee Trojan occupancy or capture.'
+    + _SPATIAL})
 
 
 def get_scenario(key):
@@ -22,8 +29,10 @@ def get_scenario(key):
         raise ValueError(f'Unknown scenario: {key}.')
     setup = (legacy_setup(planets=('jupiter',), population=Population(kind='ring', inner=3.2, outer=3.2,
              count=32, angles='even', seed=7)) if key == JUPITER_RING else legacy_setup())
+    setup = with_preset_inclination(setup)
     return replace(setup, name='Sun / Jupiter / 3.2 AU ring (32, seed 7)' if key == JUPITER_RING else setup.name, preset_id=key,
-                   provenance={'origin_preset': key, 'description': DESCRIPTIONS[key]})
+                   provenance={'origin_preset': key, 'description': DESCRIPTIONS[key],
+                               'dimensions': 3, 'inclination_rad': float(PRESET_INCLINATION), 'adaptive': False})
 
 
 def _catalog_id(prepared, catalog_key):

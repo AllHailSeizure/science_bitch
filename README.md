@@ -1,6 +1,6 @@
 # Sidereel
 
-A planar N-body sandbox. Build a system, watch gravity work, keep the picture.
+A Newtonian N-body sandbox. Regular starting experiments integrate in three dimensions, and the overhead view projects that motion onto the plane. Build a system, watch gravity work, keep the picture.
 
 ![Sun, Earth, and Jupiter through one year](docs/orbit.gif)
 
@@ -8,7 +8,7 @@ One year of the Sun, Earth, and Jupiter, rendered by `sidereel-cli`.
 
 ## Features
 
-- Unsoftened Newtonian gravity in the plane. Masses pull on each other. Test particles only fall.
+- Unsoftened Newtonian gravity. Regular presets store three components. An explicit star-and-planet system can stay planar. Masses pull on each other. Test particles only fall.
 - A fixed-step Yoshida integrator. A close encounter halts the run and keeps the last good state.
 - A PyQt6 window filled by the sky. Menu, or M, lays a sidebar over the scene. The view stays put.
 - Six starting experiments: the Solar System, a star at twice the Sun's mass, Earth and the Moon, 32 asteroids in a ring at 3.2 AU, a Sun–Jupiter rock ring with seed 7, and a head-on merger of two solar-type stars.

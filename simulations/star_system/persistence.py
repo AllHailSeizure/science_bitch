@@ -23,6 +23,7 @@ MODEL_VERSION = 'planar-newtonian-point-mass-v1'
 SPATIAL_MODEL_VERSION = 'newtonian-point-mass-v1'
 NUMERICAL_VERSION = 'fixed-yoshida4-v1'
 GENERATOR_VERSION = 'planar-circular-population-v1'
+SPATIAL_GENERATOR_VERSION = 'spatial-circular-population-v1'
 # Integrator implementation that produces a trajectory. Not written into setup
 # JSON and not part of setup_digest. Bump when solver arithmetic changes even
 # if NUMERICAL_VERSION stays the same.
@@ -43,11 +44,12 @@ def _record(value):
     return {field.name: _plain(getattr(value, field.name)) for field in fields(value)}
 
 
-def _population(pop):
+def _population(pop, dimension=2):
     if pop is None:
         return None
+    version = SPATIAL_GENERATOR_VERSION if dimension == 3 else GENERATOR_VERSION
     return {'id': pop.id, 'reference_id': pop.reference_id, 'generator': 'PCG64',
-            'version': GENERATOR_VERSION, 'settings': _record(pop.settings)}
+            'version': version, 'settings': _record(pop.settings)}
 
 
 def _numerical_version(setup):
@@ -94,7 +96,7 @@ def _document(setup):
             'environment': _recorded_environment(setup),
             'setup': {'name': setup.name, 'preset_id': setup.preset_id, 'dt': setup.dt,
                       'collision_mode': setup.collision_mode, 'bodies': bodies,
-                      'population': _population(setup.population), 'provenance': _plain(setup.provenance)}}
+                      'population': _population(setup.population, dimension), 'provenance': _plain(setup.provenance)}}
     # Preserve byte-for-byte canonical legacy mode-none documents/digests.
     if setup.collision_mode != 'none' or setup.collision_policy != CollisionPolicy():
         document['setup']['collision_policy'] = _record(setup.collision_policy)
@@ -104,6 +106,9 @@ def _document(setup):
     # Absent when off, so a drag-free document and its digest stay as they were.
     if setup.drag.enabled:
         document['setup']['drag'] = _record(setup.drag)
+    # Absent when off, so a fixed-step document and its digest stay as they were.
+    if setup.adaptive:
+        document['setup']['adaptive'] = True
     return document
 
 
@@ -172,11 +177,12 @@ def _spec(value):
     return BodySpec(**{**value, 'sources': {key: _source(source) for key, source in value['sources'].items()}})
 
 
-def _decode_population(value):
+def _decode_population(value, dimension=2):
     if value is None:
         return None
     _object(value, ('id', 'reference_id', 'generator', 'version', 'settings'), 'Population')
-    if value['generator'] != 'PCG64' or value['version'] != GENERATOR_VERSION:
+    expected = SPATIAL_GENERATOR_VERSION if dimension == 3 else GENERATOR_VERSION
+    if value['generator'] != 'PCG64' or value['version'] != expected:
         raise ValueError('Unsupported population generator/version.')
     _string(value['id'], 'Population ID')
     _string(value['reference_id'], 'Population reference')
@@ -211,6 +217,8 @@ def _decode(document):
         keys.add('tides')
     if type(document['setup']) is dict and 'drag' in document['setup']:
         keys.add('drag')
+    if type(document['setup']) is dict and 'adaptive' in document['setup']:
+        keys.add('adaptive')
     value = _object(document['setup'], keys, 'Setup')
     _string(value['name'], 'Setup name')
     _string(value['preset_id'], 'Preset ID', nullable=True)
@@ -232,6 +240,12 @@ def _decode(document):
         drag = DragPolicy(**raw)
     else:
         drag = DragPolicy()
+    if 'adaptive' in value:
+        if value['adaptive'] is not True:
+            raise ValueError('A stored adaptive step is on. Omit adaptive to leave the fixed step.')
+        adaptive = True
+    else:
+        adaptive = False
     contact = value['collision_mode'] in CONTACT_SOLVER_MODES
     if document['numerical_version'] != (policy.numerical if contact else NUMERICAL_VERSION):
         raise ValueError('Unsupported numerical_version for selected collision mode.')
@@ -242,6 +256,7 @@ def _decode(document):
         raise ValueError('Setup provenance must be an object.')
     bodies = []
     dimension = 3 if document['model_version'] == SPATIAL_MODEL_VERSION else 2
+    population = _decode_population(value['population'], dimension)
     for body in value['bodies']:
         _object(body, ('id', 'spec', 'r', 'v', 'reference_id'), 'Initial body')
         position, velocity = _vector(body['r'], 'Position'), _vector(body['v'], 'Velocity')
@@ -251,8 +266,9 @@ def _decode(document):
                                   position, velocity,
                                   _string(body['reference_id'], 'Body reference', nullable=True)))
     setup = InitialSetup(value['name'], tuple(bodies), value['dt'], value['preset_id'],
-                         _decode_population(value['population']), value['collision_mode'], value['provenance'], policy,
-                         source_environment={'numpy': document['environment']['numpy']}, tides=tides, drag=drag)
+                         population, value['collision_mode'], value['provenance'], policy,
+                         source_environment={'numpy': document['environment']['numpy']}, tides=tides, drag=drag,
+                         adaptive=adaptive)
     # Validate references, overlap, known masses and numerical resolution before install.
     build_system(setup)
     return setup

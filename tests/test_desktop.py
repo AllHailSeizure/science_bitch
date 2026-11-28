@@ -83,7 +83,9 @@ def test_dropdown_info_add_then_scene_placement(window, qtapp):
     window.catalog.add_button.click()
     assert window.pending_body is not None
     assert setup_digest(window.setup) == original
-    world = window.prepared.system.r[0]+(2.1, 1.2)
+    offset = np.zeros(window.prepared.system.r.shape[1])
+    offset[:2] = (2.1, 1.2)
+    world = window.prepared.system.r[0]+offset
     QTest.mouseClick(window.canvas, Qt.MouseButton.LeftButton, pos=widget_point(window, world))
     qtapp.processEvents()
     assert window.pending_body is None
@@ -239,8 +241,11 @@ def test_planetary_view_membership_is_the_planet_and_its_moons(window, qtapp):
     window.open_experiment('earth-moon')
     earth = window.prepared.body_ids.index('earth')
     tracer = BodySpec('tracer', 'particle', 0., None)
-    setup = place_body(window.setup, tracer, window.prepared.system.r[earth]+(0.002, 0.001),
-                       'earth', circular=False, velocity=(0., 0.), body_id='tracer')
+    offset = np.zeros(window.prepared.system.r.shape[1])
+    offset[:2] = (0.002, 0.001)
+    velocity = tuple(0. for _ in range(offset.shape[0]))
+    setup = place_body(window.setup, tracer, window.prepared.system.r[earth]+offset,
+                       'earth', circular=False, velocity=velocity, body_id='tracer')
     window.install_experiment(setup)
     window.select_body('earth')
     window.planetary_button.click()
@@ -620,7 +625,8 @@ def test_adding_a_catalog_moon_uses_an_explicit_parent_and_kilometer_distance(wi
     assert f'{earth_r[0]:.4g}' in notice and 'AU' in notice
     assert 'not' in notice.lower()
 
-    direction = np.array([1.0, 0.5])
+    direction = np.zeros(earth_r.shape[0])
+    direction[:2] = (1.0, 0.5)
     window.place_at(earth_r+direction)
     moon = window.prepared.body_ids.index(window.selected_id)
     relative = window.prepared.system.r[moon]-window.prepared.system.r[earth]
@@ -651,7 +657,10 @@ def test_invalid_moon_parent_or_distance_leaves_the_setup_unchanged(window, qtap
 
     window.catalog.distance.setValue(100)
     window.catalog.add_button.click()
-    window.place_at(window.prepared.system.r[window.prepared.body_ids.index('earth')]+(1, 0))
+    earth = window.prepared.system.r[window.prepared.body_ids.index('earth')]
+    nudge = np.zeros(earth.shape[0])
+    nudge[0] = 1.
+    window.place_at(earth+nudge)
     assert setup_digest(window.setup) == before
     assert 'overlap' in window.notice.text().lower()
     assert window.pending_body is not None

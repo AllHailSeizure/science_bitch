@@ -34,9 +34,10 @@ def capture_current_setup(prepared, initial_setup, name):
             if spec.kind == 'moon':
                 dt = min(dt, recommended_moon_step(r, system.masses[parent], system.masses[i]))
         bodies.append(InitialBody(key, spec, tuple(r), tuple(v), reference))
+    source_dimension = len(initial_setup.bodies[0].r)
     provenance = {'source_name': initial_setup.name, 'source_setup_digest': setup_digest(initial_setup),
                   'source_time': system.time, 'source_dt': system.dt,
-                  'source_population': _population(initial_setup.population), 'captured_dt': dt,
+                  'source_population': _population(initial_setup.population, source_dimension), 'captured_dt': dt,
                   'capture_note': 'New initial epoch at time zero; not uninterrupted trajectory continuation.'}
     if dt < system.dt:
         provenance['capture_note'] += ' Smaller fixed dt required by current moon period / 600.'
@@ -64,7 +65,7 @@ def capture_current_setup(prepared, initial_setup, name):
     provenance['collision_events'] = tuple(inherited)+tuple(fresh)
     captured = InitialSetup(name.strip(), tuple(bodies), dt, collision_mode=initial_setup.collision_mode,
                             collision_policy=initial_setup.collision_policy, tides=initial_setup.tides,
-                            drag=initial_setup.drag, provenance=provenance)
+                            drag=initial_setup.drag, adaptive=initial_setup.adaptive, provenance=provenance)
     build_system(captured)
     return captured
 

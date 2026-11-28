@@ -625,7 +625,8 @@ class App:
                 else:
                     separation = np.linalg.norm(self.system.r[index]-self.system.r[jupiter])
                     relative_v = self.system.v[index]-self.system.v[jupiter]
-                    details += f'\nJupiter separation: {separation:.6g} AU\nJupiter-relative physical inertial v\n({relative_v[0]:.5g}, {relative_v[1]:.5g}) AU/yr'
+                    components = ', '.join(f'{component:.5g}' for component in relative_v)
+                    details += f'\nJupiter separation: {separation:.6g} AU\nJupiter-relative physical inertial v\n({components}) AU/yr'
             else:
                 details = f'{body.name}\n{mass} solar masses / radius {radius}'
                 if body.temperature is not None:
@@ -647,7 +648,9 @@ class App:
                     else:
                         details += f'\nParent: {relative.reference_name} [{relative.reference_id}]\nCurrent separation: {relative.separation*AU_KM:,.7g} km\n{relative.separation:.8g} AU'
             r, v = self.system.r[index], self.system.v[index]
-            details += f'\nWorld r = ({r[0]:.5g}, {r[1]:.5g}) AU\nWorld v = ({v[0]:.5g}, {v[1]:.5g}) AU/yr'
+            placed = ', '.join(f'{component:.5g}' for component in r)
+            moving = ', '.join(f'{component:.5g}' for component in v)
+            details += f'\nWorld r = ({placed}) AU\nWorld v = ({moving}) AU/yr'
         self.inspector.set_text(details)
         self.sidebar.set_bodies([(key, f'{spec.name} [{key if spec.kind == "particle" else key[:8]}]')
                                 for key,spec in zip(self.prepared.body_ids,self.prepared.body_specs)], self.selected_id)
