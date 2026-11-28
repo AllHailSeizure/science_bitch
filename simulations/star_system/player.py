@@ -7,6 +7,7 @@ A third position component is dropped; that is the top-down projection, not a
 perspective render.
 """
 import csv
+from copy import copy
 import json
 import math
 from pathlib import Path
@@ -59,8 +60,8 @@ def load_playback(source):
     if type(runs) is not list or not runs:
         raise ValueError('A playback file needs at least one run.')
     for run in runs:
-        if run.get('status') not in ('complete', 'halted', 'cancelled', 'stopped'):
-            raise ValueError('Each run needs a status of complete, halted, cancelled, or stopped.')
+        if run.get('status') not in ('complete', 'halted', 'cancelled', 'stopped', 'running'):
+            raise ValueError('Each run needs a status of complete, halted, cancelled, stopped, or running.')
         samples = run.get('samples')
         if type(samples) is not list or not samples:
             raise ValueError('Each run needs recorded samples.')
@@ -86,7 +87,9 @@ def equal_time(run):
 def run_notes(run):
     """Collision marks, and an early-end mark when the recording itself stopped."""
     notes = []
-    if not equal_time(run):
+    if run.get('status') == 'running':
+        notes.append('Recorded calculation in progress (snapshot)')
+    elif not equal_time(run):
         reason = (run.get('reason') or '').strip()
         status = run.get('status') or 'incomplete'
         notes.append(f'Ended early ({status}): {reason}' if reason else f'Ended early ({status})')
@@ -143,10 +146,45 @@ class Player:
         self.left_index = 0
         self.right_index = 1 if len(self.runs) > 1 else 0
         self._dwell = 0.0
+        self.selected_body = None
+        self.sample_index = None
+        self._comparison = None
+        self._comparison_key = None
 
     @property
     def current(self):
         return self.runs[self.run_index]
+
+    def comparison(self):
+        from .observatory import RecordedComparison
+        key = (self.left_index, self.right_index)
+        if self._comparison_key != key:
+            self._comparison = RecordedComparison(self.runs[key[0]], self.runs[key[1]])
+            self._comparison_key = key
+        return self._comparison
+
+    def interval(self):
+        if self.comparing:
+            comparison = self.comparison()
+            return comparison.common_start, comparison.common_end
+        return float(self.current['time_start']), float(self.current['time_end'])
+
+    def seek(self, time):
+        if not math.isfinite(time):
+            raise ValueError('Playback time must be finite.')
+        start, end = self.interval()
+        self.time = min(max(float(time), start), end)
+        self.sample_index = None
+        self.pause()
+        if self.comparing:
+            self.comparison().seek(self.time)
+
+    def seek_sample(self, index):
+        if index < 0 or index >= len(self.current['samples']):
+            raise ValueError('Sample index is outside the recording.')
+        self.seek(float(self.current['samples'][index]['time']))
+        if not self.comparing:
+            self.sample_index = index
 
     def set_view(self, view):
         if view not in {key for key, _label in VIEW_CHOICES}:
@@ -189,6 +227,14 @@ class Player:
             return
         self.set_years_per_second(self.years_per_second)
         self.set_runs_per_second(self.runs_per_second)
+        self.sample_index = None
+        if self.comparing:
+            comparison = self.comparison()
+            comparison.seek(min(max(self.time, comparison.common_start), comparison.common_end))
+            comparison.play()
+            self.time = comparison.advance(wall_seconds, self.years_per_second).time
+            self.paused = not comparison.playing
+            return
         remaining = float(wall_seconds)
         for _ in range(10000):
             if remaining <= 0:
@@ -222,6 +268,8 @@ class Player:
         return index
 
     def _enter(self, index):
+        self.sample_index = None
+        self.selected_body = None
         self.run_index = index
         self.left_index = index
         run = self.current
@@ -239,8 +287,12 @@ class Player:
         (self.run_index, self.time, self.view, self.paused, self._dwell, self.left_index, self.comparing) = snapshot
 
 
-def render(player, figure):
+def _render(player, figure):
     """Draw the current view onto ``figure``. Comparison splits Live view or the inner/outer split."""
+    if player.comparing:
+        start, end = player.interval()
+        player.time = min(max(player.time, start), end)
+        player.comparison().seek(player.time)
     figure.clear()
     figure.patch.set_facecolor(BACKGROUND)
     if player.comparing and player.view == VIEW_INNER_OUTER:
@@ -259,6 +311,35 @@ def render(player, figure):
     axis = figure.add_subplot(1, 1, 1)
     _draw_run(axis, player.current, _shown_time(player.current, player.time), axes_values=False,
               title=run_caption(player.current), stamp=True)
+
+
+def render(player, figure):
+    from .observatory import carriers
+    if player.sample_index is None or player.comparing:
+        _render(player, figure)
+    else:
+        preview = copy(player)
+        preview.runs = list(player.runs)
+        preview.runs[player.run_index] = dict(
+            player.current, samples=player.current['samples'][:player.sample_index + 1])
+        _render(preview, figure)
+    if player.selected_body is None or player.view == VIEW_OVERLAY:
+        return
+    runs = [player.current]
+    if player.comparing:
+        runs = [player.runs[player.left_index], player.runs[player.right_index]]
+    for i, axis in enumerate(figure.axes):
+        run = runs[i // 2 if player.view == VIEW_INNER_OUTER and player.comparing else i % len(runs)]
+        samples = _samples_until(run, player.time)
+        sample = samples[-1]
+        if run is player.current and player.sample_index is not None and not player.comparing:
+            sample = run['samples'][player.sample_index]
+        points, _ = _projected(sample, _bodies(run))
+        selected = set(carriers(run, sample, player.selected_body)) | {player.selected_body}
+        indices = [j for j, key in enumerate(sample['ids']) if key in selected]
+        if indices:
+            axis.scatter(points[indices, 0], points[indices, 1], s=100, facecolors='none',
+                         edgecolors='#ffffff', linewidths=2, zorder=5, gid='ancestry')
 
 
 def export_overlay_png(player, path):
@@ -454,7 +535,8 @@ def _draw_run(axis, run, time, *, axes_values, title, limits=None, stamp=False):
         color = body.get('color') if isinstance(body.get('color'), str) and body.get('color') else _PALETTE[number % len(_PALETTE)]
         kind = body.get('kind')
         axis.plot(xs, ys, color=color, linewidth=0.55 if kind == 'particle' else 1.35, solid_capstyle='round')
-        axis.scatter([xs[-1]], [ys[-1]], s=8 if kind == 'particle' else 16, color=color, zorder=3)
+        if body_id in _samples_until(run, time)[-1]['ids']:
+            axis.scatter([xs[-1]], [ys[-1]], s=8 if kind == 'particle' else 16, color=color, zorder=3)
     notes = run_notes(run)
     if notes:
         axis.text(0.02, 0.98, '\n'.join(notes), transform=axis.transAxes, color=NOTE, fontsize=8, va='top')
