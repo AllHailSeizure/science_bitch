@@ -65,7 +65,9 @@ def test_scene_placement_is_relative_once_and_moon_step_is_automatic():
     original = get_experiment('solar-system')
     prepared = build_system(original)
     parent = prepared.body_ids.index('earth')
-    world = prepared.system.r[parent] + np.array([.00257, 0.])
+    offset = np.zeros(prepared.system.r.shape[1])
+    offset[0] = .00257
+    world = prepared.system.r[parent] + offset
     edited = place_body(original, CATALOG['moon'], world, 'earth', circular=True)
     after = build_system(edited)
     assert len(edited.bodies) == len(original.bodies)+1

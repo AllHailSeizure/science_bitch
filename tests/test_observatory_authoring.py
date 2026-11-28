@@ -57,7 +57,9 @@ def test_live_insertion_drags_confirms_and_keeps_time_and_starting_setup(window,
     window.catalog.add_button.click()
     assert not window.running and window.pending_body is not None
     assert window.prepared.system.time == elapsed
-    window.place_at(old_r[0]+(2.5, .4))
+    offset = np.zeros(old_r.shape[1])
+    offset[:2] = (2.5, .4)
+    window.place_at(old_r[0]+offset)
     assert window.live_draft is not None and len(window.prepared.body_ids) == count
     assert 'Sun' in window.catalog.draft_readout.text() and 'AU/yr' in window.catalog.draft_readout.text()
     anchor = window.ax.transData.transform(window._live_anchor)
@@ -76,7 +78,10 @@ def test_live_insertion_drags_confirms_and_keeps_time_and_starting_setup(window,
         method(event)
     relative_r = np.asarray(window.live_draft.r)
     relative_v = np.asarray(window.live_draft.v)
-    np.testing.assert_allclose(relative_v, (end-window.ax.transData.transform(window._live_anchor))/12., atol=1e-6)
+    shown = (end-window.ax.transData.transform(window._live_anchor))/12.
+    np.testing.assert_allclose(relative_v[:2], shown, atol=1e-6)
+    if len(relative_v) == 3:
+        np.testing.assert_allclose(relative_v[2], np.asarray(doubled.v)[2])
     assert window.confirm_insertion_button.isVisible()
     window.confirm_insertion_button.click()
     qtapp.processEvents()
@@ -129,7 +134,9 @@ def test_overlapping_live_insertion_stays_uncommitted(window, qtapp):
     window.catalog.body_combo.setCurrentIndex(window.catalog.body_combo.findData('vesta'))
     window.catalog.reference_combo.setCurrentIndex(window.catalog.reference_combo.findData('sun'))
     window.catalog.add_button.click()
-    window.place_at(window.prepared.system.r[0]+(0.001, 0.))
+    overlap = np.zeros(window.prepared.system.r.shape[1])
+    overlap[0] = 0.001
+    window.place_at(window.prepared.system.r[0]+overlap)
     assert window.live_draft is not None
     window.confirm_insertion_button.click()
     assert window.live_draft is not None
@@ -150,7 +157,9 @@ def test_custom_body_is_created_edited_and_keeps_unknown_radius(window, qtapp):
     qtapp.processEvents()
     assert 'Unknown' in window.catalog.information.details.text()
     window.catalog.add_button.click()
-    window.place_at(window.prepared.system.r[0]+(3., 1.))
+    placed = np.zeros(window.prepared.system.r.shape[1])
+    placed[:2] = (3., 1.)
+    window.place_at(window.prepared.system.r[0]+placed)
     body = window.setup.bodies[-1]
     assert body.spec.name == 'Rock' and body.spec.kind == 'asteroid'
     assert body.spec.provenance == 'custom' and body.spec.radius is None
@@ -189,7 +198,9 @@ def test_second_star_is_a_normal_body_in_the_starting_setup(window, qtapp):
     window.catalog.body_combo.setCurrentIndex(window.catalog.body_combo.findData('alpha_cen_a'))
     window.catalog.reference_combo.setCurrentIndex(window.catalog.reference_combo.findData('sun'))
     window.catalog.add_button.click()
-    window.place_at(window.prepared.system.r[0]+(20., 0.))
+    placed = np.zeros(window.prepared.system.r.shape[1])
+    placed[0] = 20.
+    window.place_at(window.prepared.system.r[0]+placed)
     assert 'sun' in window.prepared.body_ids
     assert window.prepared.body_specs[-1].catalog_key == 'alpha_cen_a'
     assert sum(spec.kind == 'star' for spec in window.prepared.body_specs) == 2

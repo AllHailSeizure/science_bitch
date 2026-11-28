@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from simulations.star_system.frames import frame_transform
+from simulations.star_system.frames import frame_transform, labeled_lagrange_guides
 from simulations.star_system.initialization import build_system
 from simulations.star_system.persistence import load_setup, save_setup
 from simulations.star_system.rendering import coordinates
@@ -155,9 +155,8 @@ def test_rotating_view_fixes_jupiter_keeps_state_and_labels_guides(window, qtapp
     assert len(window.scene.particles.get_paths()[0].vertices) > 8
     guides = window.scene.display_to_world(np.asarray(window.scene.reference_guides.get_offsets(), dtype=float))
     rocks = window.scene.display_to_world(np.asarray(window.scene.particles.get_offsets(), dtype=float))
-    sun = window.prepared.system.r[window.prepared.body_ids.index('sun')]
-    separation = np.linalg.norm(window.prepared.system.r[jupiter]-sun)
-    np.testing.assert_allclose(np.linalg.norm(guides-sun, axis=1), separation)
+    world_guides = labeled_lagrange_guides(window.scene.frame, 'sun', 'jupiter')[0]
+    np.testing.assert_allclose(guides, world_guides[:, :guides.shape[1]], atol=1e-8)
     distances = np.linalg.norm(guides[:, None, :]-rocks[None, :, :], axis=2)
     assert distances.min() > .5
     note = window.scene.guide_note.get_text()
@@ -204,14 +203,23 @@ def test_rotating_velocity_edit_stores_the_physical_vector(window, qtapp):
     window.select_body('jupiter')
     index = window.prepared.body_ids.index('jupiter')
     displayed = np.array([.35, -.2])
+    previous = window.prepared.system.v[index].copy()
     anchor = window.ax.transData.transform(window.scene.positions[index])
     tip = window.ax.transData.transform(window.velocity_tips['jupiter'])
     target = anchor+displayed*12
     window.on_press(SimpleNamespace(inaxes=window.ax, button=1, xdata=0., ydata=0., x=tip[0], y=tip[1]))
     window.on_motion(SimpleNamespace(inaxes=window.ax, xdata=0., ydata=0., x=target[0], y=target[1]))
     window.on_release(SimpleNamespace(inaxes=window.ax, xdata=0., ydata=0., x=target[0], y=target[1]))
-    physical = window.scene.transform.inverse_vectors(displayed)
-    np.testing.assert_allclose(window.prepared.system.v[index], physical, atol=1e-12)
+    physical = np.asarray(window.scene.transform.inverse_vectors(displayed), dtype=float)
+    reference = window.prepared.reference_ids[index]
+    parent_v = (window.prepared.system.v[window.prepared.body_ids.index(reference)]
+                if reference in window.prepared.body_ids else np.zeros(previous.shape[0]))
+    current = previous-parent_v
+    expected = np.array(parent_v, dtype=float, copy=True)
+    expected[:2] = parent_v[:2]+physical
+    if expected.shape[0] == 3:
+        expected[2] = parent_v[2]+current[2]
+    np.testing.assert_allclose(window.prepared.system.v[index], expected, atol=1e-12)
     stored = window.prepared.system.v.copy()
     window.rotating_button.click()
     qtapp.processEvents()
