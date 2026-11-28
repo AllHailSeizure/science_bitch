@@ -94,6 +94,9 @@ class PopulationSpec:
 TIDAL_MODEL_ID = 'close-pass-energy-dissipation-v1'
 TIDAL_STRENGTH = 80.0
 TIDAL_REACH = 6.0
+# Same id as the gas-and-dust drag laws. Off unless an experiment enables it.
+DRAG_MODEL_ID = 'epstein-swarm-quadratic-body-v1'
+DRAG_DISKS = ('annular', 'envelope', 'giant')
 
 
 @dataclass(frozen=True)
@@ -117,6 +120,30 @@ class TidalPolicy:
             raise ValueError('Turn tidal dissipation on to store a strength or reach. Off uses the default policy only.')
 
 
+@dataclass(frozen=True)
+class DragPolicy:
+    """Quadratic body drag from an annular disk. Disabled policies are not stored.
+
+    ``disk`` selects which existing annular profile supplies the zones:
+    ``annular`` is the seeded power-law disk, ``envelope`` is the Gaussian
+    capture envelope, and ``giant`` is that same isothermal disk placed on a
+    giant planet's orbit. The drag laws themselves do not change.
+    """
+    enabled: bool = False
+    version: str = DRAG_MODEL_ID
+    disk: str = 'annular'
+
+    def __post_init__(self):
+        if type(self.enabled) is not bool:
+            raise ValueError('Gas drag must be explicitly on or off.')
+        if self.version != DRAG_MODEL_ID:
+            raise ValueError('Unsupported drag model.')
+        if self.disk not in DRAG_DISKS:
+            raise ValueError("Drag disk must be 'annular', 'envelope', or 'giant'.")
+        if not self.enabled and self.disk != 'annular':
+            raise ValueError('Turn gas drag on to store a disk. Off uses the default policy only.')
+
+
 # Perfect merge is one disclosed rule. The legacy pairs id said stellar contact
 # halted the run; that behavior is retired, and loaded documents adopt the id below.
 PERFECT_MERGE_VERSION = 'nonstellar-perfect-merge-v1'
@@ -129,8 +156,14 @@ SPEED_ANGLE_PAIRS = 'nonstellar-speed-angle-merge-graze-fragment-star-unmodeled-
 SPEED_ANGLE_REMNANT = 'fragments-tracked-losses-recorded-v1'
 _PERFECT_MERGE_IDENTITY = (PERFECT_MERGE_VERSION, PERFECT_MERGE_PAIRS, PERFECT_MERGE_REMNANT, COLLISION_NUMERICAL)
 _SPEED_ANGLE_IDENTITY = (SPEED_ANGLE_VERSION, SPEED_ANGLE_PAIRS, SPEED_ANGLE_REMNANT, COLLISION_NUMERICAL)
-COLLISION_MODES = ('none', 'perfect_merge', 'speed_angle', 'binary_star_merger')
-SELECTABLE_COLLISION_MODES = ('none', 'perfect_merge', 'speed_angle')
+# ``none`` keeps the preset Yoshida step, which can halt on an unresolved encounter.
+# ``ignore`` uses the contact stepper and lets bodies overlap without a remnant.
+# ``stop_on_contact`` is the only mode that ends a run because two bodies touch.
+COLLISION_MODES = ('none', 'ignore', 'stop_on_contact', 'perfect_merge', 'speed_angle', 'binary_star_merger')
+SELECTABLE_COLLISION_MODES = ('none', 'ignore', 'stop_on_contact', 'perfect_merge', 'speed_angle')
+CONTACT_SOLVER_MODES = ('ignore', 'stop_on_contact', 'perfect_merge', 'speed_angle', 'binary_star_merger')
+FORMATION_COLLISION_MODES = ('ignore', 'stop_on_contact', 'perfect_merge', 'speed_angle')
+_COLLISION_MODE_LIST = 'none, ignore, stop_on_contact, perfect_merge, speed_angle, binary_star_merger'
 
 
 def collision_policy_identity(policy):
@@ -149,17 +182,17 @@ def retarget_collision_policy(policy, mode):
         raise ValueError('A supported CollisionPolicy is required.')
     if mode == 'speed_angle':
         version, pairs, remnant, numerical = _SPEED_ANGLE_IDENTITY
-    elif mode in ('none', 'perfect_merge', 'binary_star_merger'):
+    elif mode in ('none', 'ignore', 'stop_on_contact', 'perfect_merge', 'binary_star_merger'):
         version, pairs, remnant, numerical = _PERFECT_MERGE_IDENTITY
     else:
-        raise ValueError('Supported collision modes: none, perfect_merge, speed_angle, binary_star_merger.')
+        raise ValueError(f'Supported collision modes: {_COLLISION_MODE_LIST}.')
     return replace(policy, version=version, pairs=pairs, remnant=remnant, numerical=numerical)
 
 
 def with_collision_rule(setup, mode):
     """Copy a setup onto one stored collision rule, including ``none``."""
     if mode not in COLLISION_MODES:
-        raise ValueError('Supported collision modes: none, perfect_merge, speed_angle, binary_star_merger.')
+        raise ValueError(f'Supported collision modes: {_COLLISION_MODE_LIST}.')
     policy = retarget_collision_policy(setup.collision_policy, mode)
     return replace(setup, collision_mode=mode, collision_policy=policy)
 
@@ -206,6 +239,7 @@ class InitialSetup:
     provenance: Mapping[str, object] = field(default_factory=dict, compare=False, hash=False)
     collision_policy: CollisionPolicy = field(default_factory=CollisionPolicy)
     tides: TidalPolicy = field(default_factory=TidalPolicy)
+    drag: DragPolicy = field(default_factory=DragPolicy)
     # NumPy provenance of the document that produced this setup. Absent on a
     # setup built in memory; load_setup copies it from the file. Not physical
     # state, so equality ignores it.
@@ -218,11 +252,13 @@ class InitialSetup:
         if not np.isfinite(self.dt) or self.dt <= 0:
             raise ValueError('Fixed dt must be finite and positive (years).')
         if self.collision_mode not in COLLISION_MODES:
-            raise ValueError('Supported collision modes: none, perfect_merge, speed_angle, binary_star_merger.')
+            raise ValueError(f'Supported collision modes: {_COLLISION_MODE_LIST}.')
         if not isinstance(self.collision_policy, CollisionPolicy):
             raise ValueError('A supported CollisionPolicy is required.')
         if not isinstance(self.tides, TidalPolicy):
             raise ValueError('A supported TidalPolicy is required.')
+        if not isinstance(self.drag, DragPolicy):
+            raise ValueError('A supported DragPolicy is required.')
         family = collision_policy_identity(self.collision_policy)
         # A perfect-merge policy is the default object, so choosing speed_angle
         # without a second argument still stores that rule on the setup.

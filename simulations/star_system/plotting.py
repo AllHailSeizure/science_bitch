@@ -150,7 +150,7 @@ class App:
         self.select_setup(custom_copy(with_collision_rule(self.initial_setup, mode), self.initial_setup))
         note = ''
         if self.initial_setup.tides.enabled and mode != 'none':
-            note = ' Tidal dissipation stays stored but is not applied inside the contact solver.'
+            note = ' Tidal dissipation stays on for a close pass that does not become a contact.'
         elif self.initial_setup.tides.enabled:
             note = ' Tidal dissipation stays on for this Yoshida run.'
         self.status.set_text(f'Collision mode {mode}; reset to starting setup in preparation. '
@@ -170,7 +170,7 @@ class App:
         tides = current if enabled and current.enabled else (TidalPolicy(enabled=True) if enabled else TidalPolicy())
         self.select_setup(custom_copy(replace(self.initial_setup, tides=tides), self.initial_setup))
         if tides.enabled and mode != 'none':
-            note = 'Tidal dissipation is stored and is not applied inside the contact solver.'
+            note = 'Tidal dissipation is on for a close pass that does not become a contact.'
         elif tides.enabled:
             note = f'Tidal dissipation on ({tides.version}); reset to the starting setup.'
         else:

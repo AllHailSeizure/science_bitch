@@ -62,7 +62,7 @@ def assumptions_text(setup):
             f'Tidal dissipation is on ({setup.tides.version}). Close passes of massive bodies can lose orbital energy. '
             'This ring is not itself a tidal-capture result.')
     elif setup.tides.enabled:
-        lines.append('Tidal dissipation is stored and is not applied inside the contact solver.')
+        lines.append('Tidal dissipation is on for a close pass that does not become a contact.')
     else:
         lines.append('Tidal dissipation is off.')
     lines.append('This fixture can show perturbation. It does not promise Trojan occupancy, stability, or capture.')

@@ -253,7 +253,7 @@ class ExperimentEditor:
         self._button((.50, .565, .42, .045), 'Load into preparation', self.load)
         self.fig.text(.07, .535, 'Initial save restores the configured beginning, including its original seed.\n'
                       'Evolution and live insertions do not change that starting setup.', color=MUTED, fontsize=9, va='top')
-        choices = ('none', 'perfect_merge', 'speed_angle')
+        choices = ('none', 'perfect_merge', 'speed_angle', 'ignore', 'stop_on_contact')
         try:
             selected = choices.index(app.initial_setup.collision_mode)
         except ValueError:
