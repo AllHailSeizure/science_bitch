@@ -3,13 +3,17 @@
 ``sidereel --new`` writes every section, blank, in the agreed order:
 dimensions, bodies, physics, and the run. Newtonian gravity is what
 Sidereel uses. A ``gravity_model`` field is refused (see #77).
+Relativistic corrections and stellar mass loss are opt-in keys in the
+physics section and are off until set true.
 ``sidereel --build`` checks that file and integrates it with the existing
 solver. The ``.sidereel`` result is JSON: one run, or several when the file
 sweeps a variable or scans until a watched outcome.
 
 Custom bodies and collision mode ``ignore`` are reserved and refused.
 Collision rules, gas-dust drag, and tides, including a 3D state, run
-together on the combined formation path. Outside pulls are an opt-in
+together on the combined formation path. Post-Newtonian terms are
+``physics.relativistic_corrections``. The relativistic and mass-loss
+modules run on that path and on the Yoshida path. Outside pulls are an opt-in
 galactic tide plus optional seeded stellar flybys, off unless the physics
 section stores them, and they run only in three dimensions.
 """
@@ -28,7 +32,10 @@ from .collisions import CollisionEvent
 from .core import ADAPTIVE_DT_MIN, ADAPTIVE_GROWTH, G, SOLAR_RADIUS_AU, make_system
 from .data import CATALOG, PLANETS, STARS
 from .initialization import PRESET_INCLINATION, build_system, with_preset_inclination
-from .model import DragPolicy, InitialBody, InitialSetup, PropertySource, TidalPolicy
+from .model import (
+    MASS_LOSS_RATE_PER_YEAR, DragPolicy, InitialBody, InitialSetup, PropertySource,
+    RelativisticPolicy, StellarMassLossPolicy, TidalPolicy,
+)
 from .recording import Calculation, CalculationRequest
 from .outside_pulls import attach, parse_outside_pulls, playback_report, run_document
 from .tides import TideEvent
@@ -55,7 +62,7 @@ _CONTACT_KINDS = {
 _MAX_RUNS = 100
 _DOCUMENT_KEYS = ('schema', 'dimensions', 'bodies', 'physics', 'experiment')
 _BODY_KEYS = ('catalog', 'new')
-_PHYSICS_KEYS = ('collision', 'tides', 'gas_dust_drag')
+_PHYSICS_KEYS = ('collision', 'tides', 'gas_dust_drag', 'relativistic_corrections', 'stellar_mass_loss', 'outside_pulls')
 _EXPERIMENT_KEYS = ('independent_variable', 'fixed_duration', 'open_scan', 'watch_for')
 _SWEEP_KEYS = ('parameter', 'body', 'start', 'stop', 'step')
 _SCAN_VARIABLE_KEYS = ('parameter', 'body', 'start')
@@ -74,7 +81,14 @@ def empty_experiment():
         'schema': EXPERIMENT_SCHEMA,
         'dimensions': None,
         'bodies': {'catalog': [], 'new': None},
-        'physics': {'collision': None, 'tides': None, 'gas_dust_drag': None, 'outside_pulls': None},
+        'physics': {
+            'collision': None,
+            'tides': None,
+            'gas_dust_drag': None,
+            'relativistic_corrections': None,
+            'stellar_mass_loss': None,
+            'outside_pulls': None,
+        },
         'experiment': {
             'independent_variable': None,
             'fixed_duration': None,
@@ -123,6 +137,8 @@ class Experiment:
     collision: str | None
     tides: bool | None
     gas_dust_drag: bool | None
+    relativistic_corrections: bool | None
+    stellar_mass_loss: bool | None
     variable: _Variable | None
     years: float | None
     scan: _Scan | None
@@ -138,6 +154,14 @@ class Experiment:
     def drag_on(self):
         return self.gas_dust_drag is True
 
+    @property
+    def relativistic_on(self):
+        return self.relativistic_corrections is True
+
+    @property
+    def mass_loss_on(self):
+        return self.stellar_mass_loss is True
+
     def document(self):
         return {
             'schema': EXPERIMENT_SCHEMA,
@@ -147,6 +171,8 @@ class Experiment:
                 'collision': self.collision,
                 'tides': self.tides,
                 'gas_dust_drag': self.gas_dust_drag,
+                'relativistic_corrections': self.relativistic_corrections,
+                'stellar_mass_loss': self.stellar_mass_loss,
                 'outside_pulls': None if self.outside is None else self.outside.document(),
             },
             'experiment': self._experiment_section(),
@@ -224,15 +250,18 @@ def build_experiment(experiment):
 
 
 def _gravity_note(experiment):
+    correction = ' physics.relativistic_corrections adds pairwise 1PN and 2.5PN terms when it is on.'
     if experiment.dimensions == 3:
         return (
-            'Newtonian inverse-square gravity. '
-            f'Dimension 3 stores three components, inclined by {PRESET_INCLINATION:g} rad about the x axis. '
+            'Newtonian inverse-square gravity.'
+            + correction
+            + f' Dimension 3 stores three components, inclined by {PRESET_INCLINATION:g} rad about the x axis. '
             'A two-component recording is not given a zero z component.'
         )
     return (
-        'Newtonian inverse-square gravity. '
-        'Dimension 2 stores that motion in a plane.'
+        'Newtonian inverse-square gravity.'
+        + correction
+        + ' Dimension 2 stores that motion in a plane.'
     )
 
 
@@ -300,13 +329,14 @@ def _decode(document):
     if type(document) is dict and 'gravity_model' in document:
         raise ValueError(
             'gravity_model is not an experiment field (see #77). '
-            'Newtonian gravity is what Sidereel uses. Remove gravity_model.')
+            'Newtonian gravity is what Sidereel uses. Remove gravity_model. '
+            'Turn on physics.relativistic_corrections for post-Newtonian precession and gravitational-wave inspiral.')
     _object(document, _DOCUMENT_KEYS, 'Experiment')
     if document['schema'] != EXPERIMENT_SCHEMA:
         raise ValueError(f'Unsupported experiment schema. Expected {EXPERIMENT_SCHEMA}.')
     dimensions = _dimensions(document['dimensions'])
     catalog = _bodies(document['bodies'])
-    collision, tides, drag, outside = _physics(document['physics'])
+    collision, tides, drag, relativistic, mass_loss, outside = _physics(document['physics'])
     if outside is not None and dimensions != 3:
         raise ValueError(
             'Outside pulls are a three-dimensional galactic field for very wide orbits. Choose dimensions 3.')
@@ -314,7 +344,8 @@ def _decode(document):
     if variable is not None and variable.body not in catalog:
         raise ValueError(f'independent_variable.body {variable.body!r} is not in bodies.catalog.')
     return Experiment(
-        dimensions, catalog, collision, tides, drag, variable, years, scan, watch, adaptive, outside)
+        dimensions, catalog, collision, tides, drag, relativistic, mass_loss,
+        variable, years, scan, watch, adaptive, outside)
 
 
 def _dimensions(value):
@@ -368,16 +399,14 @@ def _bodies(value):
 
 
 def _physics(value):
-    # outside_pulls is optional so a 3D preset file written before the key
-    # existed still builds, with the module off.
     if type(value) is not dict:
-        raise ValueError(
-            'Physics: expected fields collision, tides, gas_dust_drag, and optional outside_pulls.')
-    outside_value = None
-    if 'outside_pulls' in value:
-        outside_value = value['outside_pulls']
-        value = {key: item for key, item in value.items() if key != 'outside_pulls'}
-    _object(value, _PHYSICS_KEYS, 'Physics')
+        raise ValueError('Physics: expected an object.')
+    # Older files omit the later modules. A missing key is off. --new still writes every key.
+    filled = dict(value)
+    for key in ('relativistic_corrections', 'stellar_mass_loss', 'outside_pulls'):
+        filled.setdefault(key, None)
+    _object(filled, _PHYSICS_KEYS, 'Physics')
+    value = filled
     collision = value['collision']
     if collision is not None:
         if type(collision) is not str or collision not in COLLISION_MODES:
@@ -389,8 +418,10 @@ def _physics(value):
                 'or applies perfect merge or speed-angle; it does not let bodies pass through.')
     tides = _optional_bool(value['tides'], 'physics.tides')
     drag = _optional_bool(value['gas_dust_drag'], 'physics.gas_dust_drag')
-    outside = parse_outside_pulls(outside_value)
-    return collision, tides, drag, outside
+    relativistic = _optional_bool(value['relativistic_corrections'], 'physics.relativistic_corrections')
+    mass_loss = _optional_bool(value['stellar_mass_loss'], 'physics.stellar_mass_loss')
+    outside = parse_outside_pulls(value['outside_pulls'])
+    return collision, tides, drag, relativistic, mass_loss, outside
 
 
 def _details(value):
@@ -526,6 +557,8 @@ def _setup_for_value(experiment, base, value):
     mode = _engine_mode(experiment)
     tides = TidalPolicy(enabled=True) if experiment.tides_on else TidalPolicy()
     drag = DragPolicy(enabled=True) if experiment.drag_on else DragPolicy()
+    relativistic = RelativisticPolicy(enabled=True) if experiment.relativistic_on else RelativisticPolicy()
+    mass_loss = StellarMassLossPolicy(enabled=True) if experiment.mass_loss_on else StellarMassLossPolicy()
     probed = build_system(replace(setup, dt=1e-12, collision_mode='none', tides=TidalPolicy()))
     limit = probed.system.resolution_limit()
     # Keep the catalog step when it still resolves the initial state. Shrink it
@@ -536,7 +569,9 @@ def _setup_for_value(experiment, base, value):
         dt = setup.dt
     if not math.isfinite(dt) or dt <= 0:
         raise ValueError('The varied initial state has no usable fixed step.')
-    prepared = replace(setup, dt=dt, collision_mode=mode, tides=tides, drag=drag, adaptive=experiment.adaptive)
+    prepared = replace(
+        setup, dt=dt, collision_mode=mode, tides=tides, drag=drag,
+        relativistic=relativistic, stellar_mass_loss=mass_loss, adaptive=experiment.adaptive)
     build_system(prepared)
     return prepared
 
@@ -738,6 +773,19 @@ def _physics_report(experiment, runs):
     if experiment.tides_on and not combined:
         path = 'Yoshida path' if experiment.adaptive else 'fixed-step planar path'
         note += f' Tides use close-pass-energy-dissipation-v1 on the {path}.'
+    if experiment.relativistic_on:
+        note += (
+            ' Relativistic corrections are on: pairwise 1PN and 2.5PN terms are added to Newtonian gravity. '
+            'Perihelion precession and gravitational-wave inspiral are claimed only while this module is on.')
+    else:
+        note += ' Relativistic corrections are off, so this run does not claim precession or inspiral.'
+    if experiment.mass_loss_on:
+        note += (
+            ' Stellar mass loss is on: each star loses mass at a constant fractional rate of '
+            f'{MASS_LOSS_RATE_PER_YEAR:.0e} per year. The isotropic wind leaves the system and the star '
+            'velocity is unchanged. An orbit widens because of mass loss only while this module is on.')
+    else:
+        note += ' Stellar mass loss is off, so stellar masses, including a merger remnant, stay constant.'
     if experiment.outside is not None:
         note += ' Outside pulls are on along the 3D path.'
     return {
@@ -746,6 +794,8 @@ def _physics_report(experiment, runs):
         'tides': experiment.tides_on,
         'gas_dust_drag': experiment.drag_on if combined else False,
         'adaptive': experiment.adaptive,
+        'relativistic_corrections': experiment.relativistic_on,
+        'stellar_mass_loss': experiment.mass_loss_on,
         'outside_pulls': playback_report(experiment.outside, runs),
         'path': 'formation' if combined else 'yoshida',
         'note': note,

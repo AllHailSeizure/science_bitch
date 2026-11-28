@@ -71,6 +71,8 @@ sidereel --build experiments/heavier-star.json
 
 `--new` writes a blank experiment: dimensions, catalog bodies, opt-in physics, and the run. Newtonian gravity is what Sidereel uses. Edit that file, then `--build` checks it and writes `experiment.sidereel` beside it. The playback file holds the samples and duration for one run, or for each run of a sweep or an open scan. Preset files use that same `--build` command. `sidereel-cli` still renders a catalog system, and it accepts `--new` and `--build`.
 
+`physics.relativistic_corrections` adds pairwise 1PN and 2.5PN terms (perihelion precession and gravitational-wave inspiral) and stays off until set true. `physics.stellar_mass_loss` lets each star lose mass in an isotropic wind that leaves the system, and stays off until set true. A top-level gravity-model field is refused.
+
 ### Player
 
 **Live view** is the default. One top-down plot, no axis values, orbit trails as lines, duration underneath. The field is dark and the run label is gold. A three-dimensional recording uses that same view: the first two components, drawn as a top-down projection.
