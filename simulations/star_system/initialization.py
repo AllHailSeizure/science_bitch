@@ -183,7 +183,8 @@ def insert_body(prepared, body):
             raise ValueError('Insertion reference body is missing.')
         index = prepared.body_ids.index(body.reference_id)
         r, v = r+prepared.system.r[index], v+prepared.system.v[index]
-    system = System(np.append(old.masses, body.spec.mass), np.vstack((old.r, r)), np.vstack((old.v, v)), old.dt, old.time)
+    system = old.with_state(np.vstack((old.r, r)), np.vstack((old.v, v)), old.time,
+                            masses=np.append(old.masses, body.spec.mass))
     specs = prepared.body_specs + (body.spec,)
     ids = prepared.body_ids + (body.id,)
     references = prepared.reference_ids + (body.reference_id,)

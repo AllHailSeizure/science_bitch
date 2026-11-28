@@ -9,12 +9,12 @@ from simulations.star_system.experiment_file import main
 
 
 def _write(path, *, dimensions=2, bodies=('sun', 'earth', 'jupiter'), collision=None,
-           tides=False, drag=False, variable=None, years=0.01, scan=None, watch=(), custom=None):
+           tides=False, drag=False, outside=None, variable=None, years=0.01, scan=None, watch=(), custom=None):
     document = {
         'schema': 'sidereel-experiment-v1',
         'dimensions': dimensions,
         'bodies': {'catalog': list(bodies), 'new': custom},
-        'physics': {'collision': collision, 'tides': tides, 'gas_dust_drag': drag},
+        'physics': {'collision': collision, 'tides': tides, 'gas_dust_drag': drag, 'outside_pulls': outside},
         'experiment': {
             'independent_variable': variable,
             'fixed_duration': None if scan is not None else {'years': years},
@@ -51,8 +51,8 @@ def test_new_writes_every_section_blank_and_in_order(tmp_path):
     assert document['dimensions'] is None
     assert list(document['bodies']) == ['catalog', 'new']
     assert document['bodies'] == {'catalog': [], 'new': None}
-    assert list(document['physics']) == ['collision', 'tides', 'gas_dust_drag']
-    assert document['physics'] == {'collision': None, 'tides': None, 'gas_dust_drag': None}
+    assert list(document['physics']) == ['collision', 'tides', 'gas_dust_drag', 'outside_pulls']
+    assert document['physics'] == {'collision': None, 'tides': None, 'gas_dust_drag': None, 'outside_pulls': None}
     assert list(document['experiment']) == ['independent_variable', 'fixed_duration', 'open_scan', 'watch_for']
     assert document['experiment'] == {
         'independent_variable': None, 'fixed_duration': None, 'open_scan': None, 'watch_for': []}

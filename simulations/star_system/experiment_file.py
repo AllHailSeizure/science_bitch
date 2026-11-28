@@ -9,7 +9,9 @@ sweeps a variable or scans until a watched outcome.
 
 Custom bodies and collision mode ``ignore`` are reserved and refused.
 Collision rules, gas-dust drag, and tides, including a 3D state, run
-together on the combined formation path.
+together on the combined formation path. Outside pulls are an opt-in
+galactic tide plus optional seeded stellar flybys, off unless the physics
+section stores them, and they run only in three dimensions.
 """
 import argparse
 import json
@@ -28,6 +30,7 @@ from .data import CATALOG, PLANETS, STARS
 from .initialization import build_system
 from .model import DragPolicy, InitialBody, InitialSetup, PropertySource, TidalPolicy
 from .recording import Calculation, CalculationRequest
+from .outside_pulls import attach, parse_outside_pulls, playback_report, run_document
 from .tides import TideEvent
 
 EXPERIMENT_SCHEMA = 'sidereel-experiment-v1'
@@ -39,7 +42,7 @@ _FORMATION_COLLISION = ('stop_on_contact', 'perfect_merge', 'speed_angle')
 _EJECTION_AU = 10000.0
 PARAMETERS = ('distance', 'mass', 'speed')
 PARAMETER_UNITS = {'distance': 'AU', 'mass': 'solar_mass', 'speed': 'catalog_velocity'}
-WATCH_KINDS = ('capture', 'collision', 'merger', 'escape', 'graze', 'fragment', 'tide', 'close_encounter')
+WATCH_KINDS = ('capture', 'collision', 'merger', 'escape', 'graze', 'fragment', 'tide', 'close_encounter', 'flyby')
 _CONTACT_KINDS = {
     'merge': ('merger', 'collision'),
     'stellar_merger': ('merger', 'collision'),
@@ -52,7 +55,7 @@ _CONTACT_KINDS = {
 _MAX_RUNS = 100
 _DOCUMENT_KEYS = ('schema', 'dimensions', 'bodies', 'physics', 'experiment')
 _BODY_KEYS = ('catalog', 'new')
-_PHYSICS_KEYS = ('collision', 'tides', 'gas_dust_drag')
+_PHYSICS_KEYS = ('collision', 'tides', 'gas_dust_drag', 'outside_pulls')
 _EXPERIMENT_KEYS = ('independent_variable', 'fixed_duration', 'open_scan', 'watch_for')
 _SWEEP_KEYS = ('parameter', 'body', 'start', 'stop', 'step')
 _SCAN_VARIABLE_KEYS = ('parameter', 'body', 'start')
@@ -71,7 +74,7 @@ def empty_experiment():
         'schema': EXPERIMENT_SCHEMA,
         'dimensions': None,
         'bodies': {'catalog': [], 'new': None},
-        'physics': {'collision': None, 'tides': None, 'gas_dust_drag': None},
+        'physics': {'collision': None, 'tides': None, 'gas_dust_drag': None, 'outside_pulls': None},
         'experiment': {
             'independent_variable': None,
             'fixed_duration': None,
@@ -124,6 +127,7 @@ class Experiment:
     years: float | None
     scan: _Scan | None
     watch_for: tuple[str, ...]
+    outside: object | None = None
 
     @property
     def tides_on(self):
@@ -138,7 +142,12 @@ class Experiment:
             'schema': EXPERIMENT_SCHEMA,
             'dimensions': self.dimensions,
             'bodies': {'catalog': list(self.catalog), 'new': None},
-            'physics': {'collision': self.collision, 'tides': self.tides, 'gas_dust_drag': self.gas_dust_drag},
+            'physics': {
+                'collision': self.collision,
+                'tides': self.tides,
+                'gas_dust_drag': self.gas_dust_drag,
+                'outside_pulls': None if self.outside is None else self.outside.document(),
+            },
             'experiment': {
                 'independent_variable': None if self.variable is None else self.variable.document(),
                 'fixed_duration': None if self.years is None else {'years': self.years},
@@ -186,7 +195,7 @@ def build_experiment(experiment):
         runs = [_one_run(experiment, base, None, 0, experiment.years)]
         scan = {'mode': 'fixed', 'until': None, 'stopped_because': None}
         years = experiment.years
-    return {
+    playback = {
         'schema': PLAYBACK_SCHEMA,
         'encoding': 'json',
         'source_name': None,
@@ -196,12 +205,13 @@ def build_experiment(experiment):
             'Newtonian inverse-square gravity. '
             'Dimension 2 stores that motion in a plane.'
         ),
-        'physics': _physics_report(experiment),
+        'physics': _physics_report(experiment, runs),
         'experiment': experiment.document(),
         'requested_years': years,
         'scan': scan,
         'runs': runs,
     }
+    return playback
 
 
 def collect_watch_events(frames, watch, *, status, reason, user_collision, primary_id):
@@ -270,11 +280,14 @@ def _decode(document):
         raise ValueError(f'Unsupported experiment schema. Expected {EXPERIMENT_SCHEMA}.')
     dimensions = _dimensions(document['dimensions'])
     catalog = _bodies(document['bodies'])
-    collision, tides, drag = _physics(document['physics'])
+    collision, tides, drag, outside = _physics(document['physics'])
+    if outside is not None and dimensions != 3:
+        raise ValueError(
+            'Outside pulls are a three-dimensional galactic field for very wide orbits. Choose dimensions 3.')
     variable, years, scan, watch = _details(document['experiment'])
     if variable is not None and variable.body not in catalog:
         raise ValueError(f'independent_variable.body {variable.body!r} is not in bodies.catalog.')
-    return Experiment(dimensions, catalog, collision, tides, drag, variable, years, scan, watch)
+    return Experiment(dimensions, catalog, collision, tides, drag, variable, years, scan, watch, outside)
 
 
 def _dimensions(value):
@@ -340,7 +353,8 @@ def _physics(value):
                 'or applies perfect merge or speed-angle; it does not let bodies pass through.')
     tides = _optional_bool(value['tides'], 'physics.tides')
     drag = _optional_bool(value['gas_dust_drag'], 'physics.gas_dust_drag')
-    return collision, tides, drag
+    outside = parse_outside_pulls(value['outside_pulls'])
+    return collision, tides, drag, outside
 
 
 def _details(value):
@@ -516,31 +530,42 @@ def _with_mass(spec, mass):
     return replace(spec, mass=float(mass), sources=sources, provenance='User-edited ' + (spec.catalog_key or spec.name))
 
 
-def _integrate(setup, years):
+def _integrate(setup, years, outside, run_index):
     calculation = Calculation(setup, CalculationRequest(years, 1))
+    flybys = ()
+    if outside is not None:
+        flybys = attach(calculation.prepared.system, outside, run_index, years)
     while not calculation.done:
         calculation.advance(250)
-    return calculation.result
+    return calculation.result, flybys
 
 
-def _integrate_formation(setup, years):
+def _integrate_formation(setup, years, outside, run_index):
     from .formation import FormationExperiment
     experiment = FormationExperiment(setup, ejection_radius=_EJECTION_AU, sample_stride=1)
+    flybys = ()
+    if outside is not None:
+        flybys = attach(experiment.prepared.system, outside, run_index, years)
     experiment.integrate(years, finish=True)
-    return experiment
+    return experiment, flybys
 
 
 def _one_run(experiment, base, value, index, years):
     try:
         setup = _setup_for_value(experiment, base, value)
         if _uses_combined_path(experiment):
-            record = _formation_record(experiment, setup, years)
+            record, flybys = _formation_record(experiment, setup, years, index)
         else:
-            record = _yoshida_record(experiment, setup, years)
+            record, flybys = _yoshida_record(experiment, setup, years, index)
     except ValueError as exc:
         if value is None:
             raise
         raise ValueError(f'{experiment.variable.parameter}={value}: {exc}') from exc
+    if experiment.outside is not None:
+        record['outside_pulls'] = run_document(experiment.outside, index, flybys)
+        if 'flyby' in experiment.watch_for and experiment.outside.seed is not None:
+            record['events'].extend(flyby.watch_event() for flyby in flybys)
+            record['events'].sort(key=lambda item: (item['time'], item['kind'], tuple(item['bodies']), item['message']))
     variable = None
     if experiment.variable is not None:
         variable = {
@@ -554,8 +579,8 @@ def _one_run(experiment, base, value, index, years):
     return record
 
 
-def _yoshida_record(experiment, setup, years):
-    result = _integrate(setup, years)
+def _yoshida_record(experiment, setup, years, index):
+    result, flybys = _integrate(setup, years, experiment.outside, index)
     primary = next(body.id for body in setup.bodies if body.id in STARS)
     return {
         'status': result.status,
@@ -574,11 +599,11 @@ def _yoshida_record(experiment, setup, years):
         'events': collect_watch_events(
             result.frames, experiment.watch_for, status=result.status, reason=result.reason,
             user_collision=experiment.collision, primary_id=primary),
-    }
+    }, flybys
 
 
-def _formation_record(experiment, setup, years):
-    result = _integrate_formation(setup, years)
+def _formation_record(experiment, setup, years, index):
+    result, flybys = _integrate_formation(setup, years, experiment.outside, index)
     primary = next(body.id for body in setup.bodies if body.id in STARS)
     views = [_FormationView(sample) for sample in result.samples]
     wanted = set(experiment.watch_for)
@@ -600,7 +625,7 @@ def _formation_record(experiment, setup, years):
         'bodies': _formation_bodies(result.samples),
         'samples': [_formation_sample(sample, result.dt_max) for sample in result.samples],
         'events': events,
-    }
+    }, flybys
 
 
 def _sweep(experiment, base):
@@ -621,7 +646,7 @@ def _open_scan(experiment, base):
     return runs, stopped
 
 
-def _physics_report(experiment):
+def _physics_report(experiment, runs):
     mode = experiment.collision
     engine = _engine_mode(experiment)
     combined = _uses_combined_path(experiment)
@@ -645,11 +670,14 @@ def _physics_report(experiment):
             'and halts if a close encounter is unresolved.')
     if experiment.tides_on and not combined:
         note += ' Tides use close-pass-energy-dissipation-v1 on the fixed-step planar path.'
+    if experiment.outside is not None:
+        note += ' Outside pulls are on along the 3D path.'
     return {
         'collision': mode,
         'engine_collision_mode': engine,
         'tides': experiment.tides_on,
         'gas_dust_drag': experiment.drag_on if combined else False,
+        'outside_pulls': playback_report(experiment.outside, runs),
         'path': 'formation' if combined else 'yoshida',
         'note': note,
     }

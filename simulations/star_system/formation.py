@@ -1037,7 +1037,7 @@ class FormationExperiment:
                 f'delta_v has {len(change.delta_v)} components; this run stores {system.v.shape[1]}.')
         velocity = system.v.copy()
         velocity[index] = velocity[index]+np.asarray(change.delta_v, dtype=float)
-        updated = System(system.masses.copy(), system.r.copy(), velocity, system.dt, system.time)
+        updated = system.with_state(system.r.copy(), velocity, system.time, masses=system.masses.copy())
         self.prepared = replace(self.prepared, system=updated)
         stored = {'kind': 'velocity', 'body_id': change.body_id, 'delta_v': change.delta_v, 'note': change.note}
         self.provenance = {**self.provenance, 'parent_checkpoint_id': parent_id, 'change': stored,
@@ -1206,8 +1206,8 @@ class FormationExperiment:
     def _drop(self, ids):
         keep = [index for index, body_id in enumerate(self.prepared.body_ids) if body_id not in ids]
         system = self.prepared.system
-        updated = System(np.array(system.masses[keep], copy=True), np.array(system.r[keep], copy=True),
-                         np.array(system.v[keep], copy=True), system.dt, system.time)
+        updated = system.with_state(np.array(system.r[keep], copy=True), np.array(system.v[keep], copy=True),
+                                    system.time, masses=np.array(system.masses[keep], copy=True))
         reserves = tuple(CollisionEvent(system.time, 'reserve', (body_id,), None, (body_id,), 0., 0.,
                                         f'Reserved ejected id {body_id}.') for body_id in sorted(ids))
         self.prepared = PreparedSystem(

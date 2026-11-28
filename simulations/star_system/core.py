@@ -3,6 +3,8 @@
 Positive masses mutually interact; zero-mass test particles only receive gravity.
 Positions are planar (two components) or three-dimensional (three components).
 The overhead presets stay planar. A third component is an explicit initial state.
+``external_acceleration`` is an optional extra force. It stays unset unless a
+caller attaches one, so a plain system feels only its own bodies.
 
 Fixed-step Yoshida fourth-order composition of velocity Verlet.
 Steps stay fixed within each uninterrupted segment; insertion can begin a new
@@ -36,6 +38,18 @@ class System:
     v: np.ndarray
     dt: float
     time: float = 0.
+    external_acceleration: object = None
+
+    def with_state(self, r, v, time, masses=None, dt=None):
+        """A new system with this state that keeps an attached external acceleration."""
+        return System(
+            self.masses if masses is None else masses,
+            r,
+            v,
+            self.dt if dt is None else dt,
+            time,
+            self.external_acceleration,
+        )
 
     def accelerations(self, separation_floor=None):
         sources = np.flatnonzero(self.masses > 0)
@@ -43,11 +57,19 @@ class System:
         d2 = np.sum(delta**2, axis=-1)
         d2[sources, np.arange(len(sources))] = np.inf
         if separation_floor is None:
-            return G*np.sum(delta * (self.masses[None, sources]/(d2*np.sqrt(d2)))[:, :, None], axis=1)
-        # An unmodeled stellar overlap evaluates gravity at the contact separation
-        # so a fixed step can cross it. The direction stays the true separation.
-        dist = np.maximum(np.sqrt(d2), np.asarray(separation_floor, dtype=float)[:, sources])
-        return G*np.sum(delta * (self.masses[None, sources]/(dist*dist*dist))[:, :, None], axis=1)
+            acc = G*np.sum(delta * (self.masses[None, sources]/(d2*np.sqrt(d2)))[:, :, None], axis=1)
+        else:
+            # An unmodeled stellar overlap evaluates gravity at the contact separation
+            # so a fixed step can cross it. The direction stays the true separation.
+            dist = np.maximum(np.sqrt(d2), np.asarray(separation_floor, dtype=float)[:, sources])
+            acc = G*np.sum(delta * (self.masses[None, sources]/(dist*dist*dist))[:, :, None], axis=1)
+        extra = self.external_acceleration
+        if extra is None:
+            return acc
+        added = np.asarray(extra(self), dtype=float)
+        if added.shape != acc.shape or not np.isfinite(added).all():
+            raise ValueError('Outside pull produced a nonfinite or mis-shaped acceleration. The state was not advanced.')
+        return acc + added
 
     def resolution_limit(self, separation_floor=None):
         """Largest supported step from pair gravity and relative crossing time."""
@@ -80,7 +102,7 @@ class System:
             self.validate_step()
             # Commit only a whole validated Yoshida step. An intermediate failure
             # must not leave a partially kicked/drifted live or recorded state.
-            trial = System(self.masses, self.r.copy(), self.v.copy(), self.dt, self.time)
+            trial = self.with_state(self.r.copy(), self.v.copy(), self.time)
             for w in (_YOSHIDA_W1, _YOSHIDA_W0, _YOSHIDA_W1):
                 h = w*self.dt
                 trial.v += .5*h*trial.accelerations()
