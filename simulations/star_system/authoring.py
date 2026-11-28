@@ -31,6 +31,16 @@ class BodyEditor:
         initial = next((b for b in app.initial_setup.bodies if b.id == body_id), None)
         if initial is not None:
             self.spec = initial.spec
+        dimension = int(app.system.r.shape[1])
+        if initial is not None and len(initial.r) == 3:
+            self._height = float(initial.r[2])
+            self._vertical_speed = float(initial.v[2])
+        elif dimension == 3:
+            self._height = 0.
+            self._vertical_speed = 0.
+        else:
+            self._height = None
+            self._vertical_speed = None
         selected = app.prepared.body_ids[app.selected_index]
         reference = selected if app.prepared.body_specs[app.selected_index].mass > 0 else ''
         if initial is not None:
@@ -128,9 +138,15 @@ class BodyEditor:
             if not np.isfinite(distance) or distance <= 0:
                 raise ValueError('Separation must be finite and positive in km.')
             r, _ = self.vectors()
-            r = r/np.linalg.norm(r)*distance if np.linalg.norm(r) else np.array([distance,0.])
+            if np.linalg.norm(r):
+                r = r/np.linalg.norm(r)*distance
+            else:
+                r = np.zeros(2 if self._height is None else 3)
+                r[0] = distance
             for key,value in zip(('x','y'),r):
                 self.fields[key].set_val(f'{value:.16g}')
+            if self._height is not None and len(r) == 3:
+                self._height = float(r[2])
             self.error.set_text('')
         except ValueError as exc:
             self.error.set_text(fill(str(exc),width=49))
@@ -187,7 +203,8 @@ class BodyEditor:
     def reference_state(self):
         key=self.fields['reference'].text.strip()
         if key == 'world' and not self.is_moon:
-            return np.zeros(2),np.zeros(2),None
+            dimension = int(self.app.system.r.shape[1])
+            return np.zeros(dimension),np.zeros(dimension),None
         p=self.app.prepared
         if not key or key not in p.body_ids:
             if self.is_moon:
@@ -208,6 +225,9 @@ class BodyEditor:
             v=np.array([float(self.fields[k].text) for k in ('vx','vy')])
         except ValueError:
             raise ValueError('Position and velocity components must be numbers.') from None
+        if self._height is not None:
+            r=np.array([r[0], r[1], self._height])
+            v=np.array([v[0], v[1], self._vertical_speed])
         if not np.isfinite([r,v]).all():
             raise ValueError('Position and velocity must be finite.')
         return r,v
@@ -234,11 +254,15 @@ class BodyEditor:
                 separation.eventson=False
                 separation.set_val(distance_text)
                 separation.eventson=True
+            placed = ', '.join(f'{component:.6g}' for component in r)
+            moving = ', '.join(f'{component:.6g}' for component in v)
+            system_r = ', '.join(f'{component:.6g}' for component in (r+rr))
+            system_v = ', '.join(f'{component:.6g}' for component in (v+vv))
             text = (f'{label}: {reference} / '+('initial' if self.app.preparing else 'current')+' reference state\n'
-                    f'relative r = ({r[0]:.6g}, {r[1]:.6g}) AU / {distance:.6g} AU = {distance*AU_KM:,.7g} km\n'
-                    f'relative v = ({v[0]:.6g}, {v[1]:.6g}) AU/yr / speed {np.linalg.norm(v):.6g}\n'
-                    f'system r = ({(r+rr)[0]:.6g}, {(r+rr)[1]:.6g}) AU\n'
-                    f'system v = ({(v+vv)[0]:.6g}, {(v+vv)[1]:.6g}) AU/yr\n'
+                    f'relative r = ({placed}) AU / {distance:.6g} AU = {distance*AU_KM:,.7g} km\n'
+                    f'relative v = ({moving}) AU/yr / speed {np.linalg.norm(v):.6g}\n'
+                    f'system r = ({system_r}) AU\n'
+                    f'system v = ({system_v}) AU/yr\n'
                     f'Physical reference-relative inertial velocity; displayed axes only rotate.\n'
                     f'Click to place; drag velocity tip / linear {VELOCITY_PIXELS_PER_AUYR:g} px per AU/yr')
             if self.is_moon and self.fields['mass'].text.strip():
@@ -268,10 +292,12 @@ class BodyEditor:
             self.dragging=True
             return
         rr,_,_=self.reference_state()
-        world=self.app.scene.display_to_world((event.xdata,event.ydata))
-        r=world-rr
+        world=np.asarray(self.app.scene.display_to_world((event.xdata,event.ydata)), dtype=float)
+        r=world-np.asarray(rr, dtype=float)[:2]
         for key,value in zip(('x','y'),r):
             self.fields[key].set_val(f'{value:.16g}')
+        if self._height is not None:
+            self._height = 0.
         self.preview()
 
     def on_motion(self,event):
@@ -294,6 +320,8 @@ class BodyEditor:
             v=circular_relative_velocity(r,ref_mass,mass)
             for key,value in zip(('vx','vy'),v):
                 self.fields[key].set_val(f'{value:.16g}')
+            if self._vertical_speed is not None and len(v) == 3:
+                self._vertical_speed = float(v[2])
             self.error.set_text('Two-body prograde initial aid; no stability guarantee.')
         except ValueError as exc:
             self.error.set_text(fill(str(exc),width=49))

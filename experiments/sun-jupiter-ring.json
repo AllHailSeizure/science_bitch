@@ -1,7 +1,7 @@
 {
   "schema": "sidereel-preset-sweep-v1",
   "preset": "sun-jupiter-ring",
-  "dimensions": 2,
+  "dimensions": 3,
   "physics": {
     "collision": null,
     "tides": null,

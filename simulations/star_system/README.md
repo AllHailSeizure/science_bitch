@@ -46,7 +46,7 @@ The control board:
 | Run slider | Switch which recorded member is on screen. Hidden when the file has one run. It does not recalculate |
 | Compare | Live view and the inner/outer split show one chosen run on the left and another on the right. The left side follows the slider. Overlay stays a single plot of the equal-time runs |
 
-Preset files in `experiments/` are the current presets as controlled-variable sweeps. `--build` records them. Where an endpoint was left open, the file is one run at the value that preset already uses. The duration written in those files is a proposal: one year, and half a year for the capture flyby. Capture flyby sweeps approach speed and is an example in the same shape. It is not a menu preset, and it can show a temporary flyby.
+Preset files in `experiments/` are the current three-dimensional presets as controlled-variable sweeps. `--build` records them. The capture flyby example stays on the planar legacy setup. Where an endpoint was left open, the file is one run at the value that preset already uses. The duration written in those files is a proposal: one year, and half a year for the capture flyby. Capture flyby sweeps approach speed and is an example in the same shape. It is not a menu preset, and it can show a temporary flyby.
 
 | File | Swept value |
 | --- | --- |
@@ -95,8 +95,9 @@ Native file dialogs save and load the existing validated JSON format.
 
 **Focus selected and its orbiting bodies** zooms to a planet's local system;
 **Fit view** returns to the full system. Select a body to see L4/L5 guides and
-estimated orbit curves for its orbiting bodies. These templates use the
-illustrative planar circular initializer, not current astronomical ephemerides.
+estimated orbit curves for its orbiting bodies. These templates store three
+components, inclined by 0.05 rad, and the overhead view projects them. They
+are not current astronomical ephemerides.
 
 ## Legacy Matplotlib controller and headless export
 

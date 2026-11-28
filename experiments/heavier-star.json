@@ -1,6 +1,6 @@
 {
   "schema": "sidereel-experiment-v1",
-  "dimensions": 2,
+  "dimensions": 3,
   "bodies": {
     "catalog": [
       "sun",

@@ -1,7 +1,7 @@
 {
   "schema": "sidereel-preset-sweep-v1",
   "preset": "binary-star-merger",
-  "dimensions": 2,
+  "dimensions": 3,
   "physics": {
     "collision": "binary_star_merger",
     "tides": null,
@@ -10,7 +10,7 @@
   "experiment": {
     "independent_variable": null,
     "fixed_duration": {
-      "years": 0.005244899395525179
+      "years": 0.005244899395525181
     },
     "open_scan": null,
     "watch_for": [

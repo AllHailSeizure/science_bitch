@@ -22,7 +22,9 @@ def ring_setup():
     provenance['collision_assumption'] = (
         'none: no merge or bounce. A close encounter halts and keeps the last valid state.')
     provenance['model_assumption'] = (
-        'Unsoftened planar Newtonian gravity. Test particles feel massive bodies and attract nothing. '
+        'Unsoftened Newtonian gravity in three dimensions, with the disclosed preset inclination. '
+        'The rock ring lies in the plane through the Sun parallel to xy. '
+        'Test particles feel massive bodies and attract nothing. '
         'No scripted pull toward L4 or L5.')
     return replace(setup, name='Sun–Jupiter ring', provenance=provenance)
 
@@ -49,6 +51,10 @@ def assumptions_text(setup):
         lines.append('Rock velocities start as prograde circular two-body guesses about the Sun.')
     else:
         lines.append('Rocks keep the resolved vectors from the paired setup. The ring was not regenerated or recentered.')
+    if setup.bodies and len(setup.bodies[0].r) == 3:
+        lines.append(
+            'The setup is three-dimensional. The ring lies in the plane through the Sun parallel to xy. '
+            'The adaptive step is off unless selected. The overhead view projects onto the plane.')
     if setup.provenance.get('comparison_role') == 'without-jupiter':
         lines.append('Jupiter is omitted, so its gravity is absent. Nothing is substituted for it.')
     lines.append(
@@ -107,8 +113,9 @@ def rock_report(setup, prepared, selected_id, scene):
     jupiter_index = prepared.body_ids.index(jupiter)
     relative_v = prepared.system.v[index]-prepared.system.v[jupiter_index]
     separation = np.linalg.norm(prepared.system.r[index]-prepared.system.r[jupiter_index])
+    components = ', '.join(f'{component:.5g}' for component in relative_v)
     return (
         f'Jupiter separation: {separation:.6g} AU\n'
-        f'Jupiter-relative physical inertial v ({relative_v[0]:.5g}, {relative_v[1]:.5g}) AU/yr\n'
+        f'Jupiter-relative physical inertial v ({components}) AU/yr\n'
         f'{trail}\n'
         'Proximity or this displayed path is not permanent capture.')

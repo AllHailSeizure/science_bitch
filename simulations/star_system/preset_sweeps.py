@@ -7,7 +7,9 @@ are a starting point, not a locked grid. The capture flyby is an example in
 the same shape, not a menu preset.
 
 Building a file integrates with the existing solver and writes a
-``.sidereel`` playback. The player reads that file and does not integrate.
+``.sidereel`` playback. Current presets are the three-dimensional ones.
+The capture example stays on the planar legacy setup. The player reads
+the file, draws the horizontal projection, and does not integrate.
 """
 import math
 from dataclasses import dataclass, replace
@@ -127,7 +129,9 @@ def document(key):
         'capture-flyby', _variable('speed', 'tracer', 0.5, 2.0, 0.5), years,
         ('capture', 'collision', 'escape'),
         'A slow flyby near Jupiter with the Sun included, sweeping approach speed. '
-        'Not a menu preset, and not a claim that the tracer is captured for good.',
+        'Not a menu preset, and not a claim that the tracer is captured for good. '
+        'This example stays on the planar legacy setup.',
+        dimensions=2,
         )
 
 
@@ -172,8 +176,12 @@ def build_preset_playback(document_):
         'encoding': 'json',
         'source_name': None,
         'units': {'length': 'AU', 'mass': 'solar_mass', 'time': 'Julian_year', 'velocity': 'AU/Julian_year'},
-        'dimensions': 2,
-        'gravity_note': 'Newtonian inverse-square gravity. Dimension 2 stores that motion in a plane.',
+        'dimensions': len(base.bodies[0].r),
+        'gravity_note': (
+            'Newtonian inverse-square gravity. '
+            'A three-dimensional recording is drawn by dropping the third component.'
+            if len(base.bodies[0].r) == 3 else
+            'Newtonian inverse-square gravity. Dimension 2 stores that motion in a plane.'),
         'physics': {
             'collision': selected,
             'engine_collision_mode': runs[0]['collision_mode'],
@@ -199,7 +207,7 @@ def build_preset_playback(document_):
 def _experiment(bodies, variable, years):
     return {
         'schema': EXPERIMENT_SCHEMA,
-        'dimensions': 2,
+        'dimensions': 3,
         'bodies': {'catalog': list(bodies), 'new': None},
         'physics': {'collision': None, 'tides': None, 'gas_dust_drag': None},
         'experiment': {
@@ -211,11 +219,11 @@ def _experiment(bodies, variable, years):
     }
 
 
-def _preset_document(key, variable, years, watch, proposal, collision=None):
+def _preset_document(key, variable, years, watch, proposal, collision=None, dimensions=3):
     return {
         'schema': PRESET_SCHEMA,
         'preset': key,
-        'dimensions': 2,
+        'dimensions': dimensions,
         'physics': {'collision': collision, 'tides': None, 'gas_dust_drag': None},
         'experiment': {
             'independent_variable': variable,
@@ -244,8 +252,11 @@ def _checked(document_):
         raise ValueError(f'Unsupported preset schema. Expected {PRESET_SCHEMA}.')
     key = document_['preset']
     preset(key)
-    if document_['dimensions'] != 2:
-        raise ValueError('These preset files are planar. A 3D preset sweep is a separate change.')
+    expected_dimensions = 2 if key == 'capture-flyby' else 3
+    if document_['dimensions'] != expected_dimensions:
+        if key == 'capture-flyby':
+            raise ValueError('The capture example uses the planar legacy setup. dimensions must be 2.')
+        raise ValueError('This preset sweep uses the three-dimensional preset. dimensions must be 3.')
     physics = document_['physics']
     if type(physics) is not dict or set(physics) != set(_PHYSICS_KEYS):
         raise ValueError('Preset physics: expected collision, tides, and gas_dust_drag.')

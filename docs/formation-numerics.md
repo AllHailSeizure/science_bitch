@@ -2,13 +2,21 @@
 
 This note is the dimensionality, radius, and close-encounter schedule for late-stage formation. The code is `simulations.star_system.formation`. Gravity is the base. Collision handling, gas drag, and close-pass tides are separate switches on that path. Perfect merge remains the default collision rule and its remnant is unchanged. The inflated planar benchmark and its measurements stay in [formation-feasibility.md](formation-feasibility.md).
 
-The overhead view projects a three-dimensional sample onto the horizontal plane, using the first two components, for the 2D plots. It does not draw a perspective render of the third component. Tree gravity is not in this schedule.
+The overhead view projects three-dimensional motion by dropping the third component. A two-component sample stays planar and is not padded with a zero z. It does not draw a perspective render. Tree gravity is not in this schedule.
 
 ## Dimensionality
 
-Presets and the inflated benchmark store two components. Their setup documents keep the model id `planar-newtonian-point-mass-v1`. A body may instead be given three components. Every position and velocity in one setup must share that length. The spatial document uses `newtonian-point-mass-v1`. Populations and the moon period/600 aid stay planar and are rejected on a three-dimensional setup.
+Regular presets store three components. Each one is a rigid tilt of the circular placement by 0.05 rad (`PRESET_INCLINATION`) about the x axis, then a barycentric shift. The binary-star merger tilts its line of centers by the same angle about the y axis, so the fall stays head-on. The setup document uses `newtonian-point-mass-v1`. Provenance records dimensions 3, the inclination, and adaptive false. No regular preset stays planar. `make_system` and `legacy_setup` stay the planar circular helper for an explicit star-and-planet system. The inflated benchmark stays planar and keeps `planar-newtonian-point-mass-v1`.
 
-Gravity is the same unsoftened sum in either length. A planar vector is not given a silent zero. An inclined orbit has to be written with three components or it stays in the plane.
+A body may still be authored with two components. Every position and velocity in one setup must share that length. A planar vector is not given a silent zero. Loading a planar recording leaves it planar.
+
+A population on a three-dimensional setup is a ring, disk, or belt in the plane through the reference body parallel to xy. Relative z is 0, so the absolute z matches the reference. The saved generator id is `spatial-circular-population-v1`. A planar population keeps `planar-circular-population-v1` and the same two-component formula. The moon period/600 aid uses the separation only, so a three-component offset of the same length gets the same step. The circular velocity lies in the plane of the relative position and +z. When the position is parallel to z, that plane contains +x.
+
+The adaptive close-pass step can be selected on a preset or an experiment file. It is off unless `experiment.adaptive` is true or `InitialSetup.adaptive` is true. The floor is 1e-10 yr and the growth factor is 2, the same schedule as formation. On collision mode none, including test particles, the Yoshida calculator uses that schedule. If a macro still fails the Yoshida mid-step check, it is reduced by the same growth factor and retried, and the state is not advanced. A formation run passes the setup flag through. Catalog presets stay on collision mode none.
+
+The overhead view, the sweep overlay, and the inner/outer split draw the xy projection. They do not refuse a three-dimensional sample, and they do not add a component to a planar one.
+
+Gravity is the same unsoftened sum in either length. An inclined orbit is stored with three components.
 
 One checked fixture is a circular embryo at 1 AU, inclination 30 degrees, mass 1e-6 solar masses, and a fixed step of the two-body period / 600. After a quarter period the star-centric z coordinate was 0.5000 AU. The direction of the specific angular momentum moved by about 1.2e-6 degrees. Those digits are from this host and this fixture. They are not a long-term stability bound.
 
@@ -67,13 +75,13 @@ The clock is past 0.25 yr by less than one authored step. The smallest step stay
 
 ## Combined switches
 
-Gravity is the base. Collision handling, gas drag, and close-pass tides are separate switches on the same formation setup. Dimensions (2 or 3) and the adaptive step are separate from those switches. The default remains perfect merge, drag off, tides off, planar vectors, and a fixed step. Catalog presets stay on `collision_mode='none'` and the Yoshida step, which can still halt on an unresolved encounter. A formation run does not use that mode.
+Gravity is the base. Collision handling, gas drag, and close-pass tides are separate switches on the same formation setup. Dimensions (2 or 3) and the adaptive step are separate from those switches. The formation default remains perfect merge, drag off, tides off, planar vectors, and a fixed step. Catalog presets are three-dimensional with the disclosed inclination. They stay on `collision_mode='none'` and the Yoshida step, which can still halt on an unresolved encounter, and the adaptive step stays off unless selected. A formation run does not use that mode.
 
 A formation run accepts `ignore`, `stop_on_contact`, `perfect_merge`, and `speed_angle`. Ignore lets an overlap continue with no remnant. Stop on contact is the only collision choice that ends the run, and that end is status `stopped`, not a numerical halt. Perfect merge and the speed-angle rule are the stored collision models. A contact does not stop the run unless stop on contact is selected. Stellar contact is logged as unmodeled and the requested duration still completes, including on a gas-bearing run. The standalone gas-and-dust prototype still halts on stellar contact; that prototype is unchanged.
 
 Drag, when enabled, uses the existing quadratic body law and one of the existing annular disks (`annular`, `envelope`, or `giant`). The disk is evaluated at cylindrical radius. Height only multiplies the midplane density by the isothermal Gaussian. There is no vertical gas velocity and no new disk method. The annular fluid is subcycled at the existing Courant limit inside the macro step. If a subcycle would empty a zone, that piece is held and the gravity run continues. Dust swarms, grain growth, and the swarm-to-body rule stay in the gas-and-dust prototype. Bodies on this path use quadratic drag only.
 
-Tides, when enabled, use `close-pass-energy-dissipation-v1`. On a contact-solver step the kick applies only to a pair that does not become a contact in that step. A contacting pair is left to the collision rule. In three dimensions the recorded angular-momentum change is a magnitude. Planar runs keep the signed z component. The Yoshida path (`collision_mode='none'`) is unchanged.
+Tides, when enabled, use `close-pass-energy-dissipation-v1`. On a contact-solver step the kick applies only to a pair that does not become a contact in that step. A contacting pair is left to the collision rule. In three dimensions the recorded angular-momentum change is a magnitude. Planar runs keep the signed z component. The Yoshida path (`collision_mode='none'`) keeps its contact behavior. Selecting the adaptive step changes only the macro size, with the same floor and growth.
 
 The combination in use is `FormationExperiment.combination()` and the switches line in `describe()`. Outcome claims about a longer-lived capture are made only for a run that has the relevant switch on. Checkpoints store `tides` and `drag` only when that switch is on. A checkpoint without those fields still loads. Parcel ids, checkpoints, and a branched velocity change follow the same formation files. A spatial adaptive checkpoint stores `dimensions`, `adaptive`, `dt_max`, and `dt_min`. A planar fixed-step checkpoint does not gain those fields.
 

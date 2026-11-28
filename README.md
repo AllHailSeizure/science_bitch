@@ -1,6 +1,6 @@
 # Sidereel
 
-A planar N-body sandbox. Build a system, watch gravity work, keep the picture.
+A Newtonian N-body sandbox. Regular starting experiments integrate in three dimensions, and the overhead view projects that motion onto the plane. Build a system, watch gravity work, keep the picture.
 
 ![Sun, Earth, and Jupiter through one year](docs/orbit.gif)
 
@@ -8,7 +8,7 @@ One year of the Sun, Earth, and Jupiter, rendered by `sidereel-cli`.
 
 ## Features
 
-- Unsoftened Newtonian gravity in the plane. Masses pull on each other. Test particles only fall.
+- Unsoftened Newtonian gravity. Regular presets store three components. An explicit star-and-planet system can stay planar. Masses pull on each other. Test particles only fall.
 - A fixed-step Yoshida integrator. A close encounter halts the run and keeps the last good state.
 - A player for a finished `.sidereel` file. Live view is the default: one top-down plot, no axis values, orbit trails as lines, and the duration underneath. Overlay and the inner/outer split view (name TBD) are optional. A three-dimensional recording is the same top-down projection.
 - The same current presets as sweep files under `experiments/`. `sidereel --build` records them. The player does not calculate.
@@ -89,7 +89,7 @@ The control board sits under the plot:
 | Run slider | Switch which recorded member is on screen. Hidden when the file has one run. Moving it does not recalculate |
 | Compare | Live view and the inner/outer split show one chosen run on the left and another on the right. The left side follows the slider. Overlay stays one plot of the equal-time runs |
 
-The shipped preset files are one controlled variable each. Where a range was left open, the file is a single run at the value that preset already uses. The duration written in those files is a proposal: one year, and half a year for the capture flyby.
+The shipped preset files are one controlled variable each, and they follow the three-dimensional presets. The capture flyby example stays on the planar legacy setup. Where a range was left open, the file is a single run at the value that preset already uses. The duration written in those files is a proposal: one year, and half a year for the capture flyby.
 
 | File | Swept value |
 | --- | --- |

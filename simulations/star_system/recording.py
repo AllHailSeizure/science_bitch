@@ -8,7 +8,7 @@ from types import MappingProxyType
 
 import numpy as np
 
-from .core import System
+from .core import ADAPTIVE_DT_MIN, ADAPTIVE_GROWTH, System, adaptive_floor_reason, adaptive_macro_step
 from .history import StateFrame
 from .initialization import build_system
 from .persistence import SOLVER_BUILD, _current_environment, setup_digest
@@ -115,6 +115,11 @@ class Calculation:
         self.request = request
         self.source_setup = setup
         self.prepared = build_system(setup)
+        self.adaptive = setup.adaptive
+        self.dt_max = float(self.prepared.system.dt)
+        # A Yoshida macro that fails its own mid-step check is retried smaller.
+        # The cap climbs back through the shared growth rule after a step lands.
+        self._adaptive_cap = self.dt_max
         self.source_name, self.setup_digest = setup.name, setup_digest(setup)
         # The machine and build that integrate this run. Distinct from the
         # source document's environment and from setup_digest.
@@ -145,6 +150,10 @@ class Calculation:
 
     @property
     def progress(self):
+        if self.adaptive:
+            if self.status == 'complete':
+                return 1.0
+            return min(1.0, float(self.prepared.system.time)/self.request.duration_years)
         return self.completed_steps/self.total_steps
 
     @property
@@ -174,11 +183,32 @@ class Calculation:
         deadline = None if budget_seconds is None else time.perf_counter()+budget_seconds
         advanced = 0
         while not self.done and advanced < max_steps:
+            previous_dt = float(self.prepared.system.dt)
+            if self.adaptive:
+                scheduled = adaptive_macro_step(
+                    previous_dt, min(self.dt_max, self._adaptive_cap), ADAPTIVE_DT_MIN,
+                    self.prepared.system.resolution_limit())
+                if scheduled is None:
+                    self._finish('halted', adaptive_floor_reason(
+                        self.prepared.system.resolution_limit(), ADAPTIVE_DT_MIN))
+                    break
+                self.prepared.system.dt = scheduled
             try:
                 outcome = advance_prepared(self.prepared)
             except ValueError as exc:
+                failed = float(self.prepared.system.dt)
+                self.prepared.system.dt = previous_dt
+                if self.adaptive and 'unresolved' in str(exc):
+                    self._adaptive_cap = min(self._adaptive_cap, failed/ADAPTIVE_GROWTH)
+                    if self._adaptive_cap < ADAPTIVE_DT_MIN:
+                        self._finish('halted', adaptive_floor_reason(
+                            self.prepared.system.resolution_limit(), ADAPTIVE_DT_MIN))
+                        break
+                    continue
                 self._finish('halted', str(exc))
                 break
+            if self.adaptive:
+                self._adaptive_cap = self.dt_max
             candidate = StateFrame.capture(outcome.prepared)
             changed = candidate.events != self._checkpoint.events or candidate.body_ids != self._checkpoint.body_ids
             same_metadata = all(getattr(candidate, name) is getattr(self._checkpoint, name)
@@ -213,7 +243,13 @@ class Calculation:
             if sampled:
                 self._frames.append(candidate)
                 self._bytes += candidate_bytes
-            if self.completed_steps == self.total_steps:
+            reached = self.completed_steps == self.total_steps
+            if self.adaptive:
+                target = self.request.duration_years
+                reached = self.prepared.system.time >= target-1e-12*max(1., abs(target))
+            if reached:
+                if self.adaptive:
+                    self.resolved_end_time = float(self.prepared.system.time)
                 self._finish('complete')
             if deadline is not None and time.perf_counter() >= deadline:
                 break

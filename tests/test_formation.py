@@ -492,10 +492,12 @@ def test_planar_and_spatial_setup_documents_disclose_dimension(tmp_path):
 def test_overhead_view_projects_a_spatial_sample():
     experiment = FormationExperiment(make_inclined_circular_setup(), ejection_radius=5.)
     frame = StateFrame.capture(experiment.prepared)
+    original = frame.r.copy()
+    shown = frame_transform(frame, 'world').positions(frame.r)
+    assert shown.shape == (len(frame.r), 2)
+    np.testing.assert_allclose(shown, frame.r[:, :2])
+    np.testing.assert_array_equal(frame.r, original)
     assert frame.r.shape[1] == 3
-    projected = frame_transform(frame, 'world').positions(frame.r)
-    assert projected.shape == (len(frame.r), 2)
-    np.testing.assert_allclose(projected, frame.r[:, :2])
 
 
 def test_physical_probe_reports_a_short_rocky_run():

@@ -31,6 +31,7 @@ def test_shipped_files_match_the_cli_writer(tmp_path):
 
 def test_catalog_presets_load_as_experiment_files_without_integrating():
     solar = load_experiment(ROOT / 'experiments' / 'solar-system.json')
+    assert solar.dimensions == 3
     assert solar.variable.values(5) == (1.0,)
     assert solar.catalog == ('sun', 'mercury', 'venus', 'earth', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune')
     heavier = load_experiment(ROOT / 'experiments' / 'heavier-star.json')
@@ -67,7 +68,9 @@ def test_earth_moon_and_binary_merger_keep_their_shapes(tmp_path):
     moon['experiment'] = dict(moon['experiment'], fixed_duration={'years': 0.01})
     playback = build_preset_playback(moon)
     assert 'gravity_model' not in playback
+    assert playback['dimensions'] == 3
     run = playback['runs'][0]
+    assert len(run['samples'][0]['r'][0]) == 3
     assert run['variable']['value'] == pytest.approx(CATALOG['earth'].mass)
     assert run['collision_mode'] == 'none'
     assert run['base_setup_digest'] == playback['base_setup']['digest']

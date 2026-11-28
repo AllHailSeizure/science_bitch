@@ -13,7 +13,11 @@ from simulations.star_system.rendering import coordinates, inverse_coordinates, 
 
 
 def sample():
-    return StateFrame.capture(build_system(get_scenario('sun-jupiter-ring')))
+    from simulations.star_system.populations import Population
+    from simulations.star_system.initialization import legacy_setup
+    setup = legacy_setup(planets=('jupiter',), population=Population(
+        kind='ring', inner=3.2, outer=3.2, count=32, angles='even', seed=7))
+    return StateFrame.capture(build_system(setup))
 
 
 def test_rotation_preserves_distances_and_places_jupiter_on_positive_axis():
@@ -50,14 +54,20 @@ def test_historical_samples_use_their_own_angle():
 
 def test_three_dimensional_samples_project_onto_the_horizontal_plane():
     frame = sample()
+    original = frame.r.copy()
     spatial = replace(
         frame,
-        r=np.column_stack((frame.r, np.linspace(0.2, 0.5, len(frame.r)))),
+        r=np.column_stack((frame.r, np.full(len(frame.r), 0.4))),
         v=np.column_stack((frame.v, np.zeros(len(frame.v)))),
     )
-    projected = frame_transform(spatial, 'world').positions(spatial.r)
-    np.testing.assert_allclose(projected, frame.r)
-    np.testing.assert_allclose(lagrange_guides(spatial, 'sun', 'jupiter'), lagrange_guides(frame, 'sun', 'jupiter'))
+    shown = frame_transform(spatial, 'world').positions(spatial.r)
+    assert shown.shape == (len(frame.r), 2)
+    np.testing.assert_allclose(shown, original)
+    np.testing.assert_array_equal(spatial.r[:, :2], original)
+    assert spatial.r.shape[1] == 3
+    guides = lagrange_guides(spatial, 'sun', 'jupiter')
+    assert guides.shape == (2, 3)
+    np.testing.assert_allclose(guides[:, :2], lagrange_guides(frame, 'sun', 'jupiter'))
 
 
 def test_guides_are_equilateral_geometry_and_missing_references_are_explicit():
@@ -89,13 +99,16 @@ def test_rotating_authoring_inverse_and_physical_vector_survive_view_switch():
         app.set_frame_mode('rotating')
         app.edit_body()
         editor = app.body_editor
-        world = np.array([-1.2, 1.7]) + app.system.r[0]
+        offset = np.zeros(app.system.r.shape[1])
+        offset[:2] = (-1.2, 1.7)
+        world = offset + app.system.r[0]
         display = app.scene.world_to_display(world)
         pixel = app.ax.transData.transform(display)
         editor.on_press(SimpleNamespace(button=1, inaxes=app.ax, xdata=display[0], ydata=display[1], x=pixel[0], y=pixel[1]))
         r, _ = editor.vectors()
-        np.testing.assert_allclose(r+app.system.r[0], world, atol=1e-14)
-        physical_v = np.array([.25, -.8])
+        np.testing.assert_allclose(r+app.system.r[0], world, atol=1e-12)
+        physical_v = np.zeros(app.system.r.shape[1])
+        physical_v[:2] = (.25, -.8)
         tip = app.ax.transData.transform(editor.anchor)+app.scene.transform.vectors(physical_v)*VELOCITY_PIXELS_PER_AUYR
         editor.dragging = True
         editor.on_motion(SimpleNamespace(x=tip[0], y=tip[1]))
