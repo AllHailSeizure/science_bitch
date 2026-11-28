@@ -1,4 +1,4 @@
-"""Default: Qt desktop starting menu. Explicit flags: legacy Matplotlib GUI or headless PNG (--output)."""
+"""Default: play a .sidereel file, or open the player. Explicit flags: legacy Matplotlib GUI or headless PNG (--output)."""
 import argparse
 import math
 import sys
@@ -13,9 +13,9 @@ def main(argv=None):
     from .experiment_file import is_experiment_command, main as experiment_main
     if is_experiment_command(arguments):
         return experiment_main(arguments)
-    if not arguments:
+    if not arguments or (len(arguments) == 1 and not arguments[0].startswith('-')):
         from .desktop import main as desktop_main
-        return desktop_main()
+        return desktop_main() if not arguments else desktop_main(arguments)
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument('--star', choices=STARS, default='sun')
     parser.add_argument('--load', type=Path, help='Load a versioned starting setup JSON')

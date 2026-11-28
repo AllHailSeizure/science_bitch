@@ -40,23 +40,50 @@ from .stellar_merger import outcome_text
 from .templates import EXPERIMENTS, get_experiment, place_body, remove_body, update_body
 
 
+def _overhead_vector(vector, dimension, height=0.):
+    """Match a scene click to the system dimension.
+
+    An overhead click names x and y. On a three-dimensional system the stored
+    height is the value passed in, which is the reference height for a new
+    position and zero for a manual velocity. This is scene authoring. Loading
+    a planar recording does not come through here and is not padded.
+    """
+    array = np.asarray(vector, dtype=float).reshape(-1)
+    if array.shape == (dimension,):
+        return array
+    if array.shape == (2,) and dimension == 3:
+        return np.array([float(array[0]), float(array[1]), float(height)])
+    raise ValueError('Placement needs a position with the same number of components as the system.')
+
+
 def live_draft_body(prepared, spec, world, reference_id, *, circular, velocity, body_id):
     """World position in AU. Stored velocity stays relative until insertion adds the reference once."""
     if reference_id is not None and reference_id not in prepared.body_ids:
         raise ValueError('Choose an existing body to place this relative to.')
+    dimension = int(prepared.system.r.shape[1])
     parent = prepared.body_ids.index(reference_id) if reference_id is not None else None
-    relative = np.asarray(world, dtype=float) - (prepared.system.r[parent] if parent is not None else 0.)
-    if relative.shape != (2,) or not np.isfinite(relative).all():
+    parent_r = prepared.system.r[parent] if parent is not None else np.zeros(dimension)
+    try:
+        world = _overhead_vector(world, dimension, parent_r[2] if dimension == 3 else 0.)
+    except ValueError:
+        raise ValueError('Placement needs a finite position in the scene.') from None
+    relative = world - parent_r
+    if relative.shape != (dimension,) or not np.isfinite(relative).all():
         raise ValueError('Placement needs a finite position in the scene.')
     if circular:
         if parent is None:
             raise ValueError('Choose a body for the initial circular orbit.')
         velocity = circular_relative_velocity(relative, prepared.system.masses[parent], spec.mass)
+    else:
+        try:
+            velocity = _overhead_vector(velocity, dimension, 0.)
+        except ValueError:
+            raise ValueError(f'Velocity must be {dimension} finite numbers (AU/year).') from None
     velocity = np.asarray(velocity, dtype=float)
-    if velocity.shape != (2,) or not np.isfinite(velocity).all():
-        raise ValueError('Velocity must be two finite numbers (AU/year).')
-    return InitialBody(body_id, spec, (float(relative[0]), float(relative[1])),
-                       (float(velocity[0]), float(velocity[1])), reference_id)
+    if velocity.shape != (dimension,) or not np.isfinite(velocity).all():
+        raise ValueError(f'Velocity must be {dimension} finite numbers (AU/year).')
+    return InitialBody(body_id, spec, tuple(float(component) for component in relative),
+                       tuple(float(component) for component in velocity), reference_id)
 
 STYLE = """
 QWidget { background: #0d1725; color: #e7eff7; font-family: 'DejaVu Sans'; font-size: 13px; }
@@ -874,9 +901,10 @@ class Observatory(QMainWindow):
         world = np.asarray(draft.r, dtype=float)+(self.prepared.system.r[parent] if parent is not None else 0.)
         anchor = np.asarray(self.scene.world_to_display(world), dtype=float)
         velocity = np.asarray(self._live_preview_v if self._live_preview_v is not None else draft.v, dtype=float)
-        tip = anchor if np.linalg.norm(velocity) == 0 else self.ax.transData.inverted().transform(
-            self.ax.transData.transform(anchor)+velocity*12.)
-        if np.linalg.norm(velocity) > 0:
+        shown = velocity[:2] if velocity.shape[-1] == 3 else velocity
+        tip = anchor if np.linalg.norm(shown) == 0 else self.ax.transData.inverted().transform(
+            self.ax.transData.transform(anchor)+shown*12.)
+        if np.linalg.norm(shown) > 0:
             arrow = FancyArrowPatch(anchor, tip, arrowstyle='->', mutation_scale=14, color=ACCENT, linewidth=1.6, zorder=21)
             self.ax.add_patch(arrow)
             self.velocity_artists.append(arrow)
@@ -896,9 +924,10 @@ class Observatory(QMainWindow):
                if self.pending_body and self.pending_body.get('circular') and self._live_preview_v is None
                else 'The arrow is the velocity that will be inserted. Gravity is not held to it afterward.')
         speed = float(np.linalg.norm(velocity))*AUYR_TO_KMS
+        vertical = f', vz {velocity[2]:.6g} AU/yr' if velocity.shape[-1] == 3 else ''
         self.catalog.draft_readout.setText(
             f'{frame}\n'
-            f'vx {velocity[0]:.6g} AU/yr, vy {velocity[1]:.6g} AU/yr\n'
+            f'vx {velocity[0]:.6g} AU/yr, vy {velocity[1]:.6g} AU/yr{vertical}\n'
             f'Speed {speed:.6g} km/s. A longer arrow is a higher speed.\n{aid}')
 
     def apply_setup(self, setup, *, preserve_definition=False):
@@ -937,9 +966,10 @@ class Observatory(QMainWindow):
                     'No other body is substituted, and the moon is not held in place.')
         parent = self.prepared.body_ids.index(relative.reference_id)
         position = self.prepared.system.r[parent]
+        components = ', '.join(f'{component:.4g}' for component in position)
         return (f'Parent: {relative.reference_name} [{relative.reference_id}]\n'
                 f'Current separation: {relative.separation*AU_KM:,.6g} km ({relative.separation:.6g} AU)\n'
-                f'Parent system position: ({position[0]:.4g}, {position[1]:.4g}) AU\n'
+                f'Parent system position: ({components}) AU\n'
                 'Separation is the current center-to-center distance. The parent does not pin the moon.')
 
     def begin_placement(self, payload):
@@ -959,9 +989,10 @@ class Observatory(QMainWindow):
             index = self._moon_parent_index(payload)
             parent = self.prepared.body_specs[index]
             position = self.prepared.system.r[index]
+            components = ', '.join(f'{component:.4g}' for component in position)
             prompt = (f'Click to choose the direction of {payload["spec"].name} from {parent.name}. '
                       f'Distance stays {distance:,.6g} km from {parent.name}\'s center, '
-                      f'not {parent.name}\'s system position ({position[0]:.4g}, {position[1]:.4g}) AU. '
+                      f'not {parent.name}\'s system position ({components}) AU. '
                       'Escape cancels.')
         elif payload['circular'] and payload['reference_id'] is None:
             self.tell('Choose a body for the initial orbit, or choose manual starting motion.')
@@ -1008,7 +1039,16 @@ class Observatory(QMainWindow):
         if not self.pending_body:
             return
         payload = self.pending_body
-        world = np.asarray(world, dtype=float)
+        dimension = int(self.prepared.system.r.shape[1])
+        reference = payload.get('reference_id')
+        height = 0.
+        if dimension == 3 and reference in self.prepared.body_ids:
+            height = float(self.prepared.system.r[self.prepared.body_ids.index(reference), 2])
+        try:
+            world = _overhead_vector(world, dimension, height)
+        except ValueError as exc:
+            self.tell(str(exc)+' Choose another position, or Escape to cancel.')
+            return
         if payload['spec'].kind == 'moon':
             index = self._moon_parent_index(payload)
             if index is None:
@@ -1017,15 +1057,20 @@ class Observatory(QMainWindow):
             parent_r = self.prepared.system.r[index]
             direction = world-parent_r
             norm = np.linalg.norm(direction)
-            direction = direction/norm if norm > 0 else np.array([1., 0.])
+            fallback = np.zeros(dimension)
+            fallback[0] = 1.
+            direction = direction/norm if norm > 0 else fallback
             world = parent_r+direction*(payload['distance_km']/AU_KM)
         if not self.editing:
             self._place_live(world, payload)
             return
         try:
             old_dt = self.setup.dt
+            velocity = payload['velocity']
+            if not payload['circular']:
+                velocity = _overhead_vector(velocity, dimension, 0.)
             candidate = place_body(self.setup, payload['spec'], world, payload['reference_id'],
-                circular=payload['circular'], velocity=payload['velocity'])
+                circular=payload['circular'], velocity=velocity)
             self.selected_id = candidate.bodies[-1].id
             self.pending_body = None
             self.preview_marker.set_data([], [])
@@ -1581,9 +1626,13 @@ class Observatory(QMainWindow):
             return
         if commit:
             self._live_preview_v = None
-            self.live_draft = replace(self.live_draft, v=(float(relative[0]), float(relative[1])))
+            if len(self.live_draft.v) == 3:
+                stored = (float(relative[0]), float(relative[1]), float(self.live_draft.v[2]))
+            else:
+                stored = (float(relative[0]), float(relative[1]))
+            self.live_draft = replace(self.live_draft, v=stored)
             if self.pending_body is not None:
-                self.pending_body = {**self.pending_body, 'circular': False, 'velocity': np.asarray(relative, dtype=float)}
+                self.pending_body = {**self.pending_body, 'circular': False, 'velocity': np.asarray(stored, dtype=float)}
         else:
             self._live_preview_v = relative
 
@@ -1670,7 +1719,13 @@ class Observatory(QMainWindow):
         parent = self.prepared.body_ids.index(reference) if reference in self.prepared.body_ids else None
         displayed = (tip-self.ax.transData.transform(self.scene.positions[i]))/12
         velocity = np.asarray(self.scene.transform.inverse_vectors(displayed), dtype=float)
-        world_velocity = velocity+(self.prepared.system.v[parent] if parent is not None else 0)
+        parent_v = self.prepared.system.v[parent] if parent is not None else np.zeros(self.prepared.system.v.shape[1])
+        current = self.prepared.system.v[i]-parent_v
+        if current.shape[0] == 3:
+            relative_velocity = np.array([float(velocity[0]), float(velocity[1]), float(current[2])])
+        else:
+            relative_velocity = velocity
+        world_velocity = relative_velocity+parent_v
         try:
             self.apply_setup(update_body(self.setup, key, velocity=world_velocity))
             self.tell('Starting velocity updated. Undo edit restores the previous value.')
@@ -1730,9 +1785,5 @@ def main(argv=None):
     from .experiment_file import is_experiment_command, main as experiment_main
     if is_experiment_command(arguments):
         return experiment_main(arguments)
-    application = QApplication.instance() or QApplication(sys.argv if argv is None else [sys.argv[0], *arguments])
-    application.setApplicationName('Sidereel')
-    application.setOrganizationName('Sidereel')
-    window = Observatory()
-    window.show()
-    return application.exec()
+    from .player_window import launch
+    return launch(arguments)

@@ -1,8 +1,12 @@
 """Resolve authored reference vectors once; never recenter a live trajectory."""
 from dataclasses import dataclass, replace
+import math
 import numpy as np
 from .core import System, G, kepler_period
 from .model import CONTACT_SOLVER_MODES, BodySpec, InitialBody, InitialSetup
+
+# Rigid tilt of a regular preset about the x axis. Not a silent z=0 pad.
+PRESET_INCLINATION = 0.05
 
 @dataclass(frozen=True)
 class IntegrationEvent:
@@ -41,18 +45,63 @@ class PreparedSystem:
         if len(self.reference_ids) != len(self.body_ids):
             raise ValueError('Initial reference metadata must align with body identities.')
 
+def _tilt_about_x(rows, inclination):
+    rows = np.asarray(rows, dtype=float)
+    cosine, sine = math.cos(inclination), math.sin(inclination)
+    return np.column_stack((rows[:, 0], rows[:, 1]*cosine, rows[:, 1]*sine))
+
+
+def with_preset_inclination(setup, inclination=PRESET_INCLINATION):
+    """Rotate a planar setup into one inclined plane and return that setup.
+
+    Callers pass a planar system they intend to store as three-dimensional.
+    A setup that is already three-dimensional is returned unchanged, so this
+    is not applied when a recording is loaded. Inclination must be positive:
+    a zero tilt would be a silent z=0 pad.
+    """
+    if not math.isfinite(inclination) or not 0 < inclination <= math.pi/2:
+        raise ValueError('Preset inclination must be finite and in (0, pi/2] radians.')
+    lengths = {len(body.r) for body in setup.bodies} | {len(body.v) for body in setup.bodies}
+    if lengths == {3}:
+        return setup
+    if lengths != {2}:
+        raise ValueError('Every position and velocity must share two components before the preset tilt.')
+    weights = np.array([float(body.spec.mass) for body in setup.bodies], dtype=float)
+    if not np.isfinite(weights).all() or np.any(weights < 0) or float(weights.sum()) <= 0:
+        raise ValueError('An inclined preset needs finite nonnegative masses and a positive total mass.')
+    positions = _tilt_about_x([body.r for body in setup.bodies], inclination)
+    velocities = _tilt_about_x([body.v for body in setup.bodies], inclination)
+    positions -= np.average(positions, axis=0, weights=weights)
+    velocities -= np.average(velocities, axis=0, weights=weights)
+    bodies = tuple(replace(body,
+        r=tuple(float(component) for component in position),
+        v=tuple(float(component) for component in velocity))
+        for body, position, velocity in zip(setup.bodies, positions, velocities))
+    return replace(setup, bodies=bodies)
+
+
 def circular_relative_velocity(relative_position, reference_mass, body_mass):
     r = np.asarray(relative_position, dtype=float)
-    if r.shape != (2,) or not np.isfinite(r).all() or np.linalg.norm(r) == 0:
+    if r.shape not in ((2,), (3,)) or not np.isfinite(r).all() or np.linalg.norm(r) == 0:
         raise ValueError('Circular aid needs a finite nonzero relative position.')
     if reference_mass is None or body_mass is None or not np.isfinite([reference_mass, body_mass]).all() or reference_mass <= 0 or body_mass < 0:
         raise ValueError('Circular aid needs a positive reference mass and known body mass.')
     distance = np.linalg.norm(r)
-    return np.array([-r[1], r[0]])/distance*np.sqrt(G*(reference_mass+body_mass)/distance)
+    speed = np.sqrt(G*(reference_mass+body_mass)/distance)
+    if r.shape == (2,):
+        return np.array([-r[1], r[0]])/distance*speed
+    tangent = np.cross(np.array([0., 0., 1.]), r)
+    if np.linalg.norm(tangent) == 0:
+        tangent = np.cross(np.array([1., 0., 0.]), r)
+    return tangent/np.linalg.norm(tangent)*speed
 
 
 def recommended_moon_step(relative_position, reference_mass, body_mass):
-    """Circular two-body period / 600, an initial accuracy aid, not binding."""
+    """Circular two-body period / 600 from the separation, an initial aid, not binding.
+
+    The period uses the length of the offset. A three-component offset of the
+    same length gets the same step as the planar one.
+    """
     # Share the aid's finite-vector/mass validation and unit convention.
     circular_relative_velocity(relative_position, reference_mass, body_mass)
     step = kepler_period(np.linalg.norm(relative_position), G*(reference_mass+body_mass))/600
@@ -73,8 +122,6 @@ def _moon_step_limit(system, ids, specs, references, indices=None):
         if specs[parent].kind != 'planet' or not specs[parent].mass or specs[parent].mass <= 0:
             raise ValueError('A moon reference must be a planet with known positive mass.')
         relative = system.r[i]-system.r[parent]
-        if relative.shape != (2,):
-            raise ValueError('Moon timestep aids are planar. A three-dimensional moon is not given a circular period/600 step.')
         limit = min(limit, recommended_moon_step(relative, system.masses[parent], system.masses[i]))
     return limit
 
@@ -109,9 +156,7 @@ def _shared_dimension(setup):
 def build_system(setup):
     from .body_detail import attach, require_runnable
     require_runnable(setup)
-    dimension = _shared_dimension(setup)
-    if setup.population is not None and dimension == 3:
-        raise ValueError('Populations are planar. A three-dimensional setup cannot add a planar particle ring.')
+    _shared_dimension(setup)
     _validate_particles(tuple(body.spec for body in setup.bodies))
     bodies = {body.id: body for body in setup.bodies}
     if len(bodies) != len(setup.bodies):
@@ -189,7 +234,8 @@ def insert_body(prepared, body):
             raise ValueError('Insertion reference body is missing.')
         index = prepared.body_ids.index(body.reference_id)
         r, v = r+prepared.system.r[index], v+prepared.system.v[index]
-    system = System(np.append(old.masses, body.spec.mass), np.vstack((old.r, r)), np.vstack((old.v, v)), old.dt, old.time)
+    system = old.with_state(np.vstack((old.r, r)), np.vstack((old.v, v)), old.time,
+                            masses=np.append(old.masses, body.spec.mass))
     specs = prepared.body_specs + (body.spec,)
     ids = prepared.body_ids + (body.id,)
     references = prepared.reference_ids + (body.reference_id,)

@@ -61,7 +61,9 @@ def test_transactional_halt_retains_final_valid_state(monkeypatch):
     calc.advance(3)
     expected = calc.prepared.system.r.copy()
     # A real unresolved step, rejected by the same solver used live.
-    calc.prepared.system.v[1] = (1e8, 0)
+    spike = np.zeros(calc.prepared.system.v.shape[1])
+    spike[0] = 1e8
+    calc.prepared.system.v[1] = spike
     calc.advance(1)
     assert calc.result.status == 'halted' and 'unresolved' in calc.result.reason
     assert calc.result.frames[-1].time == calc.prepared.system.time

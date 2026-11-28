@@ -2,19 +2,31 @@
 
 Positive masses mutually interact; zero-mass test particles only receive gravity.
 Positions are planar (two components) or three-dimensional (three components).
-The overhead presets stay planar. A third component is an explicit initial state.
+Regular presets store three components with a disclosed inclination.
+``make_system`` stays the planar circular helper. A planar recording is not padded.
+``external_acceleration`` is an optional extra force. It stays unset unless a
+caller attaches one, so a plain system feels only its own bodies.
 
 Fixed-step Yoshida fourth-order composition of velocity Verlet.
 Steps stay fixed within each uninterrupted segment; insertion can begin a new
 segment with a disclosed smaller step. Close encounters halt instead of silently losing accuracy.
+An adaptive run uses the same macro schedule as formation: the authored dt is the maximum.
 """
 from dataclasses import dataclass
+import math
 import numpy as np
 from .data import STARS, PLANETS
+
+# Below this floor a close pass is not stepped. The positive Verlet solver
+# stays in place; REBOUND is the documented candidate if a run reaches it.
+ADAPTIVE_DT_MIN = 1e-10
+ADAPTIVE_GROWTH = 2.0
 
 # Yoshida fourth-order composition weights for velocity Verlet.
 _YOSHIDA_W1 = 1.0 / (2.0 - 2.0 ** (1.0 / 3.0))
 _YOSHIDA_W0 = -(2.0 ** (1.0 / 3.0)) * _YOSHIDA_W1
+# Set by the opt-in relativistic module. None leaves this file's Newtonian sum unchanged.
+_extra_acceleration = None
 
 
 def kepler_period(semi_major: float, mu: float) -> float:
@@ -29,6 +41,35 @@ def period(star, planet, distance):
     return kepler_period(distance, G*(STARS[star].mass + PLANETS[planet].mass))
 
 
+def adaptive_macro_step(current, maximum, floor, limit):
+    """Next macro step, or None when ``limit`` is below ``floor``.
+
+    The authored step is the maximum. A closer pair uses the resolution limit.
+    After a pass the step grows by at most ``ADAPTIVE_GROWTH`` until it is back
+    at the maximum. Callers leave the state unmoved when this returns None.
+    """
+    if not math.isfinite(limit) or limit >= maximum:
+        target = maximum
+    elif limit < floor:
+        return None
+    else:
+        target = limit
+    if target > current*ADAPTIVE_GROWTH:
+        target = current*ADAPTIVE_GROWTH
+    if target > maximum:
+        target = maximum
+    return float(target)
+
+
+def adaptive_floor_reason(limit, floor):
+    """Halt text when a close pass is below the shared adaptive floor."""
+    return (
+        'Adaptive timestep halt: the pair resolution limit '
+        f'{float(limit):.6g} yr is below the floor of {float(floor):.6g} yr. '
+        'The state was not advanced. A close-encounter integrator such as REBOUND '
+        'remains the candidate if a physical-radius run reaches this floor.')
+
+
 @dataclass
 class System:
     masses: np.ndarray
@@ -36,9 +77,22 @@ class System:
     v: np.ndarray
     dt: float
     time: float = 0.
+    external_acceleration: object = None
     # Body-detail and lasting-tide state. Unset on a point-mass run, so the
     # Newtonian acceleration below is unchanged.
     detail: object = None
+
+    def with_state(self, r, v, time, masses=None, dt=None):
+        """A new system with this state that keeps attached forces and body-detail state."""
+        return System(
+            self.masses if masses is None else masses,
+            r,
+            v,
+            self.dt if dt is None else dt,
+            time,
+            external_acceleration=self.external_acceleration,
+            detail=self.detail,
+        )
 
     def accelerations(self, separation_floor=None):
         gravity = self._newtonian_accelerations(separation_floor)
@@ -52,11 +106,24 @@ class System:
         d2 = np.sum(delta**2, axis=-1)
         d2[sources, np.arange(len(sources))] = np.inf
         if separation_floor is None:
-            return G*np.sum(delta * (self.masses[None, sources]/(d2*np.sqrt(d2)))[:, :, None], axis=1)
-        # An unmodeled stellar overlap evaluates gravity at the contact separation
-        # so a fixed step can cross it. The direction stays the true separation.
-        dist = np.maximum(np.sqrt(d2), np.asarray(separation_floor, dtype=float)[:, sources])
-        return G*np.sum(delta * (self.masses[None, sources]/(dist*dist*dist))[:, :, None], axis=1)
+            newton = G*np.sum(delta * (self.masses[None, sources]/(d2*np.sqrt(d2)))[:, :, None], axis=1)
+        else:
+            # An unmodeled stellar overlap evaluates gravity at the contact separation
+            # so a fixed step can cross it. The direction stays the true separation.
+            dist = np.maximum(np.sqrt(d2), np.asarray(separation_floor, dtype=float)[:, sources])
+            newton = G*np.sum(delta * (self.masses[None, sources]/(dist*dist*dist))[:, :, None], axis=1)
+        extra = _extra_acceleration
+        if extra is not None:
+            correction = extra(self)
+            if correction is not None:
+                newton = newton + correction
+        extra = self.external_acceleration
+        if extra is None:
+            return newton
+        added = np.asarray(extra(self), dtype=float)
+        if added.shape != newton.shape or not np.isfinite(added).all():
+            raise ValueError('Outside pull produced a nonfinite or mis-shaped acceleration. The state was not advanced.')
+        return newton + added
 
     def resolution_limit(self, separation_floor=None):
         """Largest supported step from pair gravity and relative crossing time."""
@@ -89,7 +156,7 @@ class System:
             self.validate_step()
             # Commit only a whole validated Yoshida step. An intermediate failure
             # must not leave a partially kicked/drifted live or recorded state.
-            trial = System(self.masses, self.r.copy(), self.v.copy(), self.dt, self.time, detail=self.detail)
+            trial = self.with_state(self.r.copy(), self.v.copy(), self.time)
             for w in (_YOSHIDA_W1, _YOSHIDA_W0, _YOSHIDA_W1):
                 h = w*self.dt
                 trial.v += .5*h*trial.accelerations()

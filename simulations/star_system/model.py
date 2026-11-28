@@ -181,6 +181,63 @@ class LastingTidePolicy:
         if self.version != LASTING_TIDE_MODEL_ID:
             raise ValueError('Unsupported lasting-tide model.')
 
+# Pairwise 1PN and 2.5PN terms on top of Newtonian gravity. Off unless enabled.
+RELATIVISTIC_MODEL_ID = 'pairwise-1pn-2.5pn-v1'
+# Constant fractional isotropic wind. Off unless enabled.
+MASS_LOSS_MODEL_ID = 'isotropic-jeans-wind-v1'
+# Per year. Same order as a weak stellar wind, not a fitted solar-wind history.
+MASS_LOSS_RATE_PER_YEAR = 1e-13
+
+
+@dataclass(frozen=True)
+class RelativisticPolicy:
+    """Post-Newtonian corrections added to Newtonian gravity. Disabled unless enabled.
+
+    ``conservative`` is the pairwise 1PN term (perihelion precession). ``radiation``
+    is the pairwise 2.5PN radiation reaction (gravitational-wave inspiral). The
+    experiment file turns both on together. A disabled policy does not store a
+    narrower choice.
+    """
+    enabled: bool = False
+    version: str = RELATIVISTIC_MODEL_ID
+    conservative: bool = True
+    radiation: bool = True
+
+    def __post_init__(self):
+        if type(self.enabled) is not bool or type(self.conservative) is not bool or type(self.radiation) is not bool:
+            raise ValueError('Relativistic corrections must be explicitly on or off.')
+        if self.version != RELATIVISTIC_MODEL_ID:
+            raise ValueError('Unsupported relativistic model.')
+        if not self.enabled and (self.conservative is not True or self.radiation is not True):
+            raise ValueError(
+                'Turn relativistic corrections on to store a term choice. Off applies neither term.')
+        if self.enabled and not self.conservative and not self.radiation:
+            raise ValueError('Relativistic corrections need the 1PN term, the 2.5PN term, or both.')
+
+
+@dataclass(frozen=True)
+class StellarMassLossPolicy:
+    """Isotropic stellar wind. Disabled policies are not stored.
+
+    Each star loses a constant fraction of its mass per year. The wind leaves
+    the system and does not change the star's velocity. Planets are unchanged.
+    """
+    enabled: bool = False
+    version: str = MASS_LOSS_MODEL_ID
+    rate_per_year: float = MASS_LOSS_RATE_PER_YEAR
+
+    def __post_init__(self):
+        if type(self.enabled) is not bool:
+            raise ValueError('Stellar mass loss must be explicitly on or off.')
+        if self.version != MASS_LOSS_MODEL_ID:
+            raise ValueError('Unsupported stellar mass-loss model.')
+        rate = self.rate_per_year
+        if type(rate) not in (int, float) or isinstance(rate, bool) or not np.isfinite(rate) or not 0 < rate <= 1e6:
+            raise ValueError('Stellar mass-loss rate must be a finite number in (0, 1000000] per year.')
+        if not self.enabled and rate != MASS_LOSS_RATE_PER_YEAR:
+            raise ValueError(
+                'Turn stellar mass loss on to store a rate. Off uses the default policy only.')
+
 
 # Perfect merge is one disclosed rule. The legacy pairs id said stellar contact
 # halted the run; that behavior is retired, and loaded documents adopt the id below.
@@ -278,12 +335,18 @@ class InitialSetup:
     collision_policy: CollisionPolicy = field(default_factory=CollisionPolicy)
     tides: TidalPolicy = field(default_factory=TidalPolicy)
     drag: DragPolicy = field(default_factory=DragPolicy)
+    relativistic: RelativisticPolicy = field(default_factory=RelativisticPolicy)
+    stellar_mass_loss: StellarMassLossPolicy = field(default_factory=StellarMassLossPolicy)
     # NumPy provenance of the document that produced this setup. Absent on a
     # setup built in memory; load_setup copies it from the file. Not physical
     # state, so equality ignores it.
     source_environment: Mapping[str, str] | None = field(default=None, compare=False, hash=False)
     body_detail: BodyDetailPolicy = field(default_factory=BodyDetailPolicy)
     lasting_tides: LastingTidePolicy = field(default_factory=LastingTidePolicy)
+
+    # Close-pass macro step. Off keeps the authored fixed step and is omitted
+    # from the setup document so an existing planar digest stays unchanged.
+    adaptive: bool = False
 
     def __post_init__(self):
         object.__setattr__(self, 'bodies', tuple(self.bodies))
@@ -303,6 +366,13 @@ class InitialSetup:
             raise ValueError('A supported BodyDetailPolicy is required.')
         if not isinstance(self.lasting_tides, LastingTidePolicy):
             raise ValueError('A supported LastingTidePolicy is required.')
+
+        if type(self.adaptive) is not bool:
+            raise ValueError('adaptive must be a boolean.')
+        if not isinstance(self.relativistic, RelativisticPolicy):
+            raise ValueError('A supported RelativisticPolicy is required.')
+        if not isinstance(self.stellar_mass_loss, StellarMassLossPolicy):
+            raise ValueError('A supported StellarMassLossPolicy is required.')
         family = collision_policy_identity(self.collision_policy)
         # A perfect-merge policy is the default object, so choosing speed_angle
         # without a second argument still stores that rule on the setup.

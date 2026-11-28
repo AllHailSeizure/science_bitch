@@ -11,8 +11,8 @@ from collections.abc import Mapping
 import numpy as np
 
 from .model import (
-    CONTACT_SOLVER_MODES, BodyDetailPolicy, BodySpec, CollisionPolicy, DragPolicy, InitialBody, InitialSetup,
-    LastingTidePolicy, PopulationSpec, PropertySource, TidalPolicy,
+    CONTACT_SOLVER_MODES, BodyDetailPolicy, LastingTidePolicy, BodySpec, CollisionPolicy, DragPolicy, InitialBody, InitialSetup,
+    PopulationSpec, PropertySource, RelativisticPolicy, StellarMassLossPolicy, TidalPolicy,
 )
 from .populations import Population
 from .initialization import build_system
@@ -23,6 +23,7 @@ MODEL_VERSION = 'planar-newtonian-point-mass-v1'
 SPATIAL_MODEL_VERSION = 'newtonian-point-mass-v1'
 NUMERICAL_VERSION = 'fixed-yoshida4-v1'
 GENERATOR_VERSION = 'planar-circular-population-v1'
+SPATIAL_GENERATOR_VERSION = 'spatial-circular-population-v1'
 # Integrator implementation that produces a trajectory. Not written into setup
 # JSON and not part of setup_digest. Bump when solver arithmetic changes even
 # if NUMERICAL_VERSION stays the same.
@@ -43,11 +44,12 @@ def _record(value):
     return {field.name: _plain(getattr(value, field.name)) for field in fields(value)}
 
 
-def _population(pop):
+def _population(pop, dimension=2):
     if pop is None:
         return None
+    version = SPATIAL_GENERATOR_VERSION if dimension == 3 else GENERATOR_VERSION
     return {'id': pop.id, 'reference_id': pop.reference_id, 'generator': 'PCG64',
-            'version': GENERATOR_VERSION, 'settings': _record(pop.settings)}
+            'version': version, 'settings': _record(pop.settings)}
 
 
 def _numerical_version(setup):
@@ -94,7 +96,7 @@ def _document(setup):
             'environment': _recorded_environment(setup),
             'setup': {'name': setup.name, 'preset_id': setup.preset_id, 'dt': setup.dt,
                       'collision_mode': setup.collision_mode, 'bodies': bodies,
-                      'population': _population(setup.population), 'provenance': _plain(setup.provenance)}}
+                      'population': _population(setup.population, dimension), 'provenance': _plain(setup.provenance)}}
     # Preserve byte-for-byte canonical legacy mode-none documents/digests.
     if setup.collision_mode != 'none' or setup.collision_policy != CollisionPolicy():
         document['setup']['collision_policy'] = _record(setup.collision_policy)
@@ -109,6 +111,14 @@ def _document(setup):
         document['setup']['body_detail'] = _record(setup.body_detail)
     if setup.lasting_tides.enabled:
         document['setup']['lasting_tides'] = _record(setup.lasting_tides)
+    # Absent when off, so a fixed-step document and its digest stay as they were.
+    if setup.adaptive:
+        document['setup']['adaptive'] = True
+    # Absent when off, so a Newtonian document and its digest stay as they were.
+    if setup.relativistic.enabled:
+        document['setup']['relativistic'] = _record(setup.relativistic)
+    if setup.stellar_mass_loss.enabled:
+        document['setup']['stellar_mass_loss'] = _record(setup.stellar_mass_loss)
     return document
 
 
@@ -177,11 +187,12 @@ def _spec(value):
     return BodySpec(**{**value, 'sources': {key: _source(source) for key, source in value['sources'].items()}})
 
 
-def _decode_population(value):
+def _decode_population(value, dimension=2):
     if value is None:
         return None
     _object(value, ('id', 'reference_id', 'generator', 'version', 'settings'), 'Population')
-    if value['generator'] != 'PCG64' or value['version'] != GENERATOR_VERSION:
+    expected = SPATIAL_GENERATOR_VERSION if dimension == 3 else GENERATOR_VERSION
+    if value['generator'] != 'PCG64' or value['version'] != expected:
         raise ValueError('Unsupported population generator/version.')
     _string(value['id'], 'Population ID')
     _string(value['reference_id'], 'Population reference')
@@ -220,6 +231,12 @@ def _decode(document):
         keys.add('body_detail')
     if type(document['setup']) is dict and 'lasting_tides' in document['setup']:
         keys.add('lasting_tides')
+    if type(document['setup']) is dict and 'adaptive' in document['setup']:
+        keys.add('adaptive')
+    if type(document['setup']) is dict and 'relativistic' in document['setup']:
+        keys.add('relativistic')
+    if type(document['setup']) is dict and 'stellar_mass_loss' in document['setup']:
+        keys.add('stellar_mass_loss')
     value = _object(document['setup'], keys, 'Setup')
     _string(value['name'], 'Setup name')
     _string(value['preset_id'], 'Preset ID', nullable=True)
@@ -255,6 +272,28 @@ def _decode(document):
         lasting_tides = LastingTidePolicy(**raw)
     else:
         lasting_tides = LastingTidePolicy()
+    if 'adaptive' in value:
+        if value['adaptive'] is not True:
+            raise ValueError('A stored adaptive step is on. Omit adaptive to leave the fixed step.')
+        adaptive = True
+    else:
+        adaptive = False
+    if 'relativistic' in value:
+        raw = _object(value['relativistic'], {field.name for field in fields(RelativisticPolicy)}, 'Relativistic policy')
+        if raw['enabled'] is not True:
+            raise ValueError(
+                'A stored relativistic policy is the enabled model. Omit relativistic to leave post-Newtonian terms off.')
+        relativistic = RelativisticPolicy(**raw)
+    else:
+        relativistic = RelativisticPolicy()
+    if 'stellar_mass_loss' in value:
+        raw = _object(value['stellar_mass_loss'], {field.name for field in fields(StellarMassLossPolicy)}, 'Stellar mass-loss policy')
+        if raw['enabled'] is not True:
+            raise ValueError(
+                'A stored stellar mass-loss policy is the enabled model. Omit stellar_mass_loss to leave stellar masses constant.')
+        stellar_mass_loss = StellarMassLossPolicy(**raw)
+    else:
+        stellar_mass_loss = StellarMassLossPolicy()
     contact = value['collision_mode'] in CONTACT_SOLVER_MODES
     if document['numerical_version'] != (policy.numerical if contact else NUMERICAL_VERSION):
         raise ValueError('Unsupported numerical_version for selected collision mode.')
@@ -265,6 +304,7 @@ def _decode(document):
         raise ValueError('Setup provenance must be an object.')
     bodies = []
     dimension = 3 if document['model_version'] == SPATIAL_MODEL_VERSION else 2
+    population = _decode_population(value['population'], dimension)
     for body in value['bodies']:
         _object(body, ('id', 'spec', 'r', 'v', 'reference_id'), 'Initial body')
         position, velocity = _vector(body['r'], 'Position'), _vector(body['v'], 'Velocity')
@@ -274,9 +314,9 @@ def _decode(document):
                                   position, velocity,
                                   _string(body['reference_id'], 'Body reference', nullable=True)))
     setup = InitialSetup(value['name'], tuple(bodies), value['dt'], value['preset_id'],
-                         _decode_population(value['population']), value['collision_mode'], value['provenance'], policy,
+                         population, value['collision_mode'], value['provenance'], policy,
                          source_environment={'numpy': document['environment']['numpy']}, tides=tides, drag=drag,
-                         body_detail=body_detail, lasting_tides=lasting_tides)
+                         relativistic=relativistic, stellar_mass_loss=stellar_mass_loss, adaptive=adaptive, body_detail=body_detail, lasting_tides=lasting_tides)
     # Validate references, overlap, known masses and numerical resolution before install.
     build_system(setup)
     return setup

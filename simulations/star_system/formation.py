@@ -27,12 +27,16 @@ import tracemalloc
 import numpy as np
 
 from .collisions import CollisionEvent, advance_prepared
-from .core import G, SOLAR_RADIUS_AU, System, kepler_period
+from .core import (
+    ADAPTIVE_DT_MIN, ADAPTIVE_GROWTH, G, SOLAR_RADIUS_AU, System, adaptive_floor_reason,
+    adaptive_macro_step, kepler_period,
+)
 from .data import AU_KM, PLANETS
 from .history import StateFrame
 from .initialization import PreparedSystem, build_system
 from .model import (
-    FORMATION_COLLISION_MODES, SPEED_ANGLE_VERSION, BodySpec, DragPolicy, InitialBody, InitialSetup, TidalPolicy,
+    FORMATION_COLLISION_MODES, SPEED_ANGLE_VERSION, BodySpec, DragPolicy, InitialBody, InitialSetup,
+    RelativisticPolicy, StellarMassLossPolicy, TidalPolicy,
 )
 from .persistence import SOLVER_BUILD, setup_digest
 from .playback import Playback
@@ -59,10 +63,6 @@ BENCHMARK_OUTER = 3.2
 BENCHMARK_EMBRYO_MASS = 2e-6
 BENCHMARK_EMBRYO_RADIUS = 0.04
 BENCHMARK_ECCENTRICITY = 0.12
-# Below this floor a close pass is not stepped. The positive Verlet solver
-# stays in place; REBOUND is the documented candidate if a run reaches it.
-ADAPTIVE_DT_MIN = 1e-10
-ADAPTIVE_GROWTH = 2.
 PHYSICAL_PROBE_COUNT = 8
 PHYSICAL_PROBE_SEED = 70
 PHYSICAL_PROBE_DURATION_YEARS = 0.25
@@ -84,7 +84,7 @@ _ASSUMPTIONS = (
     'Ejection is a bookkeeping cut. After it, the frozen body no longer exchanges gravity with the active set.',
     'Stellar contact is logged as unmodeled and the run continues, including when gas drag is on. This prototype does not merge stars. Stop on contact is the only collision choice that ends the run.',
     'Gravity is unsoftened Newtonian gravity. A run is planar unless its positions have a third component. The authored dt is the fixed step, or the maximum step when adaptive control is on. During an unmodeled stellar overlap that pair is evaluated at the contact separation so the step can cross it.',
-    'The overhead observatory draws planar motion. A third component is integrated and recorded, and it is not projected into that view.',
+    'The overhead view projects a three-dimensional sample by dropping the third component. A planar sample stays two components and is not padded. There is no perspective render of the third component.',
 )
 _QUESTIONS = (
     'Which initial parcels make up a surviving body, and how much mass came from each?',
@@ -99,7 +99,7 @@ _NOT_MODELED = (
     'Dust swarms, grain growth, and the swarm-to-body rule. Those stay in the gas-and-dust prototype. Bodies on this path use that prototype\'s quadratic drag when drag is enabled.',
     'Tree-code grouping of distant mass. Direct summation stays in use, and a grouped force would still have to keep parcel identity.',
     'Partial accretion and erosion beyond the disclosed speed-angle lost-mass fraction.',
-    'An overhead drawing of the third dimension. The observatory remains a planar view.',
+    'A perspective render of the third dimension. The overhead view drops that component and does not pad a planar sample.',
     'Relativity and stellar internal structure. A dedicated stellar merger stays in its own scenario.',
 )
 _SCOPE = (
@@ -122,7 +122,9 @@ _CHANGE_KEYS = ('kind', 'body_id', 'delta_v', 'note')
 _DOCUMENT_KEYS = ('schema', 'id', 'model', 'name', 'time', 'dt', 'ejection_radius', 'sample_stride',
                   'status', 'reason', 'completed_steps', 'assumptions', 'provenance', 'active',
                   'removed', 'events', 'samples')
-_OPTIONAL_DOCUMENT_KEYS = ('adaptive', 'dt_max', 'dt_min', 'dimensions', 'tides', 'drag', 'body_detail')
+_OPTIONAL_DOCUMENT_KEYS = (
+    'adaptive', 'dt_max', 'dt_min', 'dimensions', 'tides', 'drag',
+    'body_detail', 'relativistic_corrections', 'stellar_mass_loss')
 _COLLISION_MODEL_IDS = (COLLISION_MODEL_ID, SPEED_ANGLE_VERSION, IGNORE_CONTACT_ID, STOP_ON_CONTACT_ID)
 
 
@@ -660,17 +662,20 @@ def _change_document(change):
             'delta_v': [_num(component) for component in change['delta_v']], 'note': change['note']}
 
 
-def _combination_text(collision_mode, drag, tides, dimensions, adaptive):
+def _combination_text(collision_mode, drag, tides, dimensions, adaptive, relativistic=None, mass_loss=None):
     drag_text = 'off' if not drag.enabled else f'on ({drag.version}, {drag.disk} disk)'
     tide_text = 'off' if not tides.enabled else f'on ({tides.version})'
+    relativistic_text = 'off' if relativistic is None or not relativistic.enabled else f'on ({relativistic.version})'
+    mass_text = 'off' if mass_loss is None or not mass_loss.enabled else f'on ({mass_loss.version})'
     step = 'adaptive' if adaptive else 'fixed'
     width = f'{dimensions}D' if dimensions else 'unspecified dimension'
     return (f'Physics switches: collision {collision_mode}, gas drag {drag_text}, tides {tide_text}, '
+            f'relativistic corrections {relativistic_text}, stellar mass loss {mass_text}, '
             f'{width}, {step} step. A contact does not end the run unless collision is stop_on_contact.')
 
 
-def with_physics(setup, *, collision_mode=None, tides=None, drag=None):
-    """Copy a setup with any combination of the collision, tide, and drag switches."""
+def with_physics(setup, *, collision_mode=None, tides=None, drag=None, relativistic=None, mass_loss=None):
+    """Copy a setup with any combination of the opt-in physics switches."""
     from .model import with_collision_rule
     if collision_mode is not None:
         setup = with_collision_rule(setup, collision_mode)
@@ -679,6 +684,12 @@ def with_physics(setup, *, collision_mode=None, tides=None, drag=None):
         updates['tides'] = tides if isinstance(tides, TidalPolicy) else TidalPolicy(enabled=bool(tides))
     if drag is not None:
         updates['drag'] = drag if isinstance(drag, DragPolicy) else DragPolicy(enabled=True if drag is True else False)
+    if relativistic is not None:
+        updates['relativistic'] = (relativistic if isinstance(relativistic, RelativisticPolicy)
+                                   else RelativisticPolicy(enabled=bool(relativistic)))
+    if mass_loss is not None:
+        updates['stellar_mass_loss'] = (mass_loss if isinstance(mass_loss, StellarMassLossPolicy)
+                                        else StellarMassLossPolicy(enabled=bool(mass_loss)))
     if not updates:
         return setup
     return replace(setup, **updates)
@@ -720,6 +731,8 @@ class FormationExperiment:
             raise ValueError('Formation collision modes: ignore, stop_on_contact, perfect_merge, speed_angle.')
         if not isinstance(setup.drag, DragPolicy) or not isinstance(setup.tides, TidalPolicy):
             raise ValueError('Formation stores a drag policy and a tide policy on the setup.')
+        if not isinstance(setup.relativistic, RelativisticPolicy) or not isinstance(setup.stellar_mass_loss, StellarMassLossPolicy):
+            raise ValueError('Formation stores a relativistic policy and a stellar mass-loss policy on the setup.')
         if seed is not None and (type(seed) is not int or isinstance(seed, bool) or seed < 0):
             raise ValueError('Formation seed must be a nonnegative integer or omitted.')
         if type(sample_stride) is not int or isinstance(sample_stride, bool) or sample_stride < 1:
@@ -777,12 +790,15 @@ class FormationExperiment:
             self.drag_parameters = parameters
             self.drag_star_mass = star_mass
         extras = [f'Ejection radius is {self.ejection_radius:.6g} AU and is evaluated at macro steps.']
-        combo = _combination_text(setup.collision_mode, setup.drag, setup.tides, self.dimensions if hasattr(self, 'dimensions') else None, self.adaptive)
+        combo = _combination_text(
+            setup.collision_mode, setup.drag, setup.tides,
+            self.dimensions if hasattr(self, 'dimensions') else None, self.adaptive,
+            setup.relativistic, setup.stellar_mass_loss)
         extras.append(combo)
         if self.dimensions == 2:
             extras.append('This run is planar: every position and velocity has two components.')
         else:
-            extras.append('This run is three-dimensional. The overhead observatory does not draw the third component.')
+            extras.append('This run is three-dimensional. The sample keeps the third component. The overhead view drops it onto the first two components and does not pad a planar sample.')
         if self.adaptive:
             extras.append(
                 f'Adaptive macro step: at most {self.dt_max:.6g} yr, shrinking to the pair resolution limit, '
@@ -799,18 +815,23 @@ class FormationExperiment:
 
     def combination(self):
         """The collision, drag, and tide switches this run is actually using."""
-        tides = self.prepared.setup.tides if self.prepared.setup is not None else TidalPolicy()
+        setup = self.prepared.setup
+        tides = setup.tides if setup is not None else TidalPolicy()
+        relativistic = setup.relativistic if setup is not None else RelativisticPolicy()
+        mass_loss = setup.stellar_mass_loss if setup is not None else StellarMassLossPolicy()
         drag = self.drag_policy
         return {
             'dimensions': self.dimensions,
             'adaptive': self.adaptive,
-            'collision_mode': self.prepared.setup.collision_mode if self.prepared.setup is not None else 'perfect_merge',
+            'collision_mode': setup.collision_mode if setup is not None else 'perfect_merge',
             'collision_model': self.provenance['collision_model'],
             'drag': 'off' if not drag.enabled else drag.disk,
             'drag_model': 'off' if not drag.enabled else drag.version,
             'tides': 'off' if not tides.enabled else tides.version,
             'body_detail': 'point_mass' if self.prepared.system.detail is None else self.prepared.system.detail.level,
             'lasting_tides': 'off' if self.prepared.system.detail is None or not self.prepared.system.detail.lasting else 'constant-time-lag-v1',
+            'relativistic_corrections': 'off' if not relativistic.enabled else relativistic.version,
+            'stellar_mass_loss': 'off' if not mass_loss.enabled else mass_loss.version,
         }
 
     @property
@@ -823,10 +844,13 @@ class FormationExperiment:
         detail = f'Model {self.provenance["model"]}.'
         if self.reason:
             detail = f'{detail} {self.reason}'
+        setup = self.prepared.setup
         switches = _combination_text(
             self.combination()['collision_mode'], self.drag_policy,
-            self.prepared.setup.tides if self.prepared.setup is not None else TidalPolicy(),
-            self.dimensions, self.adaptive)
+            setup.tides if setup is not None else TidalPolicy(),
+            self.dimensions, self.adaptive,
+            setup.relativistic if setup is not None else None,
+            setup.stellar_mass_loss if setup is not None else None)
         return '\n'.join((status, detail, switches, *self.assumptions))
 
     def integrate(self, years, *, finish=False):
@@ -859,12 +883,7 @@ class FormationExperiment:
             scheduled = self._scheduled_dt()
             if scheduled is None:
                 self.status = 'halted'
-                limit = self.prepared.system.resolution_limit()
-                self.reason = (
-                    'Adaptive timestep halt: the pair resolution limit '
-                    f'{limit:.6g} yr is below the floor of {self.dt_min:.6g} yr. '
-                    'The state was not advanced. A close-encounter integrator such as REBOUND '
-                    'remains the candidate if a physical-radius run reaches this floor.')
+                self.reason = adaptive_floor_reason(self.prepared.system.resolution_limit(), self.dt_min)
                 break
             previous = float(self.prepared.system.dt)
             self.prepared.system.dt = scheduled
@@ -890,6 +909,7 @@ class FormationExperiment:
                 if isinstance(event, CollisionEvent) and event.kind in ('close_encounter', 'orbital_change'):
                     self._record_passive(event)
             self.prepared = outcome.prepared
+            self._sync_composition_masses()
             self._record_tides(event_count)
             actual = float(self.prepared.system.time)-time_before
             if outcome.stopped:
@@ -1041,7 +1061,7 @@ class FormationExperiment:
                 f'delta_v has {len(change.delta_v)} components; this run stores {system.v.shape[1]}.')
         velocity = system.v.copy()
         velocity[index] = velocity[index]+np.asarray(change.delta_v, dtype=float)
-        updated = System(system.masses.copy(), system.r.copy(), velocity, system.dt, system.time, detail=system.detail)
+        updated = system.with_state(system.r.copy(), velocity, system.time, masses=system.masses.copy())
         self.prepared = replace(self.prepared, system=updated)
         stored = {'kind': 'velocity', 'body_id': change.body_id, 'delta_v': change.delta_v, 'note': change.note}
         self.provenance = {**self.provenance, 'parent_checkpoint_id': parent_id, 'change': stored,
@@ -1122,6 +1142,27 @@ class FormationExperiment:
         self.events.append(FormationEvent(float(event.time), event.kind, tuple(event.parent_ids), None,
                                           tuple(contributions), descendants, float(event.lost_relative_kinetic),
                                           float(event.unmodeled_spin), location, event.message))
+
+    def _sync_composition_masses(self):
+        """Scale parcel ledgers when stellar mass loss has changed a body's mass.
+
+        Lost mass leaves the system, so the parcels shrink with the star and are
+        not kept as a separate reservoir. Other switches do not touch the ledger.
+        """
+        setup = self.prepared.setup
+        policy = None if setup is None else setup.stellar_mass_loss
+        if policy is None or not policy.enabled:
+            return
+        for index, body_id in enumerate(self.prepared.body_ids):
+            parcels = self.composition.get(body_id)
+            if not parcels:
+                continue
+            mass = float(self.prepared.system.masses[index])
+            total = sum(parcels.values())
+            if total == mass or total == 0.0:
+                continue
+            scale = mass / total
+            self.composition[body_id] = {key: value * scale for key, value in parcels.items()}
 
     def _record_tides(self, previous_count):
         from .tides import TideEvent
@@ -1210,9 +1251,9 @@ class FormationExperiment:
     def _drop(self, ids):
         keep = [index for index, body_id in enumerate(self.prepared.body_ids) if body_id not in ids]
         system = self.prepared.system
-        detail = None if system.detail is None else system.detail.sliced(keep)
-        updated = System(np.array(system.masses[keep], copy=True), np.array(system.r[keep], copy=True),
-                         np.array(system.v[keep], copy=True), system.dt, system.time, detail=detail)
+        updated = system.with_state(np.array(system.r[keep], copy=True), np.array(system.v[keep], copy=True),
+                                    system.time, masses=np.array(system.masses[keep], copy=True))
+        updated.detail = None if system.detail is None else system.detail.sliced(keep)
         reserves = tuple(CollisionEvent(system.time, 'reserve', (body_id,), None, (body_id,), 0., 0.,
                                         f'Reserved ejected id {body_id}.') for body_id in sorted(ids))
         self.prepared = PreparedSystem(
@@ -1296,6 +1337,15 @@ class FormationExperiment:
         if tides is not None and tides.enabled:
             fields['tides'] = {'enabled': True, 'version': tides.version,
                                'strength': _num(tides.strength), 'reach': _num(tides.reach)}
+        relativistic = self.prepared.setup.relativistic if self.prepared.setup is not None else None
+        if relativistic is not None and relativistic.enabled:
+            fields['relativistic_corrections'] = {
+                'enabled': True, 'version': relativistic.version,
+                'conservative': relativistic.conservative, 'radiation': relativistic.radiation}
+        mass_loss = self.prepared.setup.stellar_mass_loss if self.prepared.setup is not None else None
+        if mass_loss is not None and mass_loss.enabled:
+            fields['stellar_mass_loss'] = {
+                'enabled': True, 'version': mass_loss.version, 'rate_per_year': _num(mass_loss.rate_per_year)}
         if self.drag_policy.enabled:
             fields['drag'] = {
                 'enabled': True, 'version': self.drag_policy.version, 'disk': self.drag_policy.disk,
@@ -1317,19 +1367,9 @@ class FormationExperiment:
         """Authored step, or a smaller one while a pair is unresolved."""
         if not self.adaptive:
             return float(self.prepared.system.dt)
-        limit = float(self.prepared.system.resolution_limit())
-        if not math.isfinite(limit) or limit >= self.dt_max:
-            target = self.dt_max
-        elif limit < self.dt_min:
-            return None
-        else:
-            target = limit
-        previous = float(self.prepared.system.dt)
-        if target > previous*ADAPTIVE_GROWTH:
-            target = previous*ADAPTIVE_GROWTH
-        if target > self.dt_max:
-            target = self.dt_max
-        return float(target)
+        return adaptive_macro_step(
+            float(self.prepared.system.dt), self.dt_max, self.dt_min,
+            float(self.prepared.system.resolution_limit()))
 
 
 def _carriers(sample, parcels):
@@ -1456,6 +1496,27 @@ def _drag_from_document(value):
     return DragPolicy(enabled=True, version=value['version'], disk=value['disk'])
 
 
+def _relativistic_from_document(value):
+    if value is None:
+        return RelativisticPolicy()
+    if type(value) is not dict or set(value) != {'enabled', 'version', 'conservative', 'radiation'}:
+        raise ValueError('Checkpoint relativistic corrections must contain enabled, version, conservative, and radiation.')
+    if value['enabled'] is not True:
+        raise ValueError('A stored relativistic block is the enabled model.')
+    return RelativisticPolicy(enabled=True, version=value['version'],
+                              conservative=value['conservative'], radiation=value['radiation'])
+
+
+def _mass_loss_from_document(value):
+    if value is None:
+        return StellarMassLossPolicy()
+    if type(value) is not dict or set(value) != {'enabled', 'version', 'rate_per_year'}:
+        raise ValueError('Checkpoint stellar mass loss must contain enabled, version, and rate_per_year.')
+    if value['enabled'] is not True:
+        raise ValueError('A stored stellar mass-loss block is the enabled model.')
+    return StellarMassLossPolicy(enabled=True, version=value['version'], rate_per_year=value['rate_per_year'])
+
+
 def _restore_drag(experiment, value):
     from .gas_dust import DiskParameters, Zone, default_parameters
     zones = []
@@ -1528,8 +1589,10 @@ def _experiment_from_document(document):
     drag = _drag_from_document(document.get('drag'))
     from .body_detail import policies_and_motion
     body_detail, lasting_tides, motion = policies_and_motion(document.get('body_detail'), len(active))
+    relativistic = _relativistic_from_document(document.get('relativistic_corrections'))
+    mass_loss = _mass_loss_from_document(document.get('stellar_mass_loss'))
     shell = InitialSetup(name, shell_bodies, dt, collision_mode=mode, tides=tides, drag=drag,
-                         body_detail=body_detail, lasting_tides=lasting_tides)
+                         relativistic=relativistic, stellar_mass_loss=mass_loss, body_detail=body_detail, lasting_tides=lasting_tides)
     collision_events = []
     for event in events:
         if event.kind in ('merge', 'fragment', 'graze', 'unmodeled', 'ignored', 'stop'):

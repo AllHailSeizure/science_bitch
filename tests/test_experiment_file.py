@@ -8,17 +8,17 @@ import pytest
 from simulations.star_system.experiment_file import main
 
 
-def _write(path, *, dimensions=2, gravity='newtonian', bodies=('sun', 'earth', 'jupiter'), collision=None,
-           tides=False, drag=False, body_detail=None, lasting_tides=None, variable=None, years=0.01,
+def _write(path, *, dimensions=2, bodies=('sun', 'earth', 'jupiter'), collision=None,
+           tides=False, drag=False, relativistic=False, mass_loss=False, outside=None, body_detail=None, lasting_tides=None, variable=None, years=0.01,
            scan=None, watch=(), custom=None):
     document = {
         'schema': 'sidereel-experiment-v1',
         'dimensions': dimensions,
-        'gravity_model': gravity,
         'bodies': {'catalog': list(bodies), 'new': custom},
         'physics': {
             'collision': collision, 'tides': tides, 'gas_dust_drag': drag,
             'body_detail': body_detail, 'lasting_tides': lasting_tides,
+            'relativistic_corrections': relativistic, 'stellar_mass_loss': mass_loss, 'outside_pulls': outside,
         },
         'experiment': {
             'independent_variable': variable,
@@ -50,15 +50,17 @@ def test_new_writes_every_section_blank_and_in_order(tmp_path):
     path = tmp_path / 'blank.json'
     assert main(['--new', str(path)]) == 0
     document = json.loads(path.read_text(encoding='utf-8'))
-    assert list(document) == ['schema', 'dimensions', 'gravity_model', 'bodies', 'physics', 'experiment']
+    assert list(document) == ['schema', 'dimensions', 'bodies', 'physics', 'experiment']
+    assert 'gravity_model' not in document
     assert document['schema'] == 'sidereel-experiment-v1'
     assert document['dimensions'] is None
-    assert document['gravity_model'] is None
     assert list(document['bodies']) == ['catalog', 'new']
     assert document['bodies'] == {'catalog': [], 'new': None}
-    assert list(document['physics']) == ['collision', 'tides', 'gas_dust_drag', 'body_detail', 'lasting_tides']
+    assert list(document['physics']) == [
+        'collision', 'tides', 'gas_dust_drag', 'relativistic_corrections', 'stellar_mass_loss', 'outside_pulls', 'body_detail', 'lasting_tides']
     assert document['physics'] == {
-        'collision': None, 'tides': None, 'gas_dust_drag': None, 'body_detail': None, 'lasting_tides': None}
+        'collision': None, 'tides': None, 'gas_dust_drag': None,
+        'relativistic_corrections': None, 'stellar_mass_loss': None, 'outside_pulls': None, 'body_detail': None, 'lasting_tides': None}
     assert list(document['experiment']) == ['independent_variable', 'fixed_duration', 'open_scan', 'watch_for']
     assert document['experiment'] == {
         'independent_variable': None, 'fixed_duration': None, 'open_scan': None, 'watch_for': []}
@@ -102,10 +104,34 @@ def test_build_of_a_blank_file_asks_for_dimensions(tmp_path, capsys):
     assert not (tmp_path / 'experiment.sidereel').exists()
 
 
-def test_build_rejects_relativistic_gravity(tmp_path, capsys):
-    error = _refuse(tmp_path, capsys, gravity='relativistic')
-    assert 'not implemented yet' in error
-    assert 'newtonian' in error
+def test_new_omits_gravity_model_and_build_does_not_require_it(tmp_path):
+    path = tmp_path / 'experiment.json'
+    assert main(['--new', str(path)]) == 0
+    document = json.loads(path.read_text(encoding='utf-8'))
+    assert 'gravity_model' not in document
+    assert list(document) == ['schema', 'dimensions', 'bodies', 'physics', 'experiment']
+    document['dimensions'] = 2
+    document['bodies'] = {'catalog': ['sun', 'earth'], 'new': None}
+    document['experiment']['fixed_duration'] = {'years': 0.005}
+    path.write_text(json.dumps(document), encoding='utf-8')
+    assert main(['--build', str(path)]) == 0
+    playback = json.loads((tmp_path / 'experiment.sidereel').read_text(encoding='utf-8'))
+    assert playback['runs'][0]['status'] == 'complete'
+    assert 'gravity_model' not in playback
+    assert 'gravity_model' not in playback['experiment']
+
+
+def test_build_rejects_a_gravity_model_field(tmp_path, capsys):
+    source = _write(tmp_path / 'experiment.json')
+    document = json.loads(source.read_text(encoding='utf-8'))
+    document['gravity_model'] = 'relativistic'
+    source.write_text(json.dumps(document), encoding='utf-8')
+    assert main(['--build', str(source)]) == 2
+    error = capsys.readouterr().err
+    assert 'gravity_model' in error
+    assert '#77' in error
+    assert 'relativistic_corrections' in error
+    assert not (tmp_path / 'experiment.sidereel').exists()
 
 
 def test_build_rejects_a_custom_body(tmp_path, capsys):
@@ -169,7 +195,7 @@ def test_build_runs_collision_drag_and_tides_in_three_dimensions(tmp_path):
     physics = playback['physics']
     assert run['status'] == 'complete'
     assert len(run['samples'][0]['r'][0]) == 3
-    assert run['samples'][0]['r'][0][2] == 0
+    assert any(abs(component[2]) > 0 for component in run['samples'][0]['v'])
     assert physics['tides'] is True
     assert physics['gas_dust_drag'] is True
     assert physics['engine_collision_mode'] == 'speed_angle'
@@ -259,13 +285,13 @@ def test_build_open_scan_stops_at_max_runs_when_the_condition_is_absent(tmp_path
     assert all(run['events'] == [] for run in playback['runs'])
 
 
-def test_build_three_dimensional_speed_angle_stores_planar_samples(tmp_path):
+def test_build_three_dimensional_speed_angle_stores_spatial_samples(tmp_path):
     playback, _output = _build(
         tmp_path, dimensions=3, bodies=('sun', 'earth'), collision='speed_angle', years=0.005)
     run = playback['runs'][0]
     assert run['status'] == 'complete'
     assert len(run['samples'][0]['r'][0]) == 3
-    assert run['samples'][0]['r'][0][2] == 0
+    assert any(abs(component[2]) > 0 for component in run['samples'][0]['v'])
     assert playback['physics']['engine_collision_mode'] == 'speed_angle'
     assert '#84' not in playback['physics']['note']
 
@@ -372,3 +398,111 @@ def test_build_refuses_lasting_tides_without_spin(tmp_path, capsys):
     assert 'spin' in error
     error = _refuse(tmp_path, capsys, dimensions=3, body_detail='fixed_oblateness', lasting_tides=True)
     assert 'spin' in error
+
+
+def _build_named(tmp_path, name, **kwargs):
+    folder = tmp_path / name
+    folder.mkdir()
+    return _build(folder, **kwargs)
+
+
+def test_null_relativistic_and_mass_loss_stay_off(tmp_path):
+    playback, _output = _build(tmp_path, bodies=('sun', 'earth'), relativistic=None, mass_loss=None, years=0.005)
+    assert playback['physics']['relativistic_corrections'] is False
+    assert playback['physics']['stellar_mass_loss'] is False
+    assert 'does not claim precession' in playback['physics']['note']
+    assert 'stay constant' in playback['physics']['note']
+    assert 'gravity_model' not in playback
+
+
+def test_build_honors_relativistic_corrections_in_three_dimensions(tmp_path):
+    on, _output = _build_named(
+        tmp_path, 'on', dimensions=3, bodies=('sun', 'earth'), relativistic=True, years=0.2)
+    off, _output = _build_named(
+        tmp_path, 'off', dimensions=3, bodies=('sun', 'earth'), relativistic=False, years=0.2)
+    assert on['runs'][0]['status'] == 'complete'
+    assert on['physics']['relativistic_corrections'] is True
+    assert on['physics']['path'] == 'yoshida'
+    assert '1PN' in on['physics']['note']
+    assert len(on['runs'][0]['samples'][-1]['r'][1]) == 3
+    moved = np.linalg.norm(np.array(on['runs'][0]['samples'][-1]['r'][1]) - np.array(off['runs'][0]['samples'][-1]['r'][1]))
+    assert moved > 1e-12
+
+
+def test_build_honors_stellar_mass_loss(tmp_path):
+    playback, _output = _build(tmp_path, bodies=('sun', 'earth'), mass_loss=True, years=1.0)
+    samples = playback['runs'][0]['samples']
+    assert playback['runs'][0]['status'] == 'complete'
+    assert playback['physics']['stellar_mass_loss'] is True
+    assert '1e-13' in playback['physics']['note']
+    assert 'leaves the system' in playback['physics']['note']
+    assert samples[-1]['mass'][0] < samples[0]['mass'][0]
+    assert samples[-1]['mass'][1] == pytest.approx(samples[0]['mass'][1])
+
+
+def test_build_runs_both_modules_with_tides_in_three_dimensions(tmp_path):
+    playback, _output = _build(
+        tmp_path, dimensions=3, bodies=('sun', 'earth'), tides=True,
+        relativistic=True, mass_loss=True, years=0.05)
+    run = playback['runs'][0]
+    assert run['status'] == 'complete'
+    assert playback['physics']['path'] == 'formation'
+    assert playback['physics']['relativistic_corrections'] is True
+    assert playback['physics']['stellar_mass_loss'] is True
+    assert playback['physics']['tides'] is True
+    assert len(run['samples'][-1]['r'][0]) == 3
+    assert run['samples'][-1]['mass'][0] < run['samples'][0]['mass'][0]
+
+
+@pytest.mark.parametrize('collision', [None, 'speed_angle'])
+def test_all_optional_modules_coexist_in_three_dimensions(tmp_path, collision):
+    playback, _output = _build(
+        tmp_path, dimensions=3, bodies=('sun', 'earth'), collision=collision,
+        tides=collision is not None, drag=collision is not None,
+        relativistic=True, mass_loss=True, outside={'flybys': {'seed': 3}}, years=0.05)
+    physics = playback['physics']
+    assert physics['relativistic_corrections'] is True
+    assert physics['stellar_mass_loss'] is True
+    assert physics['outside_pulls']['enabled'] is True
+    assert physics['outside_pulls']['flybys'] is True
+    assert physics['path'] == ('yoshida' if collision is None else 'formation')
+    assert playback['experiment']['physics']['outside_pulls'] == {'flybys': {'seed': 3}}
+    run = playback['runs'][0]
+    assert run['status'] == 'complete'
+    assert run['samples'][-1]['mass'][0] < run['samples'][0]['mass'][0]
+
+
+@pytest.mark.parametrize('adaptive', [False, True])
+def test_body_detail_and_lasting_tides_coexist_with_master_modules(tmp_path, adaptive):
+    source = _write(
+        tmp_path / 'combined.json', dimensions=3, bodies=('sun', 'earth'),
+        collision='stop_on_contact', tides=True, drag=True, body_detail='spin', lasting_tides=True,
+        relativistic=True, mass_loss=True, outside={'flybys': {'seed': 3}}, years=0.05)
+    document = json.loads(source.read_text())
+    document['experiment']['adaptive'] = adaptive
+    source.write_text(json.dumps(document))
+    assert main(['--build', str(source)]) == 0
+    playback = json.loads(source.with_suffix('.sidereel').read_text())
+    physics = playback['physics']
+    assert physics['body_detail'] == 'spin'
+    for key in ('lasting_tides', 'tides', 'gas_dust_drag', 'relativistic_corrections', 'stellar_mass_loss'):
+        assert physics[key] is True
+    assert physics['outside_pulls']['enabled'] is True
+    assert physics['adaptive'] is adaptive
+    assert physics['path'] == 'formation'
+    run = playback['runs'][0]
+    assert run['status'] == 'complete'
+    assert run['samples'][-1]['mass'][0] < run['samples'][0]['mass'][0]
+    assert playback['experiment']['physics'] == document['physics']
+
+
+def test_files_without_body_detail_keys_keep_working(tmp_path):
+    source = _write(tmp_path / 'legacy.json', years=0.005)
+    document = json.loads(source.read_text())
+    del document['physics']['body_detail']
+    del document['physics']['lasting_tides']
+    source.write_text(json.dumps(document))
+    assert main(['--build', str(source)]) == 0
+    playback = json.loads(source.with_suffix('.sidereel').read_text())
+    assert playback['physics']['body_detail'] == 'point_mass'
+    assert playback['physics']['lasting_tides'] is False

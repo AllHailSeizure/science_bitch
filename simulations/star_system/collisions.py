@@ -17,7 +17,7 @@ from collections.abc import Mapping
 
 import numpy as np
 
-from .core import G, System
+from .core import G
 from .model import BodySpec
 from .initialization import PreparedSystem
 from .history import StateFrame
@@ -171,8 +171,8 @@ def _merge_group(prepared, ids):
         message += ' Perfect merge is a disclosed option, not a general collision law.'
     event = CollisionEvent(s.time, 'merge', ids, key, ancestry, lost, spin, message,
                            rule=rule, outcome='merge', descendant_ids=(key,))
-    merged = PreparedSystem(System(np.append(s.masses[keep], total), np.vstack((s.r[keep], r)),
-                            np.vstack((s.v[keep], v)), s.dt, s.time),
+    merged = PreparedSystem(s.with_state(np.vstack((s.r[keep], r)), np.vstack((s.v[keep], v)), s.time,
+                                         masses=np.append(s.masses[keep], total)),
         tuple(prepared.body_ids[i] for i in keep)+(key,), tuple(prepared.body_specs[i] for i in keep)+(spec,),
         prepared.setup, prepared.events+(event,), prepared.segment, references)
     return merged, event
@@ -423,7 +423,7 @@ def _graze_pair(prepared, first_id, second_id, speed, impact_parameter):
                            message, rule=rule, outcome='graze', descendant_ids=ids, impact_speed=float(speed),
                            impact_parameter=float(impact_parameter), approach_distance=float(distance),
                            location=tuple(float(component) for component in origin))
-    return replace(prepared, system=System(masses.copy(), positions, velocities, system.dt, system.time),
+    return replace(prepared, system=system.with_state(positions, velocities, system.time, masses=masses.copy()),
                    events=prepared.events+(event,))
 
 
@@ -497,8 +497,9 @@ def _fragment_pair(prepared, first_id, second_id, speed, impact_parameter, escap
                            location=tuple(float(component) for component in origin))
     keep = [index for index, body_id in enumerate(prepared.body_ids) if body_id not in ids]
     references = tuple(keys[0] if prepared.reference_ids[index] in ids else prepared.reference_ids[index] for index in keep)+(None, None, None)
-    updated = System(np.append(system.masses[keep], row_masses), np.vstack((system.r[keep], child_positions)),
-                     np.vstack((system.v[keep], child_velocities)), system.dt, system.time)
+    updated = system.with_state(np.vstack((system.r[keep], child_positions)),
+                                np.vstack((system.v[keep], child_velocities)), system.time,
+                                masses=np.append(system.masses[keep], row_masses))
     return PreparedSystem(updated, tuple(prepared.body_ids[index] for index in keep)+tuple(keys),
                           tuple(prepared.body_specs[index] for index in keep)+tuple(specs),
                           prepared.setup, reserved+(event,), prepared.segment, references)
@@ -525,7 +526,8 @@ def _absorb_tracers(prepared, absorbed, target_map):
             f'Point tracer {particle} absorbed by {target}; tracer removed with zero mass/momentum feedback; no remnant selection.',
             target, rule=rule, outcome='absorption', descendant_ids=())
         keep = [i for i, key in enumerate(prepared.body_ids) if key != particle]
-        prepared = replace(prepared, system=System(system.masses[keep], system.r[keep], system.v[keep], system.dt, system.time),
+        prepared = replace(prepared, system=system.with_state(system.r[keep], system.v[keep], system.time,
+                                                              masses=system.masses[keep]),
             body_ids=tuple(prepared.body_ids[i] for i in keep), body_specs=tuple(prepared.body_specs[i] for i in keep),
             reference_ids=tuple(prepared.reference_ids[i] for i in keep), events=prepared.events+(event,))
     return prepared
@@ -787,6 +789,28 @@ def _append_passage_logs(prepared, start_state, approaches, resolved):
 
 
 def advance_prepared(prepared):
+    """One configured macro step, including opt-in relativistic terms and stellar mass loss.
+
+    Both modules are off unless the setup enables them. The Newtonian step is
+    unchanged when they are off.
+    """
+    setup = prepared.setup
+    relativistic = setup is not None and setup.relativistic.enabled
+    mass_loss = setup is not None and setup.stellar_mass_loss.enabled
+    if not relativistic and not mass_loss:
+        return _advance_prepared(prepared)
+    from .mass_loss import apply_stellar_mass_loss
+    from .relativity import relativistic_context
+    started = float(prepared.system.time)
+    with relativistic_context(setup):
+        result = _advance_prepared(prepared)
+    elapsed = float(result.prepared.system.time) - started
+    if mass_loss and elapsed > 0.0:
+        result = AdvanceResult(apply_stellar_mass_loss(result.prepared, elapsed), result.event_frames, result.stopped)
+    return result
+
+
+def _advance_prepared(prepared):
     """One configured macro dt, or no mutation on collision-mode rejection.
 
     All actual positive Verlet substeps obey half the existing start/end gravity
@@ -809,9 +833,8 @@ def advance_prepared(prepared):
     validate_collision_state(prepared)
     policy = prepared.setup.collision_policy
     old = prepared.system
-    # A copy so a rejected step does not advance the caller's spin.
-    detail = None if old.detail is None else old.detail.copy()
-    trial = replace(prepared, system=System(old.masses.copy(), old.r.copy(), old.v.copy(), old.dt, old.time, detail=detail))
+    trial = replace(prepared, system=old.with_state(old.r.copy(), old.v.copy(), old.time, masses=old.masses.copy()))
+    trial.system.detail = None if old.detail is None else old.detail.copy()
     end = old.time+old.dt
     if not math.isfinite(end) or end <= old.time:
         raise ValueError('Collision numerical halt: macro timestep cannot advance clock; state preserved.')
@@ -855,7 +878,7 @@ def advance_prepared(prepared):
             elapsed = contacts[0][0] if contacts else h
             r = s.r+s.v*elapsed+.5*acceleration*elapsed**2
             vhalf = s.v+.5*acceleration*elapsed
-            candidate = System(s.masses.copy(), r, vhalf, old.dt, s.time+elapsed, detail=s.detail)
+            candidate = s.with_state(r, vhalf, s.time+elapsed, masses=s.masses.copy(), dt=old.dt)
             # Endpoint force is safe only after the sweep has clipped first contact.
             candidate.v = vhalf+.5*elapsed*candidate.accelerations(floor)
             if not np.isfinite(candidate.r).all() or not np.isfinite(candidate.v).all():
