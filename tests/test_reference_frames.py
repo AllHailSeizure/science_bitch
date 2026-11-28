@@ -52,6 +52,24 @@ def test_historical_samples_use_their_own_angle():
     assert not np.allclose(wrong, rotate_about_sun(first, 'sun', 'jupiter'))
 
 
+def test_three_dimensional_samples_project_onto_the_horizontal_plane():
+    frame = sample()
+    original = frame.r.copy()
+    spatial = replace(
+        frame,
+        r=np.column_stack((frame.r, np.full(len(frame.r), 0.4))),
+        v=np.column_stack((frame.v, np.zeros(len(frame.v)))),
+    )
+    shown = frame_transform(spatial, 'world').positions(spatial.r)
+    assert shown.shape == (len(frame.r), 2)
+    np.testing.assert_allclose(shown, original)
+    np.testing.assert_array_equal(spatial.r[:, :2], original)
+    assert spatial.r.shape[1] == 3
+    guides = lagrange_guides(spatial, 'sun', 'jupiter')
+    assert guides.shape == (2, 3)
+    np.testing.assert_allclose(guides[:, :2], lagrange_guides(frame, 'sun', 'jupiter'))
+
+
 def test_guides_are_equilateral_geometry_and_missing_references_are_explicit():
     frame = sample()
     guides = lagrange_guides(frame, 'sun', 'jupiter')
