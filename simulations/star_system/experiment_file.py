@@ -1,13 +1,15 @@
 """Blank experiment JSON and the playback file ``sidereel --build`` writes.
 
-``sidereel --new`` writes every section, blank, in the agreed order.
+``sidereel --new`` writes every section, blank, in the agreed order:
+dimensions, bodies, physics, and the run. Newtonian gravity is what
+Sidereel uses. A ``gravity_model`` field is refused (see #77).
 ``sidereel --build`` checks that file and integrates it with the existing
 solver. The ``.sidereel`` result is JSON: one run, or several when the file
 sweeps a variable or scans until a watched outcome.
 
-Relativistic gravity, custom bodies, and collision mode ``ignore`` are
-reserved and refused. Collision rules, gas-dust drag, and tides, including a
-3D state, run together on the combined formation path.
+Custom bodies and collision mode ``ignore`` are reserved and refused.
+Collision rules, gas-dust drag, and tides, including a 3D state, run
+together on the combined formation path.
 """
 import argparse
 import json
@@ -31,8 +33,6 @@ from .tides import TideEvent
 EXPERIMENT_SCHEMA = 'sidereel-experiment-v1'
 PLAYBACK_SCHEMA = 'sidereel-playback-v1'
 PLAYBACK_SUFFIX = '.sidereel'
-GRAVITY_NEWTONIAN = 'newtonian'
-GRAVITY_RELATIVISTIC = 'relativistic'
 COLLISION_MODES = ('stop_on_contact', 'perfect_merge', 'speed_angle', 'ignore')
 _FORMATION_COLLISION = ('stop_on_contact', 'perfect_merge', 'speed_angle')
 # Far enough that a short catalog orbit is not dropped as an ejection.
@@ -50,7 +50,7 @@ _CONTACT_KINDS = {
     'close_encounter': ('close_encounter',),
 }
 _MAX_RUNS = 100
-_DOCUMENT_KEYS = ('schema', 'dimensions', 'gravity_model', 'bodies', 'physics', 'experiment')
+_DOCUMENT_KEYS = ('schema', 'dimensions', 'bodies', 'physics', 'experiment')
 _BODY_KEYS = ('catalog', 'new')
 _PHYSICS_KEYS = ('collision', 'tides', 'gas_dust_drag')
 _EXPERIMENT_KEYS = ('independent_variable', 'fixed_duration', 'open_scan', 'watch_for')
@@ -70,7 +70,6 @@ def empty_experiment():
     return {
         'schema': EXPERIMENT_SCHEMA,
         'dimensions': None,
-        'gravity_model': None,
         'bodies': {'catalog': [], 'new': None},
         'physics': {'collision': None, 'tides': None, 'gas_dust_drag': None},
         'experiment': {
@@ -117,7 +116,6 @@ class _Scan:
 @dataclass(frozen=True)
 class Experiment:
     dimensions: int
-    gravity_model: str
     catalog: tuple[str, ...]
     collision: str | None
     tides: bool | None
@@ -139,7 +137,6 @@ class Experiment:
         return {
             'schema': EXPERIMENT_SCHEMA,
             'dimensions': self.dimensions,
-            'gravity_model': self.gravity_model,
             'bodies': {'catalog': list(self.catalog), 'new': None},
             'physics': {'collision': self.collision, 'tides': self.tides, 'gas_dust_drag': self.gas_dust_drag},
             'experiment': {
@@ -195,7 +192,6 @@ def build_experiment(experiment):
         'source_name': None,
         'units': {'length': 'AU', 'mass': 'solar_mass', 'time': 'Julian_year', 'velocity': 'AU/Julian_year'},
         'dimensions': experiment.dimensions,
-        'gravity_model': experiment.gravity_model,
         'gravity_note': (
             'Newtonian inverse-square gravity. '
             'Dimension 2 stores that motion in a plane.'
@@ -265,17 +261,20 @@ def main(argv=None):
 
 
 def _decode(document):
+    if type(document) is dict and 'gravity_model' in document:
+        raise ValueError(
+            'gravity_model is not an experiment field (see #77). '
+            'Newtonian gravity is what Sidereel uses. Remove gravity_model.')
     _object(document, _DOCUMENT_KEYS, 'Experiment')
     if document['schema'] != EXPERIMENT_SCHEMA:
         raise ValueError(f'Unsupported experiment schema. Expected {EXPERIMENT_SCHEMA}.')
     dimensions = _dimensions(document['dimensions'])
-    gravity = _gravity(document['gravity_model'])
     catalog = _bodies(document['bodies'])
     collision, tides, drag = _physics(document['physics'])
     variable, years, scan, watch = _details(document['experiment'])
     if variable is not None and variable.body not in catalog:
         raise ValueError(f'independent_variable.body {variable.body!r} is not in bodies.catalog.')
-    return Experiment(dimensions, gravity, catalog, collision, tides, drag, variable, years, scan, watch)
+    return Experiment(dimensions, catalog, collision, tides, drag, variable, years, scan, watch)
 
 
 def _dimensions(value):
@@ -283,18 +282,6 @@ def _dimensions(value):
         raise ValueError('Choose dimensions 2 or 3.')
     if type(value) is not int or value not in (2, 3):
         raise ValueError('Dimensions must be 2 or 3.')
-    return value
-
-
-def _gravity(value):
-    if value is None:
-        raise ValueError('Choose a gravity model. newtonian is available. Relativistic gravity is not implemented yet.')
-    if type(value) is not str:
-        raise ValueError('Gravity model must be newtonian. Relativistic gravity is not implemented yet.')
-    if value == GRAVITY_RELATIVISTIC:
-        raise ValueError('Relativistic gravity is not implemented yet. Choose newtonian.')
-    if value != GRAVITY_NEWTONIAN:
-        raise ValueError('Gravity model must be newtonian. Relativistic gravity is not implemented yet.')
     return value
 
 
