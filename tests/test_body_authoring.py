@@ -143,7 +143,10 @@ def test_editor_live_placement_arrow_drag_confirm_retains_camera_and_restart(app
     editor.category.set_active(4)
     editor.fields['mass'].set_val('1e-8')
     editor.fields['radius'].set_val('1e-7')
-    click(app,app.ax,coordinates(np.array((0,2))+old.r[0]-app.scene.origin))
+    # The click is an overhead display point. Compare x and y only; a stored height is not part of the pointer.
+    sun_xy = np.asarray(old.r[0], dtype=float)[:2]
+    origin_xy = np.asarray(app.scene.origin, dtype=float)[:2]
+    click(app,app.ax,coordinates(np.array((0., 2.))+sun_xy-origin_xy))
     np.testing.assert_allclose([float(editor.fields[k].text) for k in ('x','y')],(0,2),atol=.02)
     editor.fields['vx'].set_val('2')
     editor.fields['vy'].set_val('1')
@@ -167,7 +170,9 @@ def test_editor_live_placement_arrow_drag_confirm_retains_camera_and_restart(app
     np.testing.assert_array_equal(app.system.r[:-1],old_r)
     np.testing.assert_array_equal(app.system.v[:-1],old_v)
     assert app.system.time == elapsed
-    np.testing.assert_allclose(app.system.v[-1]-old_v[0],(4,-3),atol=.1)
+    expected_v = np.zeros(app.system.v.shape[1])
+    expected_v[:2] = (4, -3)
+    np.testing.assert_allclose(app.system.v[-1]-old_v[0], expected_v, atol=.1)
     new_id=app.prepared.body_ids[-1]
     assert app.scene.trails_by_id[new_id].get_segments()==[]
     app.restart()
@@ -395,6 +400,8 @@ def test_moon_editor_catalog_distance_vector_cancel_and_live_insertion(app):
     e.fields['separation'].set_val('384400')
     click(app,e.circular.ax)
     relative_v=np.array([float(e.fields[k].text) for k in ('vx','vy')])
+    if e._vertical_speed is not None:
+        relative_v=np.append(relative_v, e._vertical_speed)
     click(app,e.confirm.ax)
     assert app.body_editor is None and app.paused and app.following
     np.testing.assert_array_equal(app.system.r[:-1],r)

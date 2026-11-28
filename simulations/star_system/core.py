@@ -2,17 +2,25 @@
 
 Positive masses mutually interact; zero-mass test particles only receive gravity.
 Positions are planar (two components) or three-dimensional (three components).
-The overhead presets stay planar. A third component is an explicit initial state.
+Regular presets store three components with a disclosed inclination.
+``make_system`` stays the planar circular helper. A planar recording is not padded.
 ``external_acceleration`` is an optional extra force. It stays unset unless a
 caller attaches one, so a plain system feels only its own bodies.
 
 Fixed-step Yoshida fourth-order composition of velocity Verlet.
 Steps stay fixed within each uninterrupted segment; insertion can begin a new
 segment with a disclosed smaller step. Close encounters halt instead of silently losing accuracy.
+An adaptive run uses the same macro schedule as formation: the authored dt is the maximum.
 """
 from dataclasses import dataclass
+import math
 import numpy as np
 from .data import STARS, PLANETS
+
+# Below this floor a close pass is not stepped. The positive Verlet solver
+# stays in place; REBOUND is the documented candidate if a run reaches it.
+ADAPTIVE_DT_MIN = 1e-10
+ADAPTIVE_GROWTH = 2.0
 
 # Yoshida fourth-order composition weights for velocity Verlet.
 _YOSHIDA_W1 = 1.0 / (2.0 - 2.0 ** (1.0 / 3.0))
@@ -29,6 +37,35 @@ SOLAR_RADIUS_AU = 695700 / 149597870.7
 
 def period(star, planet, distance):
     return kepler_period(distance, G*(STARS[star].mass + PLANETS[planet].mass))
+
+
+def adaptive_macro_step(current, maximum, floor, limit):
+    """Next macro step, or None when ``limit`` is below ``floor``.
+
+    The authored step is the maximum. A closer pair uses the resolution limit.
+    After a pass the step grows by at most ``ADAPTIVE_GROWTH`` until it is back
+    at the maximum. Callers leave the state unmoved when this returns None.
+    """
+    if not math.isfinite(limit) or limit >= maximum:
+        target = maximum
+    elif limit < floor:
+        return None
+    else:
+        target = limit
+    if target > current*ADAPTIVE_GROWTH:
+        target = current*ADAPTIVE_GROWTH
+    if target > maximum:
+        target = maximum
+    return float(target)
+
+
+def adaptive_floor_reason(limit, floor):
+    """Halt text when a close pass is below the shared adaptive floor."""
+    return (
+        'Adaptive timestep halt: the pair resolution limit '
+        f'{float(limit):.6g} yr is below the floor of {float(floor):.6g} yr. '
+        'The state was not advanced. A close-encounter integrator such as REBOUND '
+        'remains the candidate if a physical-radius run reaches this floor.')
 
 
 @dataclass

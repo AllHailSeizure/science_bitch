@@ -27,7 +27,10 @@ import tracemalloc
 import numpy as np
 
 from .collisions import CollisionEvent, advance_prepared
-from .core import G, SOLAR_RADIUS_AU, System, kepler_period
+from .core import (
+    ADAPTIVE_DT_MIN, ADAPTIVE_GROWTH, G, SOLAR_RADIUS_AU, System, adaptive_floor_reason,
+    adaptive_macro_step, kepler_period,
+)
 from .data import AU_KM, PLANETS
 from .history import StateFrame
 from .initialization import PreparedSystem, build_system
@@ -59,10 +62,6 @@ BENCHMARK_OUTER = 3.2
 BENCHMARK_EMBRYO_MASS = 2e-6
 BENCHMARK_EMBRYO_RADIUS = 0.04
 BENCHMARK_ECCENTRICITY = 0.12
-# Below this floor a close pass is not stepped. The positive Verlet solver
-# stays in place; REBOUND is the documented candidate if a run reaches it.
-ADAPTIVE_DT_MIN = 1e-10
-ADAPTIVE_GROWTH = 2.
 PHYSICAL_PROBE_COUNT = 8
 PHYSICAL_PROBE_SEED = 70
 PHYSICAL_PROBE_DURATION_YEARS = 0.25
@@ -84,7 +83,7 @@ _ASSUMPTIONS = (
     'Ejection is a bookkeeping cut. After it, the frozen body no longer exchanges gravity with the active set.',
     'Stellar contact is logged as unmodeled and the run continues, including when gas drag is on. This prototype does not merge stars. Stop on contact is the only collision choice that ends the run.',
     'Gravity is unsoftened Newtonian gravity. A run is planar unless its positions have a third component. The authored dt is the fixed step, or the maximum step when adaptive control is on. During an unmodeled stellar overlap that pair is evaluated at the contact separation so the step can cross it.',
-    'The overhead observatory draws planar motion. A third component is integrated and recorded, and it is not projected into that view.',
+    'The overhead observatory projects a three-dimensional sample by dropping the third component. A planar sample stays two components and is not padded.',
 )
 _QUESTIONS = (
     'Which initial parcels make up a surviving body, and how much mass came from each?',
@@ -99,7 +98,7 @@ _NOT_MODELED = (
     'Dust swarms, grain growth, and the swarm-to-body rule. Those stay in the gas-and-dust prototype. Bodies on this path use that prototype\'s quadratic drag when drag is enabled.',
     'Tree-code grouping of distant mass. Direct summation stays in use, and a grouped force would still have to keep parcel identity.',
     'Partial accretion and erosion beyond the disclosed speed-angle lost-mass fraction.',
-    'An overhead drawing of the third dimension. The observatory remains a planar view.',
+    'A high-detail three-dimensional render. The observatory stays an overhead projection.',
     'Relativity and stellar internal structure. A dedicated stellar merger stays in its own scenario.',
 )
 _SCOPE = (
@@ -782,7 +781,7 @@ class FormationExperiment:
         if self.dimensions == 2:
             extras.append('This run is planar: every position and velocity has two components.')
         else:
-            extras.append('This run is three-dimensional. The overhead observatory does not draw the third component.')
+            extras.append('This run is three-dimensional. The sample keeps the third component. The overhead view drops it and does not pad a planar sample.')
         if self.adaptive:
             extras.append(
                 f'Adaptive macro step: at most {self.dt_max:.6g} yr, shrinking to the pair resolution limit, '
@@ -855,12 +854,7 @@ class FormationExperiment:
             scheduled = self._scheduled_dt()
             if scheduled is None:
                 self.status = 'halted'
-                limit = self.prepared.system.resolution_limit()
-                self.reason = (
-                    'Adaptive timestep halt: the pair resolution limit '
-                    f'{limit:.6g} yr is below the floor of {self.dt_min:.6g} yr. '
-                    'The state was not advanced. A close-encounter integrator such as REBOUND '
-                    'remains the candidate if a physical-radius run reaches this floor.')
+                self.reason = adaptive_floor_reason(self.prepared.system.resolution_limit(), self.dt_min)
                 break
             previous = float(self.prepared.system.dt)
             self.prepared.system.dt = scheduled
@@ -1308,19 +1302,9 @@ class FormationExperiment:
         """Authored step, or a smaller one while a pair is unresolved."""
         if not self.adaptive:
             return float(self.prepared.system.dt)
-        limit = float(self.prepared.system.resolution_limit())
-        if not math.isfinite(limit) or limit >= self.dt_max:
-            target = self.dt_max
-        elif limit < self.dt_min:
-            return None
-        else:
-            target = limit
-        previous = float(self.prepared.system.dt)
-        if target > previous*ADAPTIVE_GROWTH:
-            target = previous*ADAPTIVE_GROWTH
-        if target > self.dt_max:
-            target = self.dt_max
-        return float(target)
+        return adaptive_macro_step(
+            float(self.prepared.system.dt), self.dt_max, self.dt_min,
+            float(self.prepared.system.resolution_limit()))
 
 
 def _carriers(sample, parcels):

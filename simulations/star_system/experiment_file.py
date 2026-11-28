@@ -25,9 +25,9 @@ from pathlib import Path
 import numpy as np
 
 from .collisions import CollisionEvent
-from .core import G, SOLAR_RADIUS_AU, make_system
+from .core import ADAPTIVE_DT_MIN, ADAPTIVE_GROWTH, G, SOLAR_RADIUS_AU, make_system
 from .data import CATALOG, PLANETS, STARS
-from .initialization import build_system
+from .initialization import PRESET_INCLINATION, build_system, with_preset_inclination
 from .model import DragPolicy, InitialBody, InitialSetup, PropertySource, TidalPolicy
 from .recording import Calculation, CalculationRequest
 from .outside_pulls import attach, parse_outside_pulls, playback_report, run_document
@@ -55,7 +55,7 @@ _CONTACT_KINDS = {
 _MAX_RUNS = 100
 _DOCUMENT_KEYS = ('schema', 'dimensions', 'bodies', 'physics', 'experiment')
 _BODY_KEYS = ('catalog', 'new')
-_PHYSICS_KEYS = ('collision', 'tides', 'gas_dust_drag', 'outside_pulls')
+_PHYSICS_KEYS = ('collision', 'tides', 'gas_dust_drag')
 _EXPERIMENT_KEYS = ('independent_variable', 'fixed_duration', 'open_scan', 'watch_for')
 _SWEEP_KEYS = ('parameter', 'body', 'start', 'stop', 'step')
 _SCAN_VARIABLE_KEYS = ('parameter', 'body', 'start')
@@ -127,6 +127,7 @@ class Experiment:
     years: float | None
     scan: _Scan | None
     watch_for: tuple[str, ...]
+    adaptive: bool = False
     outside: object | None = None
 
     @property
@@ -148,13 +149,19 @@ class Experiment:
                 'gas_dust_drag': self.gas_dust_drag,
                 'outside_pulls': None if self.outside is None else self.outside.document(),
             },
-            'experiment': {
-                'independent_variable': None if self.variable is None else self.variable.document(),
-                'fixed_duration': None if self.years is None else {'years': self.years},
-                'open_scan': None if self.scan is None else self.scan.document(),
-                'watch_for': list(self.watch_for),
-            },
+            'experiment': self._experiment_section(),
         }
+
+    def _experiment_section(self):
+        section = {
+            'independent_variable': None if self.variable is None else self.variable.document(),
+            'fixed_duration': None if self.years is None else {'years': self.years},
+            'open_scan': None if self.scan is None else self.scan.document(),
+            'watch_for': list(self.watch_for),
+        }
+        if self.adaptive:
+            section['adaptive'] = True
+        return section
 
 
 def write_empty(path):
@@ -201,17 +208,29 @@ def build_experiment(experiment):
         'source_name': None,
         'units': {'length': 'AU', 'mass': 'solar_mass', 'time': 'Julian_year', 'velocity': 'AU/Julian_year'},
         'dimensions': experiment.dimensions,
-        'gravity_note': (
-            'Newtonian inverse-square gravity. '
-            'Dimension 2 stores that motion in a plane.'
-        ),
+        'gravity_note': _gravity_note(experiment),
         'physics': _physics_report(experiment, runs),
         'experiment': experiment.document(),
         'requested_years': years,
         'scan': scan,
         'runs': runs,
     }
+    if experiment.dimensions == 3:
+        playback['inclination_rad'] = float(PRESET_INCLINATION)
     return playback
+
+
+def _gravity_note(experiment):
+    if experiment.dimensions == 3:
+        return (
+            'Newtonian inverse-square gravity. '
+            f'Dimension 3 stores three components, inclined by {PRESET_INCLINATION:g} rad about the x axis. '
+            'A two-component recording is not given a zero z component.'
+        )
+    return (
+        'Newtonian inverse-square gravity. '
+        'Dimension 2 stores that motion in a plane.'
+    )
 
 
 def collect_watch_events(frames, watch, *, status, reason, user_collision, primary_id):
@@ -284,10 +303,11 @@ def _decode(document):
     if outside is not None and dimensions != 3:
         raise ValueError(
             'Outside pulls are a three-dimensional galactic field for very wide orbits. Choose dimensions 3.')
-    variable, years, scan, watch = _details(document['experiment'])
+    variable, years, scan, watch, adaptive = _details(document['experiment'])
     if variable is not None and variable.body not in catalog:
         raise ValueError(f'independent_variable.body {variable.body!r} is not in bodies.catalog.')
-    return Experiment(dimensions, catalog, collision, tides, drag, variable, years, scan, watch, outside)
+    return Experiment(
+        dimensions, catalog, collision, tides, drag, variable, years, scan, watch, adaptive, outside)
 
 
 def _dimensions(value):
@@ -341,6 +361,15 @@ def _bodies(value):
 
 
 def _physics(value):
+    # outside_pulls is optional so a 3D preset file written before the key
+    # existed still builds, with the module off.
+    if type(value) is not dict:
+        raise ValueError(
+            'Physics: expected fields collision, tides, gas_dust_drag, and optional outside_pulls.')
+    outside_value = None
+    if 'outside_pulls' in value:
+        outside_value = value['outside_pulls']
+        value = {key: item for key, item in value.items() if key != 'outside_pulls'}
     _object(value, _PHYSICS_KEYS, 'Physics')
     collision = value['collision']
     if collision is not None:
@@ -353,11 +382,20 @@ def _physics(value):
                 'or applies perfect merge or speed-angle; it does not let bodies pass through.')
     tides = _optional_bool(value['tides'], 'physics.tides')
     drag = _optional_bool(value['gas_dust_drag'], 'physics.gas_dust_drag')
-    outside = parse_outside_pulls(value['outside_pulls'])
+    outside = parse_outside_pulls(outside_value)
     return collision, tides, drag, outside
 
 
 def _details(value):
+    if type(value) is not dict:
+        raise ValueError(
+            'Experiment: expected exactly fields independent_variable, fixed_duration, open_scan, watch_for.')
+    adaptive = False
+    if 'adaptive' in value:
+        if type(value['adaptive']) is not bool:
+            raise ValueError('experiment.adaptive must be true or false.')
+        adaptive = value['adaptive']
+        value = {key: item for key, item in value.items() if key != 'adaptive'}
     _object(value, _EXPERIMENT_KEYS, 'Experiment')
     watch = _watch(value['watch_for'])
     duration = value['fixed_duration']
@@ -371,11 +409,11 @@ def _details(value):
         parsed_scan = _open(scan, watch)
         if variable is None:
             raise ValueError('An open scan needs an independent variable.')
-        return _variable(variable, _SCAN_VARIABLE_KEYS, parsed_scan.increment), None, parsed_scan, watch
+        return _variable(variable, _SCAN_VARIABLE_KEYS, parsed_scan.increment), None, parsed_scan, watch, adaptive
     years = _duration(duration)
     if variable is None:
-        return None, years, None, watch
-    return _variable(variable, _SWEEP_KEYS, None), years, None, watch
+        return None, years, None, watch, adaptive
+    return _variable(variable, _SWEEP_KEYS, None), years, None, watch, adaptive
 
 
 def _watch(value):
@@ -460,12 +498,18 @@ def _catalog_setup(names, dimensions):
     for key, position, velocity in zip((star, *planets), system.r, system.v):
         r = tuple(float(component) for component in position)
         v = tuple(float(component) for component in velocity)
-        if dimensions == 3:
-            r = r + (0.0,)
-            v = v + (0.0,)
         bodies.append(InitialBody(key, CATALOG[key], r, v))
     name = ' / '.join(body.spec.name for body in bodies)
-    return InitialSetup(name, tuple(bodies), float(system.dt), provenance={'origin': EXPERIMENT_SCHEMA})
+    setup = InitialSetup(name, tuple(bodies), float(system.dt), provenance={'origin': EXPERIMENT_SCHEMA})
+    if dimensions == 2:
+        return setup
+    inclined = with_preset_inclination(setup)
+    return replace(inclined, provenance={
+        **dict(inclined.provenance),
+        'dimensions': 3,
+        'inclination_rad': float(PRESET_INCLINATION),
+        'adaptive': False,
+    })
 
 
 def _setup_for_value(experiment, base, value):
@@ -485,7 +529,7 @@ def _setup_for_value(experiment, base, value):
         dt = setup.dt
     if not math.isfinite(dt) or dt <= 0:
         raise ValueError('The varied initial state has no usable fixed step.')
-    prepared = replace(setup, dt=dt, collision_mode=mode, tides=tides, drag=drag)
+    prepared = replace(setup, dt=dt, collision_mode=mode, tides=tides, drag=drag, adaptive=experiment.adaptive)
     build_system(prepared)
     return prepared
 
@@ -542,7 +586,8 @@ def _integrate(setup, years, outside, run_index):
 
 def _integrate_formation(setup, years, outside, run_index):
     from .formation import FormationExperiment
-    experiment = FormationExperiment(setup, ejection_radius=_EJECTION_AU, sample_stride=1)
+    experiment = FormationExperiment(
+        setup, ejection_radius=_EJECTION_AU, sample_stride=1, adaptive=setup.adaptive)
     flybys = ()
     if outside is not None:
         flybys = attach(experiment.prepared.system, outside, run_index, years)
@@ -646,16 +691,25 @@ def _open_scan(experiment, base):
     return runs, stopped
 
 
+def _step_text(experiment):
+    if experiment.adaptive:
+        return (
+            f'adaptive step (floor {ADAPTIVE_DT_MIN:g} yr, growth at most {ADAPTIVE_GROWTH:g})'
+        )
+    return 'fixed step'
+
+
 def _physics_report(experiment, runs):
     mode = experiment.collision
     engine = _engine_mode(experiment)
     combined = _uses_combined_path(experiment)
+    step = _step_text(experiment)
     if combined:
         drag = 'annular' if experiment.drag_on else 'off'
         tides = 'close-pass-energy-dissipation-v1' if experiment.tides_on else 'off'
         note = (
             f'Combined formation path: collision {engine}, gas drag {drag}, tides {tides}, '
-            f'{experiment.dimensions}D, fixed step.')
+            f'{experiment.dimensions}D, {step}.')
         if mode is None:
             note += ' No collision module was selected, so contact ends the run and does not merge.'
     elif mode == 'stop_on_contact':
@@ -668,8 +722,13 @@ def _physics_report(experiment, runs):
         note = (
             'No collision module was selected. The run uses the existing Yoshida integrator '
             'and halts if a close encounter is unresolved.')
+    if experiment.adaptive and not combined:
+        note += f' The close-pass schedule is an {step}.'
+    elif not experiment.adaptive and not combined:
+        note += ' The run uses a fixed step.'
     if experiment.tides_on and not combined:
-        note += ' Tides use close-pass-energy-dissipation-v1 on the fixed-step planar path.'
+        path = 'Yoshida path' if experiment.adaptive else 'fixed-step planar path'
+        note += f' Tides use close-pass-energy-dissipation-v1 on the {path}.'
     if experiment.outside is not None:
         note += ' Outside pulls are on along the 3D path.'
     return {
@@ -677,6 +736,7 @@ def _physics_report(experiment, runs):
         'engine_collision_mode': engine,
         'tides': experiment.tides_on,
         'gas_dust_drag': experiment.drag_on if combined else False,
+        'adaptive': experiment.adaptive,
         'outside_pulls': playback_report(experiment.outside, runs),
         'path': 'formation' if combined else 'yoshida',
         'note': note,

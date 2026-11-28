@@ -190,6 +190,8 @@ def test_build_applies_outside_pulls_on_the_three_dimensional_path(tmp_path):
     report = playback['physics']['outside_pulls']
     assert run['status'] == 'complete'
     assert len(run['samples'][0]['r'][0]) == 3
+    assert any(abs(component[2]) > 0 for component in run['samples'][0]['v'])
+    assert 'not given a zero z' in playback['gravity_note']
     assert playback['physics']['path'] == 'yoshida'
     assert '3D path' in playback['physics']['note']
     assert report['enabled'] is True
