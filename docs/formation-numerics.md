@@ -1,6 +1,6 @@
 # Formation numerics
 
-This note is the dimensionality, radius, and close-encounter schedule for late-stage formation. The code is `simulations.star_system.formation`. Gravity is the base. Collision handling, gas drag, and close-pass tides are separate switches on that path. Perfect merge remains the default collision rule and its remnant is unchanged. The inflated planar benchmark and its measurements stay in [formation-feasibility.md](formation-feasibility.md).
+This note is the dimensionality, radius, and close-encounter schedule for late-stage formation. The code is `simulations.star_system.formation`. Gravity is the base. Collision handling, gas drag, and close-pass tides are separate switches on that path. Relativistic corrections and stellar mass loss are separate opt-in modules and are off in the runs recorded here, so these notes do not claim perihelion precession, gravitational-wave inspiral, or an orbit that widened because a star lost mass. Perfect merge remains the default collision rule and its remnant is unchanged. The inflated planar benchmark and its measurements stay in [formation-feasibility.md](formation-feasibility.md).
 
 The overhead view projects three-dimensional motion by dropping the third component. A two-component sample stays planar and is not padded with a zero z. It does not draw a perspective render. Tree gravity is not in this schedule.
 

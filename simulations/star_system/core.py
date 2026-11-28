@@ -25,6 +25,8 @@ ADAPTIVE_GROWTH = 2.0
 # Yoshida fourth-order composition weights for velocity Verlet.
 _YOSHIDA_W1 = 1.0 / (2.0 - 2.0 ** (1.0 / 3.0))
 _YOSHIDA_W0 = -(2.0 ** (1.0 / 3.0)) * _YOSHIDA_W1
+# Set by the opt-in relativistic module. None leaves this file's Newtonian sum unchanged.
+_extra_acceleration = None
 
 
 def kepler_period(semi_major: float, mu: float) -> float:
@@ -94,19 +96,24 @@ class System:
         d2 = np.sum(delta**2, axis=-1)
         d2[sources, np.arange(len(sources))] = np.inf
         if separation_floor is None:
-            acc = G*np.sum(delta * (self.masses[None, sources]/(d2*np.sqrt(d2)))[:, :, None], axis=1)
+            newton = G*np.sum(delta * (self.masses[None, sources]/(d2*np.sqrt(d2)))[:, :, None], axis=1)
         else:
             # An unmodeled stellar overlap evaluates gravity at the contact separation
             # so a fixed step can cross it. The direction stays the true separation.
             dist = np.maximum(np.sqrt(d2), np.asarray(separation_floor, dtype=float)[:, sources])
-            acc = G*np.sum(delta * (self.masses[None, sources]/(dist*dist*dist))[:, :, None], axis=1)
+            newton = G*np.sum(delta * (self.masses[None, sources]/(dist*dist*dist))[:, :, None], axis=1)
+        extra = _extra_acceleration
+        if extra is not None:
+            correction = extra(self)
+            if correction is not None:
+                newton = newton + correction
         extra = self.external_acceleration
         if extra is None:
-            return acc
+            return newton
         added = np.asarray(extra(self), dtype=float)
-        if added.shape != acc.shape or not np.isfinite(added).all():
+        if added.shape != newton.shape or not np.isfinite(added).all():
             raise ValueError('Outside pull produced a nonfinite or mis-shaped acceleration. The state was not advanced.')
-        return acc + added
+        return newton + added
 
     def resolution_limit(self, separation_floor=None):
         """Largest supported step from pair gravity and relative crossing time."""
