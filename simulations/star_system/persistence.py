@@ -12,7 +12,7 @@ import numpy as np
 
 from .model import (
     CONTACT_SOLVER_MODES, BodySpec, CollisionPolicy, DragPolicy, InitialBody, InitialSetup,
-    PopulationSpec, PropertySource, TidalPolicy,
+    PopulationSpec, PropertySource, RelativisticPolicy, StellarMassLossPolicy, TidalPolicy,
 )
 from .populations import Population
 from .initialization import build_system
@@ -109,6 +109,11 @@ def _document(setup):
     # Absent when off, so a fixed-step document and its digest stay as they were.
     if setup.adaptive:
         document['setup']['adaptive'] = True
+    # Absent when off, so a Newtonian document and its digest stay as they were.
+    if setup.relativistic.enabled:
+        document['setup']['relativistic'] = _record(setup.relativistic)
+    if setup.stellar_mass_loss.enabled:
+        document['setup']['stellar_mass_loss'] = _record(setup.stellar_mass_loss)
     return document
 
 
@@ -219,6 +224,10 @@ def _decode(document):
         keys.add('drag')
     if type(document['setup']) is dict and 'adaptive' in document['setup']:
         keys.add('adaptive')
+    if type(document['setup']) is dict and 'relativistic' in document['setup']:
+        keys.add('relativistic')
+    if type(document['setup']) is dict and 'stellar_mass_loss' in document['setup']:
+        keys.add('stellar_mass_loss')
     value = _object(document['setup'], keys, 'Setup')
     _string(value['name'], 'Setup name')
     _string(value['preset_id'], 'Preset ID', nullable=True)
@@ -246,6 +255,22 @@ def _decode(document):
         adaptive = True
     else:
         adaptive = False
+    if 'relativistic' in value:
+        raw = _object(value['relativistic'], {field.name for field in fields(RelativisticPolicy)}, 'Relativistic policy')
+        if raw['enabled'] is not True:
+            raise ValueError(
+                'A stored relativistic policy is the enabled model. Omit relativistic to leave post-Newtonian terms off.')
+        relativistic = RelativisticPolicy(**raw)
+    else:
+        relativistic = RelativisticPolicy()
+    if 'stellar_mass_loss' in value:
+        raw = _object(value['stellar_mass_loss'], {field.name for field in fields(StellarMassLossPolicy)}, 'Stellar mass-loss policy')
+        if raw['enabled'] is not True:
+            raise ValueError(
+                'A stored stellar mass-loss policy is the enabled model. Omit stellar_mass_loss to leave stellar masses constant.')
+        stellar_mass_loss = StellarMassLossPolicy(**raw)
+    else:
+        stellar_mass_loss = StellarMassLossPolicy()
     contact = value['collision_mode'] in CONTACT_SOLVER_MODES
     if document['numerical_version'] != (policy.numerical if contact else NUMERICAL_VERSION):
         raise ValueError('Unsupported numerical_version for selected collision mode.')
@@ -268,7 +293,7 @@ def _decode(document):
     setup = InitialSetup(value['name'], tuple(bodies), value['dt'], value['preset_id'],
                          population, value['collision_mode'], value['provenance'], policy,
                          source_environment={'numpy': document['environment']['numpy']}, tides=tides, drag=drag,
-                         adaptive=adaptive)
+                         relativistic=relativistic, stellar_mass_loss=stellar_mass_loss, adaptive=adaptive)
     # Validate references, overlap, known masses and numerical resolution before install.
     build_system(setup)
     return setup

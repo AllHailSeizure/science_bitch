@@ -443,7 +443,7 @@ backends redraw fully. Resize preserves center and compressed units/pixel.
 
 ## Numerical model and limits
 
-Gravity is unsoftened Newtonian gravity. The overhead presets are planar.
+Gravity is unsoftened Newtonian gravity unless an experiment turns on relativistic corrections. The overhead presets store three components.
 Formation can store a third component; that schedule is
 [formation numerics](../../docs/formation-numerics.md). The force is
 `a_i = G sum(j != i) m_j (r_j - r_i) / |r_j - r_i|^3`.
@@ -688,7 +688,9 @@ The remnant mass is the sum of the parents, and its position and velocity are
 the center of mass. Its radius is the estimate `R_sun * (M/M_sun)^0.8`,
 normalized to the catalog Sun, not a stellar-structure integration. Temperature,
 composition, mass loss, spin, tides, mass transfer, radiation, hydrodynamics,
-and stellar evolution are omitted. The readout names both stars, the physical
+and stellar evolution are omitted from the merger rule. Ongoing stellar mass
+loss is a separate opt-in module; this scenario leaves it off, so the remnant
+mass stays at that sum. The readout names both stars, the physical
 contact time, and the remnant. The event also stores the lost relative kinetic
 energy and the orbital angular momentum left as unmodeled spin. Total energy is
 not claimed to be conserved across the merger.

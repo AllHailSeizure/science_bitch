@@ -62,6 +62,8 @@ sidereel --build experiment.json
 
 `--new` writes a blank experiment: dimensions, catalog bodies, opt-in physics, and the run. Newtonian gravity is what Sidereel uses. Edit that file, then `--build` checks it and writes `experiment.sidereel` beside it. The playback file holds the samples and duration for one run, or for each run of a sweep or an open scan. Starting `sidereel` with no arguments still opens the desktop. `sidereel-cli` still renders a catalog system, and it accepts the same two commands.
 
+`physics.relativistic_corrections` adds pairwise 1PN and 2.5PN terms (perihelion precession and gravitational-wave inspiral) and stays off until set true. `physics.stellar_mass_loss` lets each star lose mass in an isotropic wind that leaves the system, and stays off until set true. A top-level gravity-model field is refused.
+
 You get the experiment list, including the Solar System and a Sun–Jupiter ring. Save initial setup stores the beginning. Save current state as new setup stores the evolved system under a new name. `sidereel-cli` with no arguments opens the same window.
 
 Sun–Jupiter ring places 32 mass-zero rocks evenly around the Sun at 3.2 AU (seed 7). Rotating view keeps the Sun–Jupiter direction fixed. Hollow L4 and L5 marks are geometric guides, not rocks. Select a rock to read its separation from Jupiter and how long the drawn trail is. Matched no-Jupiter run uses the same rock starting vectors. Collision mode is none, and a halt or a shorter run is labeled as incomplete.

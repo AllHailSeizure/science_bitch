@@ -23,6 +23,8 @@ ADAPTIVE_GROWTH = 2.0
 # Yoshida fourth-order composition weights for velocity Verlet.
 _YOSHIDA_W1 = 1.0 / (2.0 - 2.0 ** (1.0 / 3.0))
 _YOSHIDA_W0 = -(2.0 ** (1.0 / 3.0)) * _YOSHIDA_W1
+# Set by the opt-in relativistic module. None leaves this file's Newtonian sum unchanged.
+_extra_acceleration = None
 
 
 def kepler_period(semi_major: float, mu: float) -> float:
@@ -80,11 +82,19 @@ class System:
         d2 = np.sum(delta**2, axis=-1)
         d2[sources, np.arange(len(sources))] = np.inf
         if separation_floor is None:
-            return G*np.sum(delta * (self.masses[None, sources]/(d2*np.sqrt(d2)))[:, :, None], axis=1)
-        # An unmodeled stellar overlap evaluates gravity at the contact separation
-        # so a fixed step can cross it. The direction stays the true separation.
-        dist = np.maximum(np.sqrt(d2), np.asarray(separation_floor, dtype=float)[:, sources])
-        return G*np.sum(delta * (self.masses[None, sources]/(dist*dist*dist))[:, :, None], axis=1)
+            newton = G*np.sum(delta * (self.masses[None, sources]/(d2*np.sqrt(d2)))[:, :, None], axis=1)
+        else:
+            # An unmodeled stellar overlap evaluates gravity at the contact separation
+            # so a fixed step can cross it. The direction stays the true separation.
+            dist = np.maximum(np.sqrt(d2), np.asarray(separation_floor, dtype=float)[:, sources])
+            newton = G*np.sum(delta * (self.masses[None, sources]/(dist*dist*dist))[:, :, None], axis=1)
+        extra = _extra_acceleration
+        if extra is None:
+            return newton
+        correction = extra(self)
+        if correction is None:
+            return newton
+        return newton + correction
 
     def resolution_limit(self, separation_floor=None):
         """Largest supported step from pair gravity and relative crossing time."""

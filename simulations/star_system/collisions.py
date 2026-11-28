@@ -782,6 +782,28 @@ def _append_passage_logs(prepared, start_state, approaches, resolved):
 
 
 def advance_prepared(prepared):
+    """One configured macro step, including opt-in relativistic terms and stellar mass loss.
+
+    Both modules are off unless the setup enables them. The Newtonian step is
+    unchanged when they are off.
+    """
+    setup = prepared.setup
+    relativistic = setup is not None and setup.relativistic.enabled
+    mass_loss = setup is not None and setup.stellar_mass_loss.enabled
+    if not relativistic and not mass_loss:
+        return _advance_prepared(prepared)
+    from .mass_loss import apply_stellar_mass_loss
+    from .relativity import relativistic_context
+    started = float(prepared.system.time)
+    with relativistic_context(setup):
+        result = _advance_prepared(prepared)
+    elapsed = float(result.prepared.system.time) - started
+    if mass_loss and elapsed > 0.0:
+        result = AdvanceResult(apply_stellar_mass_loss(result.prepared, elapsed), result.event_frames, result.stopped)
+    return result
+
+
+def _advance_prepared(prepared):
     """One configured macro dt, or no mutation on collision-mode rejection.
 
     All actual positive Verlet substeps obey half the existing start/end gravity
