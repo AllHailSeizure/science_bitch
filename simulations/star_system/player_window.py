@@ -13,7 +13,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QHBoxLayout,
     QLabel, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton,
-    QSlider, QStackedWidget, QVBoxLayout, QWidget,
+    QSlider, QStackedWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 from .player import (
     OBSERVABLE_LABELS, OBSERVABLES, VIEW_CHOICES, Player, export_overlay_csv, export_overlay_png,
@@ -224,6 +224,32 @@ class PlayerShell(QMainWindow):
         for button in (self.export_png, self.export_svg, self.export_csv, self.export_split_png, self.export_gif):
             compare.addWidget(button)
         layout.addLayout(compare)
+        scrub = QHBoxLayout()
+        scrub.addWidget(QLabel('Recorded state'))
+        self.state_slider = QSlider(Qt.Orientation.Horizontal)
+        self.state_slider.valueChanged.connect(self._scrub_state)
+        scrub.addWidget(self.state_slider, 1)
+        self.state_label = QLabel('')
+        scrub.addWidget(self.state_label)
+        self.event_combo = QComboBox()
+        self.event_combo.setMinimumWidth(220)
+        self.event_combo.activated.connect(self._scrub_event)
+        scrub.addWidget(self.event_combo)
+        layout.addLayout(scrub)
+        ancestry = QHBoxLayout()
+        ancestry.addWidget(QLabel('Body / ancestry'))
+        self.body_combo = QComboBox()
+        self.body_combo.currentIndexChanged.connect(self._select_body)
+        ancestry.addWidget(self.body_combo)
+        self.history_combo = QComboBox()
+        self.history_combo.activated.connect(self._scrub_history)
+        ancestry.addWidget(self.history_combo, 1)
+        layout.addLayout(ancestry)
+        self.inspection = QTextEdit()
+        self.inspection.setReadOnly(True)
+        self.inspection.setMaximumHeight(125)
+        layout.addWidget(self.inspection)
+        self._inspection_run = None
         self.status = QLabel('')
         self.status.setWordWrap(True)
         self.status.setProperty('role', 'muted')
@@ -251,6 +277,7 @@ class PlayerShell(QMainWindow):
             QMessageBox.warning(self, 'Sidereel', str(exc))
             return
         self.player = Player(playback)
+        self._inspection_run = None
         self.setWindowTitle(f'Sidereel — {Path(path).name}')
         self.player.set_years_per_second(float(self.within_speed.value()))
         self.player.set_runs_per_second(float(self.between_speed.value()))
@@ -304,11 +331,119 @@ class PlayerShell(QMainWindow):
     def _redraw(self):
         if self.player is None:
             return
-        render(self.player, self.figure)
+        try:
+            render(self.player, self.figure)
+        except ValueError as exc:
+            self.player.comparing = False
+            self.compare_check.setChecked(False)
+            self.status.setText(str(exc))
+            return
+        self._refresh_inspection()
         self.canvas.draw_idle()
         notes = '  '.join(run_notes(self.player.current))
         self.status.setText(
-            f'{run_caption(self.player.current)}. Playback uses the recording and does not integrate. {notes}'.strip())
+            f'{run_caption(self.player.current)} · {self.player.current["status"]} · Time {self.player.time:.6g} yr. Playback uses the recording and does not integrate. {notes}'.strip())
+
+    def _events(self):
+        run = self.player.current
+        events = run.get('formation_events', []) + run.get('events', [])
+        if run.get('branch_point'):
+            events = events + [dict(run['branch_point'], kind='branch', message='Disclosed branch change')]
+        return sorted(events, key=lambda item: item['time'])
+
+    def _refresh_inspection(self):
+        import json
+        from .observatory import contributions, history_indices
+        run = self.player.current
+        self._syncing = True
+        try:
+            if self._inspection_run is not run:
+                self._inspection_run = run
+                self.state_slider.setMaximum(len(run['samples']) - 1)
+                self.body_combo.clear()
+                self.body_combo.addItem('Choose a body', None)
+                names = {body['id']: body.get('name', body['id']) for body in run.get('bodies', [])}
+                for sample in run['samples']:
+                    for key in sample['ids']:
+                        names.setdefault(key, key)
+                for key, name in names.items():
+                    self.body_combo.addItem(f'{name} ({key})', key)
+                self.event_combo.clear()
+                self.event_combo.addItem('Choose a recorded event')
+                for event in self._events():
+                    self.event_combo.addItem(f"{event['time']:.6g} yr · {event['kind']} · {event.get('message', '')}")
+            index = self.player.sample_index
+            if index is None:
+                index = max(i for i, sample in enumerate(run['samples']) if sample['time'] <= self.player.time)
+            self.state_slider.setValue(index)
+            sample = run['samples'][index]
+            self.state_label.setText(f"{sample['time']:.6g} yr · {sample.get('phase') or 'sample'} [{index + 1}]")
+            key = self.player.selected_body
+            self.history_combo.clear()
+            self.history_combo.addItem('Body history: existence → removal → following state', None)
+            if key:
+                for i in history_indices(run, key):
+                    state = run['samples'][i]
+                    self.history_combo.addItem(f"{state['time']:.6g} yr · {state.get('phase') or 'sample'} · "
+                                               + ('present' if key in state['ids'] else 'absent after removal'), i)
+            details = []
+            if key:
+                amounts = contributions(run, key)
+                details.append('Parcel contributions (solar masses): ' + (', '.join(
+                    f"{item['parcel_id']}: {item['mass']:.8g}" for item in amounts) or 'not recorded'))
+                removed = next((body for body in run.get('removed_bodies', []) if body['id'] == key), None)
+                details.append('Body status: ' + (removed['status'] if removed else
+                               ('surviving' if key in run['samples'][-1]['ids'] else 'removed')))
+                for event in self._events():
+                    if key in event.get('parent_ids', event.get('bodies', [])):
+                        details.append('Removal / event: ' + json.dumps(event, sort_keys=True))
+            for side, member in ([('Left', self.player.runs[self.player.left_index]),
+                                  ('Right', self.player.runs[self.player.right_index])] if self.player.comparing
+                                 else [('Run', run)]):
+                details.append(side + ' assumptions: ' + '; '.join(member.get('assumptions', ['not recorded'])))
+                if member.get('branch_point'):
+                    details.append(side + ' branch checkpoint state and changed state: '
+                                   + json.dumps(member['branch_point'], sort_keys=True))
+                details.append(side + ' provenance: ' + json.dumps(member.get('provenance', {
+                    'setup_digest': member.get('setup_digest', 'not recorded')}), sort_keys=True))
+            if self.player.comparing:
+                start, end = self.player.interval()
+                left, right = self.player.runs[self.player.left_index], self.player.runs[self.player.right_index]
+                parent = left.get('provenance', {}).get('parent_checkpoint_id')
+                common = parent and parent == right.get('provenance', {}).get('parent_checkpoint_id')
+                details.append(f'Shared interval: {start:.6g}–{end:.6g} yr. Common checkpoint: '
+                               + (str(parent) if common else 'not recorded / different checkpoints'))
+                details.append('Starting states: ' + json.dumps([member['samples'][0] for member in (left, right)]))
+            self.inspection.setPlainText('\n'.join(details))
+        finally:
+            self._syncing = False
+
+    def _scrub_state(self, index):
+        if self._syncing or self.player is None:
+            return
+        self.player.seek_sample(index)
+        self._sync_transport()
+        self._redraw()
+
+    def _scrub_event(self, index):
+        if index <= 0:
+            return
+        self.player.seek(float(self._events()[index - 1]['time']))
+        self._sync_transport()
+        self._redraw()
+        import json
+        self.inspection.append(json.dumps(self._events()[index - 1], sort_keys=True))
+
+    def _select_body(self):
+        if self._syncing or self.player is None:
+            return
+        self.player.selected_body = self.body_combo.currentData()
+        self._redraw()
+
+    def _scrub_history(self, index):
+        sample = self.history_combo.itemData(index)
+        if sample is not None:
+            self._scrub_state(sample)
 
     def _change_view(self):
         if self._syncing or self.player is None:
