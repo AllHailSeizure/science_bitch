@@ -10,6 +10,9 @@ from .populations import Population, with_population
 
 def main(argv=None):
     arguments = list(sys.argv[1:] if argv is None else argv)
+    from .experiment_file import is_experiment_command, main as experiment_main
+    if is_experiment_command(arguments):
+        return experiment_main(arguments)
     if not arguments:
         from .desktop import main as desktop_main
         return desktop_main()
