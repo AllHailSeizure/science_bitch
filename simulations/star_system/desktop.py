@@ -399,6 +399,8 @@ class Observatory(QMainWindow):
         self.collision_mode.addItem('None', 'none')
         self.collision_mode.addItem('Perfect merge', 'perfect_merge')
         self.collision_mode.addItem('Speed and angle', 'speed_angle')
+        self.collision_mode.addItem('Ignore contact', 'ignore')
+        self.collision_mode.addItem('Stop on contact', 'stop_on_contact')
         collision.addWidget(self.collision_mode, 1)
         self.collision_button = action('Apply collisions + reset', self.apply_collision_mode)
         collision.addWidget(self.collision_button)
@@ -660,7 +662,7 @@ class Observatory(QMainWindow):
         if self.setup.tides.enabled and self.setup.collision_mode == 'none':
             tide_line = f'Tidal dissipation is on ({self.setup.tides.version}). '
         elif self.setup.tides.enabled:
-            tide_line = 'Tidal dissipation is stored and is not applied inside the contact solver. '
+            tide_line = 'Tidal dissipation is on for a close pass that does not become a contact. '
         else:
             tide_line = 'Tidal dissipation is off. '
         self.collision_note.setText(

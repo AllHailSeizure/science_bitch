@@ -2,7 +2,7 @@
 from dataclasses import dataclass, replace
 import numpy as np
 from .core import System, G, kepler_period
-from .model import BodySpec, InitialBody, InitialSetup
+from .model import CONTACT_SOLVER_MODES, BodySpec, InitialBody, InitialSetup
 
 @dataclass(frozen=True)
 class IntegrationEvent:
@@ -82,7 +82,7 @@ def _validate_surfaces(r, specs, collision_mode='none'):
     sources = np.array([i for i,s in enumerate(specs) if s.mass and s.mass > 0], dtype=int)
     if not len(sources):
         return
-    radii = np.array([0. if collision_mode in ('perfect_merge', 'speed_angle') and s.mass == 0 else (s.radius or 0.) for s in specs])
+    radii = np.array([0. if collision_mode in CONTACT_SOLVER_MODES and collision_mode != 'binary_star_merger' and s.mass == 0 else (s.radius or 0.) for s in specs])
     dist = np.linalg.norm(r[:,None,:]-r[None,sources,:],axis=-1)
     dist[sources,np.arange(len(sources))] = np.inf
     overlaps = np.argwhere(dist <= radii[:,None]+radii[None,sources])
@@ -161,7 +161,7 @@ def build_system(setup):
     if system.dt > moon_limit*(1+1e-12):
         raise ValueError(f'Moon timescale unresolved: fixed dt must be <= {moon_limit:.9g} yr (initial relative period / 600).')
     prepared = PreparedSystem(system, ids, specs, setup, reference_ids=references)
-    if setup.collision_mode in ('perfect_merge', 'speed_angle', 'binary_star_merger'):
+    if setup.collision_mode in CONTACT_SOLVER_MODES:
         from .collisions import validate_collision_state
         validate_collision_state(prepared)
     else:

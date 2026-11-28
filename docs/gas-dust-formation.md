@@ -97,6 +97,8 @@ With drag, the specific energy changes sign and the intruder is bound. Without d
 
 This is aerodynamic binding in a planar fixed-step model. It is not a permanent capture. Fragmenting collisions remain #69, three-dimensional orbits and an adaptive or close-encounter integrator remain #70, and tides remain #79. A sweep of today's temporary three-body captures can still be done without this drag result. Claims of permanent capture wait on those pieces.
 
+The formation integrator can apply this same quadratic law and these same annular zones on a three-dimensional adaptive step. That path is opt-in, leaves swarms and grain growth here, and does not halt the gravity run when a body meets the star. This standalone prototype is unchanged: planar, fixed step, perfect merge, and a halt on stellar contact. A longer-lived capture on the formation path is claimed only when that run's drag or tide switch is on. See [formation-numerics.md](formation-numerics.md).
+
 ## Questions this stage can address
 
 - Which solid parcels sit in a swarm or a body, and how much mass came from each?
