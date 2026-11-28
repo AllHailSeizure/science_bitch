@@ -713,6 +713,7 @@ def _yoshida_record(experiment, setup, years, index):
 
 
 def _formation_record(experiment, setup, years, index):
+    from .observatory import formation_metadata
     result, flybys = _integrate_formation(setup, years, experiment.outside, index)
     primary = next(body.id for body in setup.bodies if body.id in STARS)
     views = [_FormationView(sample) for sample in result.samples]
@@ -731,6 +732,7 @@ def _formation_record(experiment, setup, years, index):
         'sample_stride': result.sample_stride,
         'setup_digest': result.provenance['setup_digest'],
         'solver_build': result.provenance['solver_build'],
+        **formation_metadata(result),
         'dissipated_kinetic': float(result.dissipated_kinetic),
         'bodies': _formation_bodies(result.samples),
         'samples': [_formation_sample(sample, result.dt_max) for sample in result.samples],
@@ -869,6 +871,8 @@ def _formation_sample(sample, dt):
         'time': float(sample.time),
         'dt': float(dt),
         'phase': sample.phase,
+        'contributions': {body.id: [{'parcel_id': item.parcel_id, 'mass': float(item.mass)}
+                                    for item in body.contributions] for body in sample.bodies},
         'ids': [body.id for body in sample.bodies],
         'mass': [float(body.mass) for body in sample.bodies],
         'r': [list(body.r) for body in sample.bodies],
