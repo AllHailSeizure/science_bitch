@@ -6,7 +6,10 @@ import numpy as np
 
 from .data import AU_KM, CATALOG
 from .experiments import custom_copy
-from .initialization import build_system, circular_relative_velocity, legacy_setup, recommended_moon_step
+from .initialization import (
+    PRESET_INCLINATION, build_system, circular_relative_velocity, legacy_setup,
+    recommended_moon_step, with_preset_inclination,
+)
 from .model import InitialBody, PopulationSpec, PropertySource
 from .populations import Population
 from .stellar_merger import DESCRIPTION as MERGER_DESCRIPTION, OBSERVE as MERGER_OBSERVE
@@ -27,29 +30,42 @@ EXPERIMENTS = (
     ExperimentTemplate('solar-system', 'Solar System',
         'The Sun and all eight planets. The starting template for your experiments.',
         'Run the system, select a body to inspect its surroundings, or edit a copy. '
-        'This is an illustrative 2D circular starting model, not current astronomical positions.'),
+        'This is an illustrative three-dimensional circular starting model, inclined by '
+        f'{PRESET_INCLINATION:g} rad, not current astronomical positions. '
+        'The adaptive step is off unless selected. The overhead view projects onto the plane.'),
     ExperimentTemplate('heavier-star', 'A more massive star',
         'The same Solar System positions and velocities, with twice the Sun\'s mass.',
-        'Compare with Solar System: changing gravity without changing starting motion changes the orbits.'),
+        'Compare with Solar System: changing gravity without changing starting motion changes the orbits. '
+        f'The stored motion is three-dimensional, inclined by {PRESET_INCLINATION:g} rad. '
+        'The adaptive step is off unless selected. The overhead view projects onto the plane.'),
     ExperimentTemplate('earth-moon', 'A planet and its moon',
-        'The Solar System with the Moon added around Earth at 384,400 km.',
-        'Select Earth and zoom in to see its moon\'s orbit. Replace the planet or edit its mass to investigate the effect.'),
+        'The Solar System with the Moon added around Earth at 384,400 km. '
+        'The Moon starts in the xy plane, so its orbit is inclined to the tilted planets.',
+        'Select Earth and zoom in to see its moon\'s orbit. Replace the planet or edit its mass to investigate the effect. '
+        f'The stored motion is three-dimensional, inclined by {PRESET_INCLINATION:g} rad. '
+        'The adaptive step is off unless selected. The overhead view projects onto the plane.'),
     ExperimentTemplate('asteroid-ring', 'Asteroid perturbations',
-        'The Solar System with 32 massless test particles in a ring at 3.2 AU.',
+        'The Solar System with 32 massless test particles in a ring at 3.2 AU. '
+        'The ring lies in the plane through the Sun parallel to xy.',
         'Watch the initially circular ring change under planetary gravity. '
-        'This demonstrates perturbations; it does not promise asteroid capture.'),
+        'This demonstrates perturbations; it does not promise asteroid capture. '
+        f'The stored motion is three-dimensional, inclined by {PRESET_INCLINATION:g} rad. '
+        'The adaptive step is off unless selected. The overhead view projects onto the plane.'),
     ExperimentTemplate('sun-jupiter-ring', 'Sun–Jupiter ring',
         'The Sun and Jupiter, with 32 mass-zero rocks evenly spaced at 3.2 AU (seed 7). '
+        'The ring lies in the plane through the Sun parallel to xy. '
         'Collision mode is none. Rocks feel Newtonian gravity and attract nothing.',
         'Use Rotating view to hold the Sun–Jupiter direction fixed. Hollow L4 and L5 marks are guides, not rocks. '
         'Select a rock to read its separation from Jupiter and the trail duration. '
-        'Matched no-Jupiter run keeps the same rock vectors. These starts do not promise capture.'),
+        'Matched no-Jupiter run keeps the same rock vectors. These starts do not promise capture. '
+        f'The stored motion is three-dimensional, inclined by {PRESET_INCLINATION:g} rad. '
+        'The adaptive step is off unless selected. The overhead view projects onto the plane.'),
     ExperimentTemplate(SCENARIO_KEY, MERGER_TITLE, MERGER_DESCRIPTION, MERGER_OBSERVE),
 )
 
 
 def _solar_system():
-    setup = legacy_setup(planets=SOLAR_PLANETS)
+    setup = with_preset_inclination(legacy_setup(planets=SOLAR_PLANETS))
     origin = setup.bodies[0]
     bodies = (origin,) + tuple(replace(body,
         r=tuple(np.array(body.r)-origin.r), v=tuple(np.array(body.v)-origin.v), reference_id=origin.id)
@@ -77,7 +93,9 @@ def get_experiment(key='solar-system'):
     elif key == 'earth-moon':
         prepared = build_system(setup)
         parent = prepared.system.r[prepared.body_ids.index('earth')]
-        setup = place_body(setup, CATALOG['moon'], parent + (384400/AU_KM, 0), 'earth', body_id='moon')
+        offset = np.zeros(parent.shape[0])
+        offset[0] = 384400/AU_KM
+        setup = place_body(setup, CATALOG['moon'], parent + offset, 'earth', body_id='moon')
     elif key == 'asteroid-ring':
         setup = replace(setup, population=PopulationSpec('asteroids', 'sun',
             Population(kind='ring', count=32, inner=3.2, outer=3.2, angles='even', seed=7)))
@@ -91,7 +109,8 @@ def get_experiment(key='solar-system'):
         setup = replace(setup, bodies=setup.bodies+particles, population=None)
     result = replace(setup, name=definition.title, preset_id=key,
         provenance={'starting_template': 'solar-system', 'origin_preset': key,
-                    'description': definition.description, 'observe': definition.observe})
+                    'description': definition.description, 'observe': definition.observe,
+                    'dimensions': 3, 'inclination_rad': float(PRESET_INCLINATION), 'adaptive': False})
     build_system(result)
     return result
 
@@ -146,13 +165,22 @@ def place_body(setup, spec, position, reference_id=None, *, circular=True, veloc
     parent = prepared.body_ids.index(reference_id) if reference_id in prepared.body_ids else None
     if reference_id is not None and parent is None:
         raise ValueError('Choose an existing body to place this relative to.')
-    r = np.asarray(position)-(prepared.system.r[parent] if parent is not None else 0)
+    parent_r = prepared.system.r[parent] if parent is not None else np.zeros(prepared.system.r.shape[1])
+    position = np.asarray(position, dtype=float).reshape(-1)
+    if position.shape != parent_r.shape:
+        raise ValueError('Placement must use the same two- or three-component position as the system.')
+    r = position-parent_r
     if circular:
         if parent is None:
             raise ValueError('Choose a body for the initial circular orbit.')
         velocity = circular_relative_velocity(r, prepared.system.masses[parent], spec.mass)
+    else:
+        velocity = np.asarray(velocity, dtype=float).reshape(-1)
+        if velocity.shape != r.shape:
+            raise ValueError('Velocity must match the position length. A planar vector is not padded.')
     body = InitialBody(body_id or (spec.catalog_key or 'body')+'-'+uuid4().hex[:10], spec,
-                       tuple(r), tuple(velocity), reference_id)
+                       tuple(float(component) for component in r),
+                       tuple(float(component) for component in np.asarray(velocity, dtype=float)), reference_id)
     return _validated_edit(replace(setup, bodies=setup.bodies+(body,)), setup)
 
 

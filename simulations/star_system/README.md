@@ -59,8 +59,9 @@ Native file dialogs save and load the existing validated JSON format.
 
 **Focus selected and its orbiting bodies** zooms to a planet's local system;
 **Fit view** returns to the full system. Select a body to see L4/L5 guides and
-estimated orbit curves for its orbiting bodies. These templates use the
-illustrative planar circular initializer, not current astronomical ephemerides.
+estimated orbit curves for its orbiting bodies. These templates store three
+components, inclined by 0.05 rad, and the overhead view projects them. They
+are not current astronomical ephemerides.
 
 ## Legacy Matplotlib controller and headless export
 

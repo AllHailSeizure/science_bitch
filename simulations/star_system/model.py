@@ -244,6 +244,9 @@ class InitialSetup:
     # setup built in memory; load_setup copies it from the file. Not physical
     # state, so equality ignores it.
     source_environment: Mapping[str, str] | None = field(default=None, compare=False, hash=False)
+    # Close-pass macro step. Off keeps the authored fixed step and is omitted
+    # from the setup document so an existing planar digest stays unchanged.
+    adaptive: bool = False
 
     def __post_init__(self):
         object.__setattr__(self, 'bodies', tuple(self.bodies))
@@ -259,6 +262,8 @@ class InitialSetup:
             raise ValueError('A supported TidalPolicy is required.')
         if not isinstance(self.drag, DragPolicy):
             raise ValueError('A supported DragPolicy is required.')
+        if type(self.adaptive) is not bool:
+            raise ValueError('adaptive must be a boolean.')
         family = collision_policy_identity(self.collision_policy)
         # A perfect-merge policy is the default object, so choosing speed_angle
         # without a second argument still stores that rule on the setup.

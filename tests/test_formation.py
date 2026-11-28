@@ -489,10 +489,15 @@ def test_planar_and_spatial_setup_documents_disclose_dimension(tmp_path):
     assert setup_digest(loaded) == setup_digest(spatial)
 
 
-def test_overhead_view_refuses_a_spatial_sample():
+def test_overhead_view_projects_a_spatial_sample():
     experiment = FormationExperiment(make_inclined_circular_setup(), ejection_radius=5.)
-    with pytest.raises(ValueError, match='overhead'):
-        frame_transform(StateFrame.capture(experiment.prepared), 'world')
+    frame = StateFrame.capture(experiment.prepared)
+    original = frame.r.copy()
+    shown = frame_transform(frame, 'world').positions(frame.r)
+    assert shown.shape == (len(frame.r), 2)
+    np.testing.assert_allclose(shown, frame.r[:, :2])
+    np.testing.assert_array_equal(frame.r, original)
+    assert frame.r.shape[1] == 3
 
 
 def test_physical_probe_reports_a_short_rocky_run():

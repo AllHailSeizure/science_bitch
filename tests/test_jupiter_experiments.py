@@ -54,10 +54,10 @@ def test_control_preserves_unrelated_moon_parent_and_rejects_removing_required_p
     from simulations.star_system.data import CATALOG, AU_KM
     from simulations.star_system.initialization import circular_relative_velocity
     setup = get_scenario('sun-jupiter-ring')
-    separation = (384400/AU_KM, 0.)
+    separation = (384400/AU_KM, 0., 0.)
     moon_v = circular_relative_velocity(separation, CATALOG['earth'].mass, CATALOG['moon'].mass)
-    earth = InitialBody('earth', CATALOG['earth'], (1., 0.), (0., 6.28), 'sun')
-    moon = InitialBody('moon', CATALOG['moon'], separation, tuple(moon_v), 'earth')
+    earth = InitialBody('earth', CATALOG['earth'], (1., 0., 0.), (0., 6.28, 0.), 'sun')
+    moon = InitialBody('moon', CATALOG['moon'], separation, tuple(float(component) for component in moon_v), 'earth')
     setup = replace(setup, bodies=setup.bodies+(earth, moon), dt=.0001)
     first, control = make_jupiter_comparison(setup)
     original, second = build_system(first), build_system(control)
@@ -100,8 +100,10 @@ def test_partial_comparison_reports_only_common_sampled_interval():
 def test_halted_comparison_preserves_real_common_time():
     setup = get_scenario('sun-jupiter-ring')
     sun = setup.bodies[0]
+    components = len(sun.r)
     rock = InitialBody('falling-rock', BodySpec('Falling rock', 'particle', 0., None),
-                       (.1, 0.), (0., 0.), sun.id)
+                       tuple(0.1 if index == 0 else 0. for index in range(components)),
+                       tuple(0. for _ in range(components)), sun.id)
     setup = replace(setup, name='Initially valid radial infall with Jupiter',
                     bodies=setup.bodies+(rock,), population=None, dt=1e-5)
     first, control = make_jupiter_comparison(setup)
@@ -141,7 +143,8 @@ def test_original_recording_pairs_without_rewriting_source_and_edited_control_is
     assert summary.end_time == first.actual_end_time
     assert first.source_setup is original
     assert 'comparison_role' not in original.provenance
-    changed = replace(control, bodies=control.bodies[:-1]+(replace(control.bodies[-1], v=(0., 0.)),))
+    changed = replace(control, bodies=control.bodies[:-1]+(
+        replace(control.bodies[-1], v=tuple(0. for _ in control.bodies[-1].v)),))
     with pytest.raises(ValueError, match='initial'):
         compare_recordings(first, calculate(changed, 5, 1))
 

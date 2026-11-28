@@ -425,9 +425,11 @@ class BodyProperties(QWidget):
             distance = float(np.linalg.norm(body.r))*AU_KM
             self.note.setText(f'Starting distance from the parent: {distance:,.6g} km. '
                               'Relative x/y are that planet-centered distance in AU, not the planet\'s position from its star. '
-                              'Starting motion is preserved when you change mass or replace the body.')
+                              'Starting motion is preserved when you change mass or replace the body.'
+                              + (' Overhead fields edit x and y. The stored z component stays.' if len(body.r) == 3 else ''))
         else:
-            self.note.setText('Starting motion is preserved when you change mass or replace the body.')
+            self.note.setText('Starting motion is preserved when you change mass or replace the body.'
+                              + (' Overhead fields edit x and y. The stored z component stays.' if len(body.r) == 3 else ''))
 
     def fill_physical(self):
         for key, conversion in [('mass', SOLAR_KG), ('radius', AU_KM), ('temperature', 1)]:
@@ -473,6 +475,10 @@ class BodyProperties(QWidget):
                       float(self.fields[key].text()) for i, key in enumerate(('x', 'y')))
             v = tuple(self.original_body.v[i] if self.fields[key].text() == self.vector_texts[key] else
                       float(self.fields[key].text())/AUYR_TO_KMS for i, key in enumerate(('vx', 'vy')))
+            if len(self.original_body.r) == 3:
+                r = r + (float(self.original_body.r[2]),)
+            if len(self.original_body.v) == 3:
+                v = v + (float(self.original_body.v[2]),)
             self.apply_requested.emit({'body_id': self.body_id, 'spec': spec, 'r': r, 'v': v})
         except (ValueError, OverflowError) as exc:
             self.note.setText(f'Please check the values: {exc}')

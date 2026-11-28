@@ -237,7 +237,9 @@ def test_all_planets_fit_in_control_panel(app):
 
 
 def test_close_encounter_stays_halted_until_rebuilt(app):
-    app.system.r[1] = app.system.r[0] + (.00001, 0)
+    delta = np.zeros(app.system.r.shape[1])
+    delta[0] = .00001
+    app.system.r[1] = app.system.r[0] + delta
     app.step_once()
     assert app.halted
     assert 'Close encounter' in app.status.get_text()
@@ -271,7 +273,7 @@ def test_trail_display_is_bounded_without_losing_physics_history(app):
     assert len(app.trails) == 1500
     trail = app.scene.trails[0].get_segments()
     assert len(trail) == MAX_TRAIL_VERTICES-1
-    np.testing.assert_allclose(trail[0][0], coordinates(app.trails[0][1]))
+    np.testing.assert_allclose(trail[0][0], coordinates(np.asarray(app.trails[0][1])[:2]))
     np.testing.assert_allclose(trail[-1][-1], app.scene.positions[1])
 
 

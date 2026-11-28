@@ -126,8 +126,10 @@ def test_variable_membership_uses_frame_identity_and_explicit_removal(app, monke
     app.selected_id = 'jupiter'
     app._refresh()
     assert 'Remnant' in app.inspector.get_text()
-    assert f'World r = ({second.r[0,0]:.5g}, {second.r[0,1]:.5g}) AU' in app.inspector.get_text()
-    assert f'World v = ({second.v[0,0]:.5g}, {second.v[0,1]:.5g}) AU/yr' in app.inspector.get_text()
+    placed = ', '.join(f'{component:.5g}' for component in second.r[0])
+    moving = ', '.join(f'{component:.5g}' for component in second.v[0])
+    assert f'World r = ({placed}) AU' in app.inspector.get_text()
+    assert f'World v = ({moving}) AU/yr' in app.inspector.get_text()
 
 
 def test_replay_camera_stable_history_uses_timestamps_and_is_bounded(app, monkeypatch):
