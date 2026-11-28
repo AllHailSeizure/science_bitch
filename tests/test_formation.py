@@ -505,7 +505,7 @@ def test_physical_probe_reports_a_short_rocky_run():
     assert report.maximum_step >= report.minimum_step
     assert report.status in ('complete', 'halted')
     assert any('tree' in note.lower() for note in report.notes)
-    assert any('#69' in note and '#71' in note and '#79' in note for note in report.notes)
+    assert any('drag' in note.lower() and 'tide' in note.lower() for note in report.notes)
 
 
 def test_numerics_note_states_the_integrator_decision():

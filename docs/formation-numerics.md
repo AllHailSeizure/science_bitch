@@ -1,6 +1,6 @@
 # Formation numerics
 
-This note is the dimensionality, radius, and close-encounter schedule for late-stage formation. The code is `simulations.star_system.formation`. It still calls the existing perfect-merge contact solver. Collision outcomes are unchanged. The inflated planar benchmark and its measurements stay in [formation-feasibility.md](formation-feasibility.md).
+This note is the dimensionality, radius, and close-encounter schedule for late-stage formation. The code is `simulations.star_system.formation`. Gravity is the base. Collision handling, gas drag, and close-pass tides are separate switches on that path. Perfect merge remains the default collision rule and its remnant is unchanged. The inflated planar benchmark and its measurements stay in [formation-feasibility.md](formation-feasibility.md).
 
 The overhead observatory draws planar motion. A three-dimensional sample is refused there instead of being projected. Tree gravity is not in this schedule.
 
@@ -63,21 +63,67 @@ Linux-6.12.113+-x86_64-with-glibc2.39; Intel(R) Xeon(R) Processor; 4 logical CPU
 | Largest macro step | 0.025 yr |
 | Mergers | 0 |
 
-The clock is past 0.25 yr by less than one authored step. The smallest step stayed near 0.025 yr, so this window did not contain a deep encounter. Nothing merged. Repeats on this host finished in about 0.025 s after the first call; a cold call was closer to 0.1 s. The clock, the step sizes, and the merger count are the stable results. The run is cheap to calculate, and it does not produce the encounter history of the inflated benchmark. The checked large run is still the 80-embryo inflated `run_benchmark`. An 80-embryo year at the rocky radius was not measured. Direct summation is what this probe used. Tree gravity stays a later optimization, and a grouped force would still have to keep parcel identity.
+The clock is past 0.25 yr by less than one authored step. The smallest step stayed near 0.025 yr, so this window did not contain a deep encounter. Nothing merged. Repeats on this host finished in about 0.025 s after the first call; a cold call was closer to 0.1 s. The clock, the step sizes, and the merger count are the stable results. The run is cheap to calculate, and it does not produce the encounter history of the inflated benchmark. The inflated 80-embryo `run_benchmark` stays the planar fixed-step check. The rocky 80-embryo year on the combined adaptive path is measured below. Direct summation is what this probe used. Tree gravity stays a later optimization, and a grouped force would still have to keep parcel identity. This probe leaves gas drag and tides off.
 
-## Checkpoints and captures
+## Combined switches
 
-Parcel ids, checkpoints, and a branched velocity change follow the same formation files. A spatial adaptive checkpoint stores `dimensions`, `adaptive`, `dt_max`, and `dt_min`. A planar fixed-step checkpoint does not gain those fields. Resuming a checkpoint and applying a third velocity component were checked against an uninterrupted run. Perfect merge still has one descendant.
+Gravity is the base. Collision handling, gas drag, and close-pass tides are separate switches on the same formation setup. Dimensions (2 or 3) and the adaptive step are separate from those switches. The default remains perfect merge, drag off, tides off, planar vectors, and a fixed step. Catalog presets stay on `collision_mode='none'` and the Yoshida step, which can still halt on an unresolved encounter. A formation run does not use that mode.
 
-Three-dimensional state lets a flyby miss in the vertical direction, and the adaptive step follows that pass instead of halting at the floor or hiding it inside one long macro. That does not turn a temporary three-body capture into a permanent one. Nothing on this perfect-merge path removes energy except a merge, which replaces both bodies with one remnant. A longer-lived capture still needs another outcome than perfect merge (#69) or gas drag (#71). Optional close-pass tides (#79) are a separate planar fixed-step choice and stay off here, including when a tide policy is stored on the setup. A capture example that stays inside today's temporary three-body flybys is not blocked on this schedule. This note does not claim one.
+A formation run accepts `ignore`, `stop_on_contact`, `perfect_merge`, and `speed_angle`. Ignore lets an overlap continue with no remnant. Stop on contact is the only collision choice that ends the run, and that end is status `stopped`, not a numerical halt. Perfect merge and the speed-angle rule are the stored collision models. A contact does not stop the run unless stop on contact is selected. Stellar contact is logged as unmodeled and the requested duration still completes, including on a gas-bearing run. The standalone gas-and-dust prototype still halts on stellar contact; that prototype is unchanged.
+
+Drag, when enabled, uses the existing quadratic body law and one of the existing annular disks (`annular`, `envelope`, or `giant`). The disk is evaluated at cylindrical radius. Height only multiplies the midplane density by the isothermal Gaussian. There is no vertical gas velocity and no new disk method. The annular fluid is subcycled at the existing Courant limit inside the macro step. If a subcycle would empty a zone, that piece is held and the gravity run continues. Dust swarms, grain growth, and the swarm-to-body rule stay in the gas-and-dust prototype. Bodies on this path use quadratic drag only.
+
+Tides, when enabled, use `close-pass-energy-dissipation-v1`. On a contact-solver step the kick applies only to a pair that does not become a contact in that step. A contacting pair is left to the collision rule. In three dimensions the recorded angular-momentum change is a magnitude. Planar runs keep the signed z component. The Yoshida path (`collision_mode='none'`) is unchanged.
+
+The combination in use is `FormationExperiment.combination()` and the switches line in `describe()`. Outcome claims about a longer-lived capture are made only for a run that has the relevant switch on. Checkpoints store `tides` and `drag` only when that switch is on. A checkpoint without those fields still loads. Parcel ids, checkpoints, and a branched velocity change follow the same formation files. A spatial adaptive checkpoint stores `dimensions`, `adaptive`, `dt_max`, and `dt_min`. A planar fixed-step checkpoint does not gain those fields.
+
+## Rocky year
+
+`run_rocky_year` is 80 embryos plus the star, seed 48, rocky radii, maximum inclination 0.1 rad, adaptive control, authored step 0.025 yr, and one simulated year. The measured combination is perfect merge, the annular disk, and tides. Each of those can be left off. Rocky radii make the quadratic drag cross-section tiny, so the dissipated kinetic energy on this year can be negligible. That is reported as measured, not adjusted.
+
+One measurement on this host: Linux-6.12.113+-x86_64-with-glibc2.39; Intel(R) Xeon(R) Processor; 4 logical CPUs; Python 3.12.3; NumPy 2.5.5.
+
+| Quantity | Result |
+| --- | ---: |
+| Bodies | 81 (1 star, 80 embryos) |
+| Requested duration | 1 yr |
+| Stored clock | 1.0051284839311654 yr |
+| Status | complete |
+| Calculation time | 2.93 s |
+| Smallest macro step | 0.007999578262771059 yr |
+| Largest macro step | 0.018060160830636794 yr |
+| Collision | perfect_merge |
+| Gas drag | on, annular disk |
+| Tides | on, close-pass-energy-dissipation-v1 |
+| Mergers | 0 |
+| Tide events | 0 |
+| Ejections | 0 |
+| Unmodeled stellar contacts | 0 |
+| Dissipated kinetic energy | 1.9262137457981554e-12 |
+
+The stored clock is past 1 yr by less than one authored step. The run completed. Nothing merged, nothing was ejected, and no body met the star. No close pass reached the tidal reach, so the tide switch recorded no event. Drag removed 1.9262137457981554e-12 of kinetic energy. At a rocky radius that cross-section is about a million times smaller than the inflated encounter radius, so this year does not show drag changing an orbit. The clock, the step range, and the event counts are the stable results. Wall time was 2.93 s on this host and can differ on another run. Direct summation is what this year used. Tree gravity stays deferred.
+
+## Sun–Jupiter flyby
+
+`run_sun_giant_flyby` places the Sun, catalog Jupiter, and one visitor on this combined path. The visitor mass is 1e-6 solar masses. Its radius is 0.05 AU, a disclosed drag cross-section, not a rocky surface. It starts unbound to the Sun, offset from Jupiter by (2.2, 0.5, 0.1) AU with an extra velocity of (-2.8, -0.6, -0.02) AU/yr. The disk, when enabled, is the existing annular isothermal disk placed from 4.2 to 6.4 AU with uniform surface density 0.02. The same initial state is run four times: gravity only, drag on, tides on, and drag and tides together. Collision stays perfect merge. Adaptive stepping and three-dimensional state are on for every run. The requested duration is 2 yr.
+
+A body that is bound at the end of this window, and still a separate body, is a longer-lived capture for this window. It is not a permanent capture: a later scattering can still unbind it. Fragmenting collisions beyond the stored speed-angle map remain #69, a close-encounter integrator remains the candidate if a run halts at the adaptive floor (#70), and the tide formula is the optional close-pass model (#79). Gas drag is the existing quadratic law (#71).
+
+gravity only: collision perfect_merge, drag off, tides off, status complete, Sun-specific binding unbound, initial Sun-specific energy 0.924109, last Sun-specific energy while the visitor exists 0.807138, last Jupiter-specific energy while the visitor exists 4.59125, minimum Jupiter distance 0.072645 AU, tide events 0
+drag on: collision perfect_merge, drag giant, tides off, status complete, Sun-specific binding bound-at-end, initial Sun-specific energy 0.924109, last Sun-specific energy while the visitor exists -3.1648, last Jupiter-specific energy while the visitor exists 0.0954656, minimum Jupiter distance 1.0518 AU, tide events 0
+tides on: collision perfect_merge, drag off, tides close-pass-energy-dissipation-v1, status complete, Sun-specific binding merged after bound-at-end, initial Sun-specific energy 0.924109, last Sun-specific energy while the visitor exists -3.69642, last Jupiter-specific energy while the visitor exists -0.518857, minimum Jupiter distance 0.0504673 AU, tide events 1
+drag and tides: collision perfect_merge, drag giant, tides close-pass-energy-dissipation-v1, status complete, Sun-specific binding bound-at-end, initial Sun-specific energy 0.924109, last Sun-specific energy while the visitor exists -3.1648, last Jupiter-specific energy while the visitor exists 0.0954656, minimum Jupiter distance 1.0518 AU, tide events 0
+A longer-lived capture, for this window, is claimed only for the runs that end bound and unmerged: drag on, drag and tides. No unmerged run was bound and then unbound again inside this window. A perfect merge removed the visitor as a separate body for: tides on. That merger is not a capture. On the drag-and-tides run the closest approach stays outside the tidal reach, so no tide event is recorded and the end state matches drag alone. The visitor starts unbound to the Sun. This is not a permanent-capture claim. A later scattering can still unbind a body, and the visitor radius of 0.05 AU is a drag cross-section, not a rocky surface.
 
 ```python
 from simulations.star_system.formation import (
     FormationExperiment, make_close_pass_setup, make_inclined_circular_setup,
-    run_physical_probe,
+    run_physical_probe, run_rocky_year, run_sun_giant_flyby,
 )
 
 probe = run_physical_probe()
+year = run_rocky_year()
+flyby = run_sun_giant_flyby()
 inclined = FormationExperiment(make_inclined_circular_setup(), ejection_radius=5.)
 close = FormationExperiment(make_close_pass_setup(), ejection_radius=80., adaptive=True)
 ```

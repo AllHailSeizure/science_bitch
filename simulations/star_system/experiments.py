@@ -64,7 +64,7 @@ def capture_current_setup(prepared, initial_setup, name):
     provenance['collision_events'] = tuple(inherited)+tuple(fresh)
     captured = InitialSetup(name.strip(), tuple(bodies), dt, collision_mode=initial_setup.collision_mode,
                             collision_policy=initial_setup.collision_policy, tides=initial_setup.tides,
-                            provenance=provenance)
+                            drag=initial_setup.drag, provenance=provenance)
     build_system(captured)
     return captured
 
