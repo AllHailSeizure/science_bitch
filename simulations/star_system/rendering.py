@@ -362,7 +362,7 @@ class Scene:
             if mode == 'none':
                 tide = f'\nTides: {prepared.setup.tides.version}'
             else:
-                tide = '\nTides stored, not applied in the contact solver'
+                tide = '\nTides on for passes that do not contact'
         self.heading.set_text(label+model+tide)
         self._update_reference_guides()
         for i, (key, spec) in enumerate(zip(prepared.body_ids, prepared.body_specs)):

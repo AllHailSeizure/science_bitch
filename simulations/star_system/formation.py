@@ -1,15 +1,14 @@
 """Late-stage assembly with parcel ancestry, checkpoints, and branched runs.
 
-The physical stage is rocky embryos around one existing star. Each embryo
-starts as one material parcel. The collision rule is stored on the experiment
-setup: perfect merge, or the speed-and-angle merge/graze/fragment rule.
-The earlier gas-and-dust stage lives in ``gas_dust`` and does not change this
-integrator. Stellar mergers are outside this prototype. Ejection is checked at
-macro steps. A collision does not end the run.
+Gravity is the base. Collision handling, gas drag, and close-pass tides are
+separate switches on the experiment setup. The default collision rule is
+perfect merge. Drag and tides are off unless the setup stores them. Dimensions
+and the adaptive step are separate from those switches.
 
 Planar two-component state and the authored fixed step remain the default.
 A run may instead store three components, use a constant-density rocky
-radius, and shrink the macro step during a close pass. The overhead
+radius, and shrink the macro step during a close pass. A collision does not
+end the run unless the setup chooses stop on contact. The overhead
 observatory still draws the plane. Tree gravity is not used.
 """
 from collections.abc import Mapping
@@ -32,7 +31,9 @@ from .core import G, SOLAR_RADIUS_AU, System, kepler_period
 from .data import AU_KM, PLANETS
 from .history import StateFrame
 from .initialization import PreparedSystem, build_system
-from .model import SPEED_ANGLE_VERSION, BodySpec, InitialBody, InitialSetup
+from .model import (
+    FORMATION_COLLISION_MODES, SPEED_ANGLE_VERSION, BodySpec, DragPolicy, InitialBody, InitialSetup, TidalPolicy,
+)
 from .persistence import SOLVER_BUILD, setup_digest
 from .playback import Playback
 from .recording import RecordedRun
@@ -40,6 +41,8 @@ from .recording import RecordedRun
 FORMATION_MODEL = 'late-stage-perfect-merge-v1'
 REPRESENTATION_ID = 'one-embryo-one-parcel-v1'
 COLLISION_MODEL_ID = 'nonstellar-perfect-merge-v1'
+IGNORE_CONTACT_ID = 'ignore-contact-v1'
+STOP_ON_CONTACT_ID = 'stop-on-contact-v1'
 CHECKPOINT_SCHEMA = 'formation-checkpoint-v1'
 STAR_RADIUS = float(SOLAR_RADIUS_AU)
 
@@ -64,6 +67,12 @@ PHYSICAL_PROBE_COUNT = 8
 PHYSICAL_PROBE_SEED = 70
 PHYSICAL_PROBE_DURATION_YEARS = 0.25
 PHYSICAL_PROBE_INCLINATION = 0.1
+ROCKY_YEAR_COUNT = 80
+ROCKY_YEAR_SEED = 48
+ROCKY_YEAR_DURATION_YEARS = 1.0
+ROCKY_YEAR_INCLINATION = 0.1
+FLYBY_DURATION_YEARS = 2.0
+FLYBY_DT = 0.01
 
 _ASSUMPTIONS = (
     'Late-stage assembly: one star already exists, and every other body is a massive rocky embryo.',
@@ -73,7 +82,7 @@ _ASSUMPTIONS = (
     'The speed-angle rule merges at or below mutual escape, grazes a faster wider impact, and fragments a faster closer impact. Fragments are bodies. Lost mass is recorded and is not a body.',
     'A nonstellar body is ejected when its two-body specific energy about the star is positive and its star-centric distance has reached the ejection radius. The check runs at macro steps. The body is removed from the active set and its last state is kept.',
     'Ejection is a bookkeeping cut. After it, the frozen body no longer exchanges gravity with the active set.',
-    'Stellar contact is logged as unmodeled and the run continues. This prototype does not merge stars.',
+    'Stellar contact is logged as unmodeled and the run continues, including when gas drag is on. This prototype does not merge stars. Stop on contact is the only collision choice that ends the run.',
     'Gravity is unsoftened Newtonian gravity. A run is planar unless its positions have a third component. The authored dt is the fixed step, or the maximum step when adaptive control is on. During an unmodeled stellar overlap that pair is evaluated at the contact separation so the step can cross it.',
     'The overhead observatory draws planar motion. A third component is integrated and recorded, and it is not projected into that view.',
 )
@@ -86,13 +95,12 @@ _QUESTIONS = (
     'For a disclosed three-dimensional initial state, does vertical motion survive part of an orbit, and does the macro step shrink during a close miss and grow again afterward?',
 )
 _NOT_MODELED = (
-    'A gas disk, gas drag, and dust as a population.',
-    'Grain growth and any rule that turns a swarm into one body.',
+    'A three-dimensional gas disk. Drag uses the existing annular isothermal zones, evaluated at cylindrical radius, with the isothermal scale height as a Gaussian weight in height.',
+    'Dust swarms, grain growth, and the swarm-to-body rule. Those stay in the gas-and-dust prototype. Bodies on this path use that prototype\'s quadratic drag when drag is enabled.',
     'Tree-code grouping of distant mass. Direct summation stays in use, and a grouped force would still have to keep parcel identity.',
     'Partial accretion and erosion beyond the disclosed speed-angle lost-mass fraction.',
     'An overhead drawing of the third dimension. The observatory remains a planar view.',
     'Relativity and stellar internal structure. A dedicated stellar merger stays in its own scenario.',
-    'Optional close-pass tidal dissipation. It is a separate experiment choice and stays off in this prototype.',
 )
 _SCOPE = (
     'Keep late-stage embryos, one parcel per body, a stored collision rule, ejection records, ancestry amounts, and checkpoint branching. Perfect merge remains available.',
@@ -100,7 +108,7 @@ _SCOPE = (
     'Log stellar contact and continue. A dedicated stellar-merger model stays in its own scenario.',
 )
 _GAS = (
-    'An earlier gas-and-dust start needs a fluid disk, drag between gas and dust, and an explicit rule for when a swarm becomes one body without dropping mass, momentum, origin, or the internal state the collision model needs. That stage is simulations.star_system.gas_dust; this late-stage prototype does not run it.',
+    'Gas drag is an opt-in switch. When it is on, this integrator applies the existing quadratic body law and the annular isothermal disk. The standalone gas-and-dust prototype still owns swarms, grain growth, and its own fixed step.',
     'Partial accretion, erosion, hit-and-run, and fragmentation in the literature follow an outcome map such as Stewart and Leinhardt. The stored speed-angle rule is a disclosed speed-and-angle map with tracked fragments and recorded losses; it is not that full model. Perfect merge still cannot send mass to more than one descendant.',
     'Tree gravity is a later optimization. At a few hundred bodies the measured cost is direct summation, and grouping would have to preserve parcel identity to be usable here.',
 )
@@ -114,7 +122,8 @@ _CHANGE_KEYS = ('kind', 'body_id', 'delta_v', 'note')
 _DOCUMENT_KEYS = ('schema', 'id', 'model', 'name', 'time', 'dt', 'ejection_radius', 'sample_stride',
                   'status', 'reason', 'completed_steps', 'assumptions', 'provenance', 'active',
                   'removed', 'events', 'samples')
-_OPTIONAL_DOCUMENT_KEYS = ('adaptive', 'dt_max', 'dt_min', 'dimensions')
+_OPTIONAL_DOCUMENT_KEYS = ('adaptive', 'dt_max', 'dt_min', 'dimensions', 'tides', 'drag')
+_COLLISION_MODEL_IDS = (COLLISION_MODEL_ID, SPEED_ANGLE_VERSION, IGNORE_CONTACT_ID, STOP_ON_CONTACT_ID)
 
 
 @dataclass(frozen=True)
@@ -132,8 +141,8 @@ class FormationSpecification:
 
 SPECIFICATION = FormationSpecification(
     'Late-stage assembly around an existing star, beginning with massive rocky embryos rather than a gas-and-dust disk.',
-    'Each simulated object is one body. Every embryo begins as a single material parcel with a stable id and a mass. The prototype does not group parcels into a tree and does not represent gas or dust.',
-    'The experiment stores one collision rule. Perfect merge (nonstellar-perfect-merge-v1) keeps one remnant and is unrealistic as a general law. The speed-angle rule (speed-angle-merge-graze-fragment-v1) merges, grazes, or fragments from impact speed and impact parameter. Fragments stay as bodies and lost mass is recorded. Relative kinetic energy and the orbital spin residual are recorded only as the selected rule defines them. An unbound body outside the ejection radius leaves the active set and stays in the history.',
+    'Each simulated object is one body. Every embryo begins as a single material parcel with a stable id and a mass. The prototype does not group parcels into a tree. Gas drag, when enabled, is the annular disk acting on those bodies; dust swarms stay in the gas-and-dust prototype.',
+    'The experiment stores one collision rule. Perfect merge (nonstellar-perfect-merge-v1) keeps one remnant and is unrealistic as a general law. The speed-angle rule (speed-angle-merge-graze-fragment-v1) merges, grazes, or fragments from impact speed and impact parameter. Ignore lets an overlap continue with no remnant. Stop on contact ends the run at the first contact and is the only collision choice that does. Fragments stay as bodies and lost mass is recorded. Gas drag and close-pass tides are separate opt-in switches and stay off unless the setup stores them. An unbound body outside the ejection radius leaves the active set and stays in the history.',
     _QUESTIONS, _ASSUMPTIONS, _NOT_MODELED, _SCOPE, _GAS)
 
 
@@ -291,6 +300,60 @@ class PhysicalProbeReport:
     rocky_radius: float
     encounter_radius: float
     notes: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RockyYearReport:
+    """One 80-embryo year at the rocky radius on the combined adaptive path."""
+    hardware: str
+    body_count: int
+    embryo_count: int
+    requested_years: float
+    simulated_years: float
+    calculation_seconds: float
+    status: str
+    reason: str
+    minimum_step: float
+    maximum_step: float
+    collision_mode: str
+    drag: str
+    tides: str
+    merge_count: int
+    tide_count: int
+    ejection_count: int
+    unmodeled_count: int
+    dissipated_kinetic: float
+    notes: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class FlybySummary:
+    """One Sun–Jupiter flyby under one combination of switches."""
+    label: str
+    collision_mode: str
+    drag: str
+    tides: str
+    status: str
+    simulated_years: float
+    initial_sun_energy: float
+    sun_energy: float
+    jupiter_energy: float
+    minimum_jupiter_distance: float
+    binding: str
+    merged: bool
+    tide_count: int
+    dissipated_kinetic: float
+
+
+@dataclass(frozen=True)
+class FlybyReport:
+    """The same slow flyby with gravity alone and with drag and tides."""
+    hardware: str
+    free: FlybySummary
+    drag: FlybySummary
+    tides: FlybySummary
+    combined: FlybySummary
+    conclusion: str
 
 
 @dataclass(frozen=True)
@@ -597,9 +660,50 @@ def _change_document(change):
             'delta_v': [_num(component) for component in change['delta_v']], 'note': change['note']}
 
 
+def _combination_text(collision_mode, drag, tides, dimensions, adaptive):
+    drag_text = 'off' if not drag.enabled else f'on ({drag.version}, {drag.disk} disk)'
+    tide_text = 'off' if not tides.enabled else f'on ({tides.version})'
+    step = 'adaptive' if adaptive else 'fixed'
+    width = f'{dimensions}D' if dimensions else 'unspecified dimension'
+    return (f'Physics switches: collision {collision_mode}, gas drag {drag_text}, tides {tide_text}, '
+            f'{width}, {step} step. A contact does not end the run unless collision is stop_on_contact.')
+
+
+def with_physics(setup, *, collision_mode=None, tides=None, drag=None):
+    """Copy a setup with any combination of the collision, tide, and drag switches."""
+    from .model import with_collision_rule
+    if collision_mode is not None:
+        setup = with_collision_rule(setup, collision_mode)
+    updates = {}
+    if tides is not None:
+        updates['tides'] = tides if isinstance(tides, TidalPolicy) else TidalPolicy(enabled=bool(tides))
+    if drag is not None:
+        updates['drag'] = drag if isinstance(drag, DragPolicy) else DragPolicy(enabled=True if drag is True else False)
+    if not updates:
+        return setup
+    return replace(setup, **updates)
+
+
+def collision_model_id(setup):
+    """Provenance id for the collision switch actually stored on the setup."""
+    mode = setup.collision_mode
+    if mode == 'speed_angle':
+        return SPEED_ANGLE_VERSION
+    if mode == 'ignore':
+        return IGNORE_CONTACT_ID
+    if mode == 'stop_on_contact':
+        return STOP_ON_CONTACT_ID
+    return COLLISION_MODEL_ID
+
+
+def _mode_from_collision_model(collision_model):
+    return {SPEED_ANGLE_VERSION: 'speed_angle', IGNORE_CONTACT_ID: 'ignore',
+            STOP_ON_CONTACT_ID: 'stop_on_contact'}.get(collision_model, 'perfect_merge')
+
+
 def _new_provenance(setup, seed):
     provenance = {'run_id': '', 'model': FORMATION_MODEL, 'representation': REPRESENTATION_ID,
-                  'collision_model': setup.collision_policy.version, 'seed': seed, 'setup_digest': setup_digest(setup),
+                  'collision_model': collision_model_id(setup), 'seed': seed, 'setup_digest': setup_digest(setup),
                   'parent_checkpoint_id': None, 'change': None,
                   'execution_environment': {'numpy': np.__version__}, 'solver_build': SOLVER_BUILD}
     provenance['run_id'] = _run_id(provenance['setup_digest'], seed, None, None)
@@ -612,8 +716,10 @@ class FormationExperiment:
     def __init__(self, setup, *, ejection_radius, sample_stride=1, seed=None, adaptive=False, dt_min=None, composition=None):
         if not isinstance(setup, InitialSetup):
             raise TypeError('Formation starts from an InitialSetup.')
-        if setup.collision_mode not in ('perfect_merge', 'speed_angle'):
-            raise ValueError('Formation stores a disclosed collision rule: perfect_merge or speed_angle.')
+        if setup.collision_mode not in FORMATION_COLLISION_MODES:
+            raise ValueError('Formation collision modes: ignore, stop_on_contact, perfect_merge, speed_angle.')
+        if not isinstance(setup.drag, DragPolicy) or not isinstance(setup.tides, TidalPolicy):
+            raise ValueError('Formation stores a drag policy and a tide policy on the setup.')
         if seed is not None and (type(seed) is not int or isinstance(seed, bool) or seed < 0):
             raise ValueError('Formation seed must be a nonnegative integer or omitted.')
         if type(sample_stride) is not int or isinstance(sample_stride, bool) or sample_stride < 1:
@@ -657,7 +763,22 @@ class FormationExperiment:
         else:
             self.dt_min = self.dt_max
         self.provenance = _new_provenance(setup, seed)
+        self.drag_policy = setup.drag
+        self.zones = []
+        self.drag_parameters = None
+        self.drag_star_mass = None
+        self.dissipated_kinetic = 0.
+        self.drag_momentum_error = 0.
+        self.fluid_held = False
+        if setup.drag.enabled:
+            from .gas_dust import disk_for_policy
+            zones, parameters, star_mass = disk_for_policy(setup.drag)
+            self.zones = zones
+            self.drag_parameters = parameters
+            self.drag_star_mass = star_mass
         extras = [f'Ejection radius is {self.ejection_radius:.6g} AU and is evaluated at macro steps.']
+        combo = _combination_text(setup.collision_mode, setup.drag, setup.tides, self.dimensions if hasattr(self, 'dimensions') else None, self.adaptive)
+        extras.append(combo)
         if self.dimensions == 2:
             extras.append('This run is planar: every position and velocity has two components.')
         else:
@@ -674,6 +795,20 @@ class FormationExperiment:
         self.assumptions = _ASSUMPTIONS+tuple(extras)
         self._record_current(None, force=True)
 
+    def combination(self):
+        """The collision, drag, and tide switches this run is actually using."""
+        tides = self.prepared.setup.tides if self.prepared.setup is not None else TidalPolicy()
+        drag = self.drag_policy
+        return {
+            'dimensions': self.dimensions,
+            'adaptive': self.adaptive,
+            'collision_mode': self.prepared.setup.collision_mode if self.prepared.setup is not None else 'perfect_merge',
+            'collision_model': self.provenance['collision_model'],
+            'drag': 'off' if not drag.enabled else drag.disk,
+            'drag_model': 'off' if not drag.enabled else drag.version,
+            'tides': 'off' if not tides.enabled else tides.version,
+        }
+
     @property
     def time(self):
         return float(self.prepared.system.time)
@@ -684,7 +819,11 @@ class FormationExperiment:
         detail = f'Model {self.provenance["model"]}.'
         if self.reason:
             detail = f'{detail} {self.reason}'
-        return '\n'.join((status, detail, *self.assumptions))
+        switches = _combination_text(
+            self.combination()['collision_mode'], self.drag_policy,
+            self.prepared.setup.tides if self.prepared.setup is not None else TidalPolicy(),
+            self.dimensions, self.adaptive)
+        return '\n'.join((status, detail, switches, *self.assumptions))
 
     def integrate(self, years, *, finish=False):
         """Advance by whole macro steps until simulated time has grown by `years`."""
@@ -725,6 +864,8 @@ class FormationExperiment:
                 break
             previous = float(self.prepared.system.dt)
             self.prepared.system.dt = scheduled
+            time_before = float(self.prepared.system.time)
+            event_count = len(self.prepared.events)
             try:
                 outcome = advance_prepared(self.prepared)
             except ValueError as exc:
@@ -732,7 +873,7 @@ class FormationExperiment:
                 self.status = 'halted'
                 self.reason = str(exc)
                 break
-            previous = len(self.prepared.events)
+            previous = event_count
             for frame in outcome.event_frames:
                 if frame.event_phase == 'pre':
                     self.samples.append(self._sample_from_frame(frame, 'pre'))
@@ -745,6 +886,14 @@ class FormationExperiment:
                 if isinstance(event, CollisionEvent) and event.kind in ('close_encounter', 'orbital_change'):
                     self._record_passive(event)
             self.prepared = outcome.prepared
+            self._record_tides(event_count)
+            actual = float(self.prepared.system.time)-time_before
+            if outcome.stopped:
+                self.status = 'stopped'
+                stop = next((event for event in reversed(self.events) if event.kind == 'stop'), None)
+                self.reason = stop.message if stop is not None else 'Stop on contact.'
+            elif self.drag_policy.enabled and actual > 0 and self.status == 'running':
+                self._apply_drag(actual)
             self._eject()
             self.accepted_steps.append(float(self.prepared.system.dt))
             self.completed_steps += 1
@@ -899,7 +1048,7 @@ class FormationExperiment:
 
     def _consume_outcomes(self, frame):
         dynamic = [event for event in frame.events if isinstance(event, CollisionEvent)
-                   and event.kind in ('merge', 'fragment', 'graze', 'unmodeled')]
+                   and event.kind in ('merge', 'fragment', 'graze', 'unmodeled', 'ignored', 'stop')]
         for event in dynamic[self._applied_outcomes:]:
             if event.kind == 'merge':
                 self._apply_merge(event)
@@ -969,6 +1118,47 @@ class FormationExperiment:
         self.events.append(FormationEvent(float(event.time), event.kind, tuple(event.parent_ids), None,
                                           tuple(contributions), descendants, float(event.lost_relative_kinetic),
                                           float(event.unmodeled_spin), location, event.message))
+
+    def _record_tides(self, previous_count):
+        from .tides import TideEvent
+        for event in self.prepared.events[previous_count:]:
+            if not isinstance(event, TideEvent):
+                continue
+            location = self._tide_location(event.body_ids)
+            self.events.append(FormationEvent(
+                float(event.time), 'tide', tuple(event.body_ids), None, (), tuple(event.body_ids),
+                float(event.energy_lost), float(event.unmodeled_angular), location, event.message))
+
+    def _tide_location(self, body_ids):
+        system = self.prepared.system
+        found = [system.r[self.prepared.body_ids.index(body_id)]
+                 for body_id in body_ids if body_id in self.prepared.body_ids]
+        if not found:
+            return tuple(0. for _ in range(self.dimensions))
+        midpoint = sum(np.asarray(item, dtype=float) for item in found)/len(found)
+        return tuple(float(component) for component in midpoint)
+
+    def _apply_drag(self, dt):
+        """One annular fluid subcycle, then quadratic drag, for this macro step."""
+        from .gas_dust import advance_annular_fluid, apply_body_drag
+        if not advance_annular_fluid(self.zones, dt, self.drag_star_mass, self.drag_parameters.sound_speed):
+            self.fluid_held = True
+        star = self._star_index()
+        system = self.prepared.system
+        star_r = system.r[star]
+        star_v = system.v[star]
+        velocities = np.array(system.v, copy=True)
+        for index, body_id in enumerate(self.prepared.body_ids):
+            if index == star:
+                continue
+            spec = self.prepared.body_specs[index]
+            updated, dissipated, residual = apply_body_drag(
+                self.zones, self.drag_parameters, self.drag_star_mass, star_r, star_v,
+                system.r[index], velocities[index], spec.radius or 0., float(system.masses[index]), dt)
+            velocities[index] = updated
+            self.dissipated_kinetic += dissipated
+            self.drag_momentum_error = max(self.drag_momentum_error, residual)
+        system.v[:] = velocities
 
     def _record_passive(self, event):
         contributions = []
@@ -1083,6 +1273,7 @@ class FormationExperiment:
             'samples': [_sample_document(sample) for sample in self.samples],
         }
         payload.update(self._numerics_fields())
+        payload.update(self._physics_fields())
         return payload
 
     def _numerics_fields(self):
@@ -1091,6 +1282,26 @@ class FormationExperiment:
         fields = {'adaptive': bool(self.adaptive), 'dimensions': int(self.dimensions), 'dt_max': _num(self.dt_max)}
         if self.adaptive:
             fields['dt_min'] = _num(self.dt_min)
+        return fields
+
+    def _physics_fields(self):
+        """Tide and drag state. Absent when that switch is off, so older checkpoints stay valid."""
+        fields = {}
+        tides = self.prepared.setup.tides if self.prepared.setup is not None else None
+        if tides is not None and tides.enabled:
+            fields['tides'] = {'enabled': True, 'version': tides.version,
+                               'strength': _num(tides.strength), 'reach': _num(tides.reach)}
+        if self.drag_policy.enabled:
+            fields['drag'] = {
+                'enabled': True, 'version': self.drag_policy.version, 'disk': self.drag_policy.disk,
+                'star_mass': _num(self.drag_star_mass), 'sound_speed': _num(self.drag_parameters.sound_speed),
+                'drag_coefficient': _num(self.drag_parameters.drag_coefficient),
+                'dissipated_kinetic': _num(self.dissipated_kinetic),
+                'drag_momentum_error': _num(self.drag_momentum_error), 'fluid_held': bool(self.fluid_held),
+                'zones': [{'id': zone.id, 'r_inner': _num(zone.r_inner), 'r_outer': _num(zone.r_outer),
+                           'mass': _num(zone.mass), 'radial_momentum': _num(zone.radial_momentum),
+                           'angular_momentum': _num(zone.angular_momentum)} for zone in self.zones],
+            }
         return fields
 
     def _scheduled_dt(self):
@@ -1218,6 +1429,43 @@ def _string(value, label, *, nullable=False, hex_length=None):
     return value
 
 
+def _tides_from_document(value):
+    if value is None:
+        return TidalPolicy()
+    if type(value) is not dict or set(value) != {'enabled', 'version', 'strength', 'reach'}:
+        raise ValueError('Checkpoint tides must contain enabled, version, strength, and reach.')
+    if value['enabled'] is not True:
+        raise ValueError('A stored tide block is the enabled model.')
+    return TidalPolicy(enabled=True, version=value['version'], strength=value['strength'], reach=value['reach'])
+
+
+def _drag_from_document(value):
+    if value is None:
+        return DragPolicy()
+    if type(value) is not dict or value.get('enabled') is not True:
+        raise ValueError('A stored drag block is the enabled model.')
+    return DragPolicy(enabled=True, version=value['version'], disk=value['disk'])
+
+
+def _restore_drag(experiment, value):
+    from .gas_dust import DiskParameters, Zone, default_parameters
+    zones = []
+    for zone in value['zones']:
+        zones.append(Zone(zone['id'], float(zone['r_inner']), float(zone['r_outer']), float(zone['mass']),
+                          float(zone['radial_momentum']), float(zone['angular_momentum'])))
+    parameters = default_parameters(sound_speed=float(value['sound_speed']), drag_enabled=True)
+    if parameters.drag_coefficient != float(value['drag_coefficient']):
+        parameters = DiskParameters(
+            parameters.sound_speed, parameters.grain_density, parameters.bulk_density, parameters.stokes_min,
+            parameters.grain_radius_min, parameters.mass_min, float(value['drag_coefficient']), True)
+    experiment.zones = zones
+    experiment.drag_parameters = parameters
+    experiment.drag_star_mass = float(value['star_mass'])
+    experiment.dissipated_kinetic = float(value['dissipated_kinetic'])
+    experiment.drag_momentum_error = float(value['drag_momentum_error'])
+    experiment.fluid_held = bool(value['fluid_held'])
+
+
 def _experiment_from_document(document):
     if type(document) is not dict:
         raise ValueError('Formation checkpoint must be a JSON object.')
@@ -1239,7 +1487,7 @@ def _experiment_from_document(document):
     ejection_radius = _positive('Ejection radius', document['ejection_radius'])
     if type(document['sample_stride']) is not int or isinstance(document['sample_stride'], bool) or document['sample_stride'] < 1:
         raise ValueError('sample_stride must be a positive integer.')
-    if document['status'] not in ('running', 'complete', 'halted'):
+    if document['status'] not in ('running', 'complete', 'halted', 'stopped'):
         raise ValueError('Unsupported formation status.')
     reason = document['reason']
     if type(reason) is not str:
@@ -1266,11 +1514,13 @@ def _experiment_from_document(document):
         raise ValueError('A sample is later than the checkpoint time.')
     shell_bodies = tuple(InitialBody(body.id, BodySpec(body.name, body.kind, body.mass, body.radius), body.r, body.v, body.reference_id)
                          for body in active)
-    mode = 'speed_angle' if provenance['collision_model'] == SPEED_ANGLE_VERSION else 'perfect_merge'
-    shell = InitialSetup(name, shell_bodies, dt, collision_mode=mode)
+    mode = _mode_from_collision_model(provenance['collision_model'])
+    tides = _tides_from_document(document.get('tides'))
+    drag = _drag_from_document(document.get('drag'))
+    shell = InitialSetup(name, shell_bodies, dt, collision_mode=mode, tides=tides, drag=drag)
     collision_events = []
     for event in events:
-        if event.kind in ('merge', 'fragment'):
+        if event.kind in ('merge', 'fragment', 'graze', 'unmodeled', 'ignored', 'stop'):
             ancestry = tuple(sorted({item.parcel_id for item in event.contributions}))
             descendants = event.descendant_ids
             collision_events.append(CollisionEvent(
@@ -1300,7 +1550,8 @@ def _experiment_from_document(document):
     experiment.status = document['status']
     experiment.reason = reason
     experiment.completed_steps = document['completed_steps']
-    experiment._applied_outcomes = sum(event.kind in ('merge', 'fragment') for event in collision_events)
+    experiment._applied_outcomes = sum(
+        event.kind in ('merge', 'fragment', 'graze', 'unmodeled', 'ignored', 'stop') for event in collision_events)
     experiment.accepted_steps = []
     widths = {len(body.r) for body in (*active, *removed_list)}
     widths.update(len(body.v) for body in (*active, *removed_list))
@@ -1335,6 +1586,15 @@ def _experiment_from_document(document):
     experiment.dimensions = dimension
     experiment.dt_max = dt_max
     experiment.dt_min = dt_min
+    experiment.drag_policy = drag
+    experiment.zones = []
+    experiment.drag_parameters = None
+    experiment.drag_star_mass = None
+    experiment.dissipated_kinetic = 0.
+    experiment.drag_momentum_error = 0.
+    experiment.fluid_held = False
+    if drag.enabled:
+        _restore_drag(experiment, document['drag'])
     if experiment.checkpoint_id != identity:
         raise ValueError('Checkpoint did not round-trip.')
     return experiment
@@ -1347,7 +1607,7 @@ def body_spec(body):
 def _provenance_from_document(value):
     _object(value, _PROVENANCE_KEYS, 'Provenance')
     if (value['model'] != FORMATION_MODEL or value['representation'] != REPRESENTATION_ID
-            or value['collision_model'] not in (COLLISION_MODEL_ID, SPEED_ANGLE_VERSION)):
+            or value['collision_model'] not in _COLLISION_MODEL_IDS):
         raise ValueError('Unsupported formation provenance model.')
     seed = value['seed']
     if seed is not None and (type(seed) is not int or isinstance(seed, bool) or seed < 0):
@@ -1399,7 +1659,8 @@ def _contribution_from_document(value):
 def _event_from_document(value):
     _object(value, _EVENT_KEYS, 'Formation event')
     kind = value['kind']
-    if kind not in ('merge', 'fragment', 'graze', 'unmodeled', 'close_encounter', 'orbital_change', 'ejection'):
+    if kind not in ('merge', 'fragment', 'graze', 'unmodeled', 'close_encounter', 'orbital_change', 'ejection',
+                    'ignored', 'stop', 'tide'):
         raise ValueError('Unsupported formation event.')
     parents = tuple(_string(item, 'Parent id') for item in _list(value['parent_ids'], 'Parent ids'))
     if not parents:
@@ -1412,7 +1673,7 @@ def _event_from_document(value):
         raise ValueError('A fragment event needs its largest remnant and at least one other descendant.')
     if kind == 'ejection' and (remnant is not None or descendants != parents):
         raise ValueError('An ejection keeps the same body as its descendant.')
-    if kind in ('graze', 'unmodeled', 'close_encounter', 'orbital_change') and remnant is not None:
+    if kind in ('graze', 'unmodeled', 'close_encounter', 'orbital_change', 'ignored', 'stop', 'tide') and remnant is not None:
         raise ValueError('This event keeps the participants and does not name a remnant.')
     contributions = tuple(_contribution_from_document(item) for item in _list(value['contributions'], 'Contributions'))
     lost = tuple(_contribution_from_document(item) for item in _list(value['lost_contributions'], 'Lost contributions'))
@@ -1468,7 +1729,7 @@ def as_recorded_run(experiment):
     frames = tuple(_state_frame(sample, experiment.prepared.system.dt) for sample in experiment.samples)
     if experiment.status == 'complete':
         status, reason = 'complete', experiment.reason
-    elif experiment.status == 'halted':
+    elif experiment.status in ('halted', 'stopped'):
         status, reason = 'halted', experiment.reason or 'Formation run halted.'
     else:
         status, reason = 'cancelled', 'Partial formation recording; the run is not finished.'
@@ -1653,7 +1914,7 @@ def run_physical_probe():
         'Geometric cross section is smaller by about the square of that factor, so contacts are much rarer than in the inflated prototype.',
         'The macro step is the pair resolution limit during a close pass and returns toward the authored 0.025 yr step afterward.',
         'Direct summation is used. Tree gravity remains deferred and would still have to keep parcel identity.',
-        'No permanent capture is claimed. Fragmenting collisions beyond the stored speed-angle map are #69 and gas drag is #71. Optional close-pass tides (#79) stay off on this perfect-merge path.',
+        'This probe leaves gas drag and tides off. Those switches can be enabled on the same adaptive path. A longer-lived capture is claimed only for a run that turns the relevant switch on.',
     ]
     if experiment.status != 'complete':
         notes.append('The run stopped before the requested time: '+experiment.reason)
@@ -1664,3 +1925,206 @@ def run_physical_probe():
         PHYSICAL_PROBE_DURATION_YEARS, experiment.time, seconds, experiment.status, experiment.reason,
         sum(event.kind == 'merge' for event in experiment.events), min(steps), max(steps), radius,
         BENCHMARK_EMBRYO_RADIUS, tuple(notes))
+
+
+def run_rocky_year():
+    """80 embryos, rocky radii, 3D state, adaptive step, one year.
+
+    The measured combination is perfect merge, the annular disk, and tides.
+    Each switch can be turned off by constructing the setup without it.
+    """
+    setup = with_physics(
+        make_late_stage_setup(
+            count=ROCKY_YEAR_COUNT, seed=ROCKY_YEAR_SEED, include_unbound=False,
+            radii='rocky', inclination=ROCKY_YEAR_INCLINATION, dt=BENCHMARK_DT),
+        drag=DragPolicy(enabled=True, disk='annular'), tides=TidalPolicy(enabled=True))
+    clock = time.perf_counter()
+    experiment = FormationExperiment(
+        setup, ejection_radius=BENCHMARK_EJECTION_RADIUS, sample_stride=BENCHMARK_SAMPLE_STRIDE,
+        seed=ROCKY_YEAR_SEED, adaptive=True)
+    experiment.integrate(ROCKY_YEAR_DURATION_YEARS, finish=True)
+    seconds = time.perf_counter()-clock
+    steps = tuple(experiment.accepted_steps) or (experiment.dt_max,)
+    combo = experiment.combination()
+    merges = sum(event.kind == 'merge' for event in experiment.events)
+    tides = sum(event.kind == 'tide' for event in experiment.events)
+    ejections = sum(event.kind == 'ejection' for event in experiment.events)
+    unmodeled = sum(event.kind == 'unmodeled' for event in experiment.events)
+    notes = [
+        'Collision perfect_merge, gas drag on (annular disk, mid-plane Gaussian), tides on (close-pass-energy-dissipation-v1).',
+        'Drag evaluates the existing annular isothermal zones at cylindrical radius. Height only weights the midplane density by the isothermal scale height. There is no vertical gas velocity and no new disk method.',
+        'Tides use the existing pericenter formula and apply only to a pair that does not become a contact in that step.',
+        'Stellar contact is logged and does not end the run. Stop on contact is not selected.',
+        'Direct summation is used. Tree gravity remains deferred.',
+        f'Dissipated kinetic energy from drag is {experiment.dissipated_kinetic:.6g}. Tide events: {tides}. Mergers: {merges}. Ejections: {ejections}. Unmodeled stellar contacts: {unmodeled}.',
+    ]
+    if experiment.fluid_held:
+        notes.append('At least one fluid subcycle was held because the Courant limit or a zone mass would not allow it. Drag continued from the zones that remained.')
+    if experiment.status != 'complete':
+        notes.append('The run stopped before the requested time: '+experiment.reason)
+    else:
+        notes.append('The requested year completed.')
+    return RockyYearReport(
+        hardware_description(), len(experiment.samples[0].bodies), ROCKY_YEAR_COUNT,
+        ROCKY_YEAR_DURATION_YEARS, experiment.time, seconds, experiment.status, experiment.reason,
+        min(steps), max(steps), combo['collision_mode'], combo['drag'], combo['tides'],
+        merges, tides, ejections, unmodeled, experiment.dissipated_kinetic, tuple(notes))
+
+
+def make_sun_giant_flyby(*, collision_mode='perfect_merge', drag=False, tides=False):
+    """Sun, catalog Jupiter, and one slow visitor on a three-dimensional approach.
+
+    The visitor radius is a disclosed drag cross-section, not a rocky surface.
+    The disk, when enabled, is the annular isothermal disk placed on Jupiter's orbit.
+    """
+    from .data import CATALOG
+    if collision_mode not in FORMATION_COLLISION_MODES:
+        raise ValueError('Formation collision modes: ignore, stop_on_contact, perfect_merge, speed_angle.')
+    if type(drag) is not bool or type(tides) is not bool:
+        raise ValueError('Drag and tides must each be true or false.')
+    sun = CATALOG['sun']
+    jupiter = CATALOG['jupiter']
+    distance = float(PLANETS['jupiter'].distance)
+    speed = math.sqrt(G*(sun.mass+jupiter.mass)/distance)
+    # Start unbound to the Sun, outside the giant-orbit disk, on a pass that
+    # can reach Jupiter. Drag and tides are then able to change the outcome.
+    offset = np.array([2.2, 0.5, 0.1])
+    relative = np.array([-2.8, -0.6, -0.02])
+    position = np.array([distance, 0., 0.])+offset
+    velocity = np.array([0., speed, 0.])+relative
+    visitor = BodySpec('Visitor', 'planet', 1e-6, 0.05, color='#c9b28d',
+                       provenance='Disclosed drag cross-section of 0.05 AU, not a rocky surface.')
+    bodies = (
+        InitialBody('sun', sun, (0., 0., 0.), (0., 0., 0.)),
+        InitialBody('jupiter', jupiter, (distance, 0., 0.), (0., speed, 0.)),
+        InitialBody('visitor', visitor, tuple(float(component) for component in position),
+                    tuple(float(component) for component in velocity)),
+    )
+    role = 'drag-on' if drag else 'drag-off'
+    tide_role = 'tides-on' if tides else 'tides-off'
+    return with_physics(InitialSetup(
+        'Sun–Jupiter slow flyby', bodies, FLYBY_DT, collision_mode=collision_mode,
+        provenance={'formation_model': FORMATION_MODEL, 'scenario': 'sun-jupiter-flyby',
+                    'comparison_role': f'{role}/{tide_role}',
+                    'visitor_radius_au': 0.05,
+                    'note': 'Slow flyby near Jupiter with the Sun included. The visitor radius is a drag cross-section.'}),
+        drag=DragPolicy(enabled=True, disk='giant') if drag else DragPolicy(),
+        tides=TidalPolicy(enabled=True) if tides else TidalPolicy())
+
+
+def _binding_word(energies):
+    if not energies:
+        return 'unbound'
+    bound = [energy < 0. for energy in energies]
+    if not any(bound):
+        return 'unbound'
+    if all(bound):
+        return 'bound-throughout'
+    if bound[-1]:
+        return 'bound-at-end'
+    return 'temporary'
+
+
+def _flyby_summary(label, drag, tides):
+    setup = make_sun_giant_flyby(drag=drag, tides=tides)
+    experiment = FormationExperiment(setup, ejection_radius=80., sample_stride=1, seed=72, adaptive=True)
+    experiment.integrate(FLYBY_DURATION_YEARS, finish=True)
+    sun_energies = []
+    minimum = math.inf
+    last_sun = math.nan
+    last_jupiter = math.nan
+    initial_sun = math.nan
+    for sample in experiment.samples:
+        sun_energy, _distance = _sample_energy(sample, 'sun', 'visitor')
+        jupiter_energy, distance = _sample_energy(sample, 'jupiter', 'visitor')
+        if sun_energy is None:
+            continue
+        if not sun_energies:
+            initial_sun = sun_energy
+        sun_energies.append(sun_energy)
+        last_sun = sun_energy
+        last_jupiter = jupiter_energy
+        minimum = min(minimum, distance)
+    merged = any(event.kind == 'merge' and 'visitor' in event.parent_ids for event in experiment.events)
+    if 'visitor' in experiment.prepared.body_ids and 'sun' in experiment.prepared.body_ids:
+        last_sun, _distance = _relative_energy(experiment, 'sun', 'visitor')
+        if 'jupiter' in experiment.prepared.body_ids:
+            last_jupiter, distance = _relative_energy(experiment, 'jupiter', 'visitor')
+            minimum = min(minimum, distance)
+        sun_energies.append(last_sun)
+    combo = experiment.combination()
+    return FlybySummary(
+        label, combo['collision_mode'], combo['drag'], combo['tides'], experiment.status, experiment.time,
+        initial_sun, last_sun, last_jupiter, minimum, _binding_word(sun_energies), merged,
+        sum(event.kind == 'tide' for event in experiment.events), experiment.dissipated_kinetic)
+
+
+def _sample_energy(sample, primary, secondary):
+    bodies = {body.id: body for body in sample.bodies}
+    if primary not in bodies or secondary not in bodies:
+        return None, None
+    separation = np.asarray(bodies[secondary].r, dtype=float)-np.asarray(bodies[primary].r, dtype=float)
+    velocity = np.asarray(bodies[secondary].v, dtype=float)-np.asarray(bodies[primary].v, dtype=float)
+    distance = float(np.linalg.norm(separation))
+    mu = G*(float(bodies[primary].mass)+float(bodies[secondary].mass))
+    return .5*float(np.dot(velocity, velocity))-mu/distance, distance
+
+
+def _relative_energy(experiment, primary, secondary):
+    system = experiment.prepared.system
+    i = experiment.prepared.body_ids.index(primary)
+    j = experiment.prepared.body_ids.index(secondary)
+    separation = system.r[j]-system.r[i]
+    velocity = system.v[j]-system.v[i]
+    distance = float(np.linalg.norm(separation))
+    mu = G*(float(system.masses[i])+float(system.masses[j]))
+    energy = .5*float(np.dot(velocity, velocity))-mu/distance
+    return energy, distance
+
+
+def _flyby_conclusion(free, drag, tides, combined):
+    def phrase(summary):
+        if summary.merged:
+            binding = f'merged after {summary.binding}'
+        else:
+            binding = summary.binding
+        return (f'{summary.label}: collision {summary.collision_mode}, drag {summary.drag}, tides {summary.tides}, '
+                f'status {summary.status}, Sun-specific binding {binding}, '
+                f'initial Sun-specific energy {summary.initial_sun_energy:.6g}, '
+                f'last Sun-specific energy while the visitor exists {summary.sun_energy:.6g}, '
+                f'last Jupiter-specific energy while the visitor exists {summary.jupiter_energy:.6g}, '
+                f'minimum Jupiter distance {summary.minimum_jupiter_distance:.6g} AU, '
+                f'tide events {summary.tide_count}')
+    runs = (free, drag, tides, combined)
+    longer = [item.label for item in runs if not item.merged and item.binding in ('bound-at-end', 'bound-throughout')]
+    temporary = [item.label for item in runs if not item.merged and item.binding == 'temporary']
+    merged = [item.label for item in runs if item.merged]
+    claim = ('A longer-lived capture, for this window, is claimed only for the runs that end bound and unmerged: '
+             + (', '.join(longer) if longer else 'none') + '. ')
+    if temporary:
+        claim += 'Temporary binding (bound and then unbound again inside the window) occurred for: '+', '.join(temporary)+'. '
+    else:
+        claim += 'No unmerged run was bound and then unbound again inside this window. '
+    if merged:
+        claim += ('A perfect merge removed the visitor as a separate body for: '+', '.join(merged)
+                  + '. That merger is not a capture. ')
+    if not longer and not temporary:
+        claim += 'No selected option leaves a captured survivor. '
+    if (combined.tide_count == 0 and not combined.merged and combined.binding == drag.binding
+            and combined.minimum_jupiter_distance > 0.3):
+        claim += ('On the drag-and-tides run the closest approach stays outside the tidal reach, '
+                  'so no tide event is recorded and the end state matches drag alone. ')
+    claim += ('The visitor starts unbound to the Sun. This is not a permanent-capture claim. '
+              'A later scattering can still unbind a body, and the visitor radius of 0.05 AU is a drag cross-section, '
+              'not a rocky surface.')
+    return '\n'.join((phrase(free), phrase(drag), phrase(tides), phrase(combined), claim))
+
+
+def run_sun_giant_flyby():
+    """The same slow flyby with each energy sink off, and with drag and tides on."""
+    free = _flyby_summary('gravity only', False, False)
+    drag = _flyby_summary('drag on', True, False)
+    tides = _flyby_summary('tides on', False, True)
+    combined = _flyby_summary('drag and tides', True, True)
+    return FlybyReport(hardware_description(), free, drag, tides, combined,
+                       _flyby_conclusion(free, drag, tides, combined))

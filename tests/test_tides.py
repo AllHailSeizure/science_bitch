@@ -228,8 +228,8 @@ def test_disclosure_limits_the_claim_to_the_selected_model(comparison):
     for phrase in (TIDAL_MODEL_ID, 'off unless', '#69', '#70', '#71',
                    'not the dominant capture path', 'not gas drag', 'does not change collision rules'):
         assert phrase in readme
-    note = ' '.join(specification().not_modeled)
-    assert 'close-pass' in note and 'stays off' in note
+    model = specification().collision_model.lower()
+    assert 'close-pass' in model and 'off unless' in model
 
 
 def test_matched_jupiter_control_rejects_a_different_tide_policy():

@@ -24,12 +24,11 @@ from .collisions import merge_pair
 from .core import G, SOLAR_RADIUS_AU, System
 from .formation import Contribution, FormationExperiment, VelocityChange, hardware_description
 from .initialization import PreparedSystem
-from .model import BodySpec, InitialBody, InitialSetup
+from .model import DRAG_MODEL_ID, BodySpec, InitialBody, InitialSetup
 from .persistence import SOLVER_BUILD
 
 DISK_MODEL = 'gas-dust-annular-isothermal-v1'
 REPRESENTATION_ID = 'annular-fluid-and-dust-swarms-v1'
-DRAG_MODEL_ID = 'epstein-swarm-quadratic-body-v1'
 GROWTH_MODEL_ID = 'representative-sweep-up-v1'
 SWARM_RULE_ID = 'hill-bound-stokes-v1'
 COLLISION_MODEL_ID = 'nonstellar-perfect-merge-v1'
@@ -674,11 +673,7 @@ class GasDustExperiment:
 
     def zone_at(self, radius):
         """Return the annular zone containing `radius`, or None outside the fluid."""
-        value = _finite('Radius', radius)
-        for zone in self.zones:
-            if zone.r_inner <= value < zone.r_outer or (zone is self.zones[-1] and value == zone.r_outer):
-                return zone
-        return None
+        return find_zone(self.zones, _finite('Radius', radius))
 
     def replay_parcel(self, parcel_id):
         """Parcels, events, and samples that still carry this solid material."""
@@ -1245,18 +1240,157 @@ def _dust_density(mass, zone, star_mass, parameters):
     return mass/(zone.area*math.sqrt(2*math.pi)*scale_height)
 
 
+def quadratic_velocity_update(velocity, gas, density, radius, mass, coefficient, dt):
+    """Implicit quadratic drag. The speed law is the one ``_quadratic_drag`` uses."""
+    if density <= 0 or radius <= 0 or mass <= 0 or coefficient <= 0:
+        return np.array(velocity, dtype=float)
+    area = math.pi*float(radius)**2
+    drag_coefficient = float(coefficient)*float(density)*area/(2*float(mass))
+    relative = np.array(velocity, dtype=float)-np.asarray(gas, dtype=float)
+    speed = float(np.linalg.norm(relative))
+    if speed == 0 or drag_coefficient == 0:
+        return np.array(velocity, dtype=float)
+    slowed = speed/(1+drag_coefficient*speed*dt)
+    return np.asarray(gas, dtype=float)+relative*(slowed/speed)
+
+
 def _quadratic_drag(velocity, gas, zone, body, star_mass, parameters, dt):
     density = _midplane_density(zone.sigma, zone.radius, star_mass, parameters.sound_speed)
-    if density <= 0:
-        return np.array(velocity, dtype=float)
-    area = math.pi*body.radius**2
-    coefficient = parameters.drag_coefficient*density*area/(2*body.mass)
-    relative = np.array(velocity, dtype=float)-gas
-    speed = float(np.linalg.norm(relative))
-    if speed == 0 or coefficient == 0:
-        return np.array(velocity, dtype=float)
-    slowed = speed/(1+coefficient*speed*dt)
-    return gas+relative*(slowed/speed)
+    return quadratic_velocity_update(velocity, gas, density, body.radius, body.mass, parameters.drag_coefficient, dt)
+
+
+def find_zone(zones, radius):
+    """Annular zone containing ``radius``, or None outside the fluid."""
+    value = float(radius)
+    if not zones or not math.isfinite(value):
+        return None
+    for zone in zones:
+        if zone.r_inner <= value < zone.r_outer or (zone is zones[-1] and value == zone.r_outer):
+            return zone
+    return None
+
+
+def vertical_density(zone, height, star_mass, sound_speed):
+    """Midplane density times a Gaussian in height. Zero height is the midplane value."""
+    midplane = _midplane_density(zone.sigma, zone.radius, star_mass, sound_speed)
+    if height == 0 or midplane <= 0:
+        return midplane
+    omega = math.sqrt(G*star_mass/zone.radius**3)
+    scale = sound_speed/omega
+    if scale <= 0 or not math.isfinite(scale):
+        return midplane
+    return midplane*math.exp(-.5*(float(height)/scale)**2)
+
+
+def cylindrical_geometry(relative):
+    """Cylindrical radius, height, and in-plane basis of a star-centric offset.
+
+    A two-component offset has zero height. The basis matches ``_basis`` in the plane.
+    """
+    vector = np.asarray(relative, dtype=float)
+    if vector.shape == (2,):
+        radius = float(np.linalg.norm(vector))
+        height = 0.
+        if radius <= 0:
+            return radius, height, None, None
+        r_hat = vector/radius
+        phi_hat = np.array([-r_hat[1], r_hat[0]])
+        return radius, height, r_hat, phi_hat
+    radius = float(math.hypot(float(vector[0]), float(vector[1])))
+    height = float(vector[2])
+    if radius <= 0:
+        return radius, height, None, None
+    r_hat = np.array([vector[0]/radius, vector[1]/radius, 0.])
+    phi_hat = np.array([-vector[1]/radius, vector[0]/radius, 0.])
+    return radius, height, r_hat, phi_hat
+
+
+def advance_annular_fluid(zones, dt, star_mass, sound_speed):
+    """Subcycle the existing source and transport steps inside ``dt``.
+
+    Returns False when a piece would empty a zone or the Courant limit is not
+    usable. Zones already updated stay updated. The caller does not halt.
+    """
+    remaining = float(dt)
+    guard = 0
+    while remaining > 1e-15*max(1., abs(float(dt))):
+        guard += 1
+        if guard > 100000:
+            return False
+        limit = _cfl_dt(zones, sound_speed)
+        step = min(remaining, COURANT*limit)
+        if not math.isfinite(step) or step <= 0 or not math.isfinite(limit):
+            return False
+        trial = [replace(zone) for zone in zones]
+        _source(trial, step, star_mass, sound_speed)
+        if not _transport(trial, step):
+            return False
+        for zone, updated in zip(zones, trial):
+            zone.mass = updated.mass
+            zone.radial_momentum = updated.radial_momentum
+            zone.angular_momentum = updated.angular_momentum
+        remaining -= step
+    return True
+
+
+def apply_body_drag(zones, parameters, star_mass, star_position, star_velocity, position, velocity, radius, mass, dt):
+    """Quadratic drag on one body about the current star, using the mid-plane disk.
+
+    Height enters only as the Gaussian weight on the existing midplane density.
+    Gas has no vertical velocity. Vertical momentum taken from the body is not
+    stored on a zone. Returns ``(velocity, dissipated, momentum_error)``.
+    """
+    relative_r = np.asarray(position, dtype=float)-np.asarray(star_position, dtype=float)
+    relative_v = np.asarray(velocity, dtype=float)-np.asarray(star_velocity, dtype=float)
+    cyl, height, r_hat, phi_hat = cylindrical_geometry(relative_r)
+    if r_hat is None:
+        return np.array(velocity, dtype=float), 0., 0.
+    zone = find_zone(zones, cyl)
+    if zone is None or not parameters.drag_enabled:
+        return np.array(velocity, dtype=float), 0., 0.
+    density = vertical_density(zone, height, star_mass, parameters.sound_speed)
+    gas = zone.v_r*r_hat+zone.v_phi*phi_hat
+    before = relative_v
+    after = quadratic_velocity_update(before, gas, density, radius, mass, parameters.drag_coefficient, dt)
+    delta_p = float(mass)*(after-before)
+    gas_radial = -float(np.dot(delta_p, r_hat))
+    gas_angular = -cyl*float(np.dot(delta_p, phi_hat))
+    residual = abs(float(np.dot(delta_p, r_hat))+gas_radial)+abs(cyl*float(np.dot(delta_p, phi_hat))+gas_angular)
+    kinetic_before = .5*float(mass)*float(np.dot(before, before))+_zone_kinetic(zone)
+    zone.radial_momentum += gas_radial
+    zone.angular_momentum += gas_angular
+    kinetic_after = .5*float(mass)*float(np.dot(after, after))+_zone_kinetic(zone)
+    inertial = np.asarray(star_velocity, dtype=float)+after
+    return inertial, kinetic_before-kinetic_after, residual
+
+
+GIANT_DISK_INNER = 4.2
+GIANT_DISK_OUTER = 6.4
+GIANT_DISK_SIGMA = 0.02
+GIANT_DISK_SOUND = 0.35
+GIANT_DISK_ZONES = 16
+
+
+def make_giant_orbit_disk():
+    """Uniform annular disk on a giant planet's orbit. Same isothermal method."""
+    zones = _uniform_zones(GIANT_DISK_ZONES, GIANT_DISK_INNER, GIANT_DISK_OUTER, GIANT_DISK_SIGMA)
+    assign_equilibrium(zones, 1., GIANT_DISK_SOUND)
+    parameters = default_parameters(sound_speed=GIANT_DISK_SOUND, drag_enabled=True)
+    return zones, parameters, 1.
+
+
+def disk_for_policy(policy):
+    """Zones, parameters, and star mass for one stored drag disk. Zones are copies."""
+    if policy.disk == 'annular':
+        setup = make_disk_setup(swarm_count=0, include_ready=False)
+    elif policy.disk == 'envelope':
+        setup = make_capture_setup(drag=True)
+    elif policy.disk == 'giant':
+        zones, parameters, star_mass = make_giant_orbit_disk()
+        return [replace(zone) for zone in zones], parameters, star_mass
+    else:
+        raise ValueError("Drag disk must be 'annular', 'envelope', or 'giant'.")
+    return [replace(zone) for zone in setup.zones], setup.parameters, setup.star_mass
 
 
 def _gas_cartesian(zone, position):

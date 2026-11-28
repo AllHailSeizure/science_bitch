@@ -1,9 +1,11 @@
 """Optional energy loss on resolved close pericenters.
 
 ``close-pass-energy-dissipation-v1`` is off unless an experiment stores an
-enabled :class:`~simulations.star_system.model.TidalPolicy`. The fixed-step
-Yoshida advance is unchanged when the policy is off. The kick is not part of
-the contact solver, and it is not gas drag, fragmentation, or a 3D integrator.
+enabled :class:`~simulations.star_system.model.TidalPolicy`. The advance is
+unchanged when the policy is off. The kick is not a collision outcome and it
+is not gas drag. On a contact-solver step it applies only to a pair that does
+not become a contact in that step. The energy formula is the same in two and
+three dimensions.
 """
 import math
 from dataclasses import dataclass, replace
@@ -42,18 +44,23 @@ MODEL_DISCLOSURE = (
 )
 
 INTERACTION = (
-    'This kick is not a 3D or adaptive-step integrator and it does not call REBOUND (#70). '
-    'A fixed step that skips the pericenter, or that estimates it poorly, understates the energy loss, '
+    'This kick runs on the step that contains the pericenter, including a three-dimensional adaptive step. '
+    'It does not call REBOUND (#70). '
+    'A step that skips the pericenter, or that estimates it poorly, understates the energy loss, '
     'so tides are not the dominant capture path for an unresolved encounter. '
-    'It does not change collision rules (#69): perfect merge, speed and angle, and the binary-star merger still use the contact solver, '
-    'and a stored tide choice is not applied on that path. '
+    'It does not change collision rules (#69): perfect merge, speed and angle, ignore, stop on contact, '
+    'and the binary-star merger keep their own responses. '
+    'On a contact-solver step the kick is applied only to a pair that does not become a contact in that step. '
+    'A contacting pair is left to the collision rule. '
+    'In three dimensions the recorded angular-momentum change is the magnitude of the vector change. '
+    'Planar runs keep the signed z component. '
     'Fragmentation, hit-and-run, and merger remnants are not tidal outcomes. '
     'Where an impact would dominate, this model is not the capture path. '
-    'It is not gas drag (#71). There is no disk, and a pass outside the tidal reach loses no energy here. '
+    'It is not gas drag (#71). There is no disk in this kick, and a pass outside the tidal reach loses no energy here. '
     'Gas drag, fragmenting collisions, and a close-encounter integrator can outweigh this kick; '
     'none of those are implied by a tidal result. '
-    'A longer encounter in this model is still planar, spin-free, and reversible by a later scattering. '
-    'It is not a permanent capture.'
+    'A longer encounter in this model is still spin-free and can be reversed by a later scattering. '
+    'It is not, by itself, a permanent capture.'
 )
 
 
@@ -153,13 +160,27 @@ def _remove_energy(positions, velocities, masses, i, j, loss):
     if removed <= 0.0:
         return 0.0, 0.0
     scale = math.sqrt(1.0 - removed / kinetic)
-    before = mu * (separation[0] * relative[1] - separation[1] * relative[0])
+    before = _pair_angular(separation, relative, mu)
     updated = relative * scale
     center = (mi * velocities[i] + mj * velocities[j]) / total
     velocities[i] = center + (mj / total) * updated
     velocities[j] = center - (mi / total) * updated
-    after = mu * (separation[0] * updated[1] - separation[1] * updated[0])
-    return removed, float(before - after)
+    after = _pair_angular(separation, updated, mu)
+    return removed, _angular_change(before, after)
+
+
+def _pair_angular(separation, relative, mu):
+    """Signed z component in the plane, or the angular-momentum vector in 3D."""
+    if len(separation) == 2:
+        return mu * (separation[0] * relative[1] - separation[1] * relative[0])
+    return mu * np.cross(np.asarray(separation, dtype=float), np.asarray(relative, dtype=float))
+
+
+def _angular_change(before, after):
+    """Planar runs keep a signed scalar. Three dimensions keep the magnitude of the change."""
+    if np.ndim(before) == 0:
+        return float(before - after)
+    return float(np.linalg.norm(np.asarray(before, dtype=float) - np.asarray(after, dtype=float)))
 
 
 def dissipate_close_passes(prepared, start_r, start_v):
@@ -191,6 +212,58 @@ def dissipate_close_passes(prepared, start_r, start_v):
                 continue
             pairs.append((tuple(sorted((prepared.body_ids[j], prepared.body_ids[i]))), j, i, distance,
                           radius_j, radius_i))
+    for pair, j, i, distance, radius_j, radius_i in sorted(pairs):
+        loss = pair_energy_loss(system.masses[j], radius_j, system.masses[i], radius_i, distance, policy.strength)
+        removed, unmodeled = _remove_energy(system.r, velocities, system.masses, j, i, loss)
+        if removed <= 0.0 or not np.isfinite(removed):
+            continue
+        events.append(TideEvent(
+            system.time, KIND, pair, distance, removed, unmodeled,
+            f'{policy.version}: {pair[0]} and {pair[1]} lost {removed:.6g} '
+            f'at estimated pericenter {distance:.6g} AU. '
+            f'Linear momentum kept. Orbital angular-momentum change {unmodeled:.6g} is not stored as spin.'))
+    if not events:
+        return prepared
+    system.v[:] = velocities
+    return replace(prepared, events=prepared.events + tuple(events))
+
+
+def dissipate_surviving_passes(prepared, start_state, contacted_ids):
+    """Tide kick for pairs that still exist and did not contact during the step.
+
+    ``start_state`` maps body id to ``(position, velocity)`` at the beginning of
+    the step. ``contacted_ids`` are parents of a collision outcome in that step.
+    A merge removes those parents, so they are absent here as well. The energy
+    formula is :func:`pair_energy_loss`.
+    """
+    policy = prepared.setup.tides if prepared.setup is not None else None
+    if policy is None or not policy.enabled:
+        return prepared
+    system = prepared.system
+    velocities = np.array(system.v, copy=True)
+    end_index = {body_id: index for index, body_id in enumerate(prepared.body_ids)}
+    survivors = [body_id for body_id in start_state if body_id in end_index and body_id not in contacted_ids]
+    pairs = []
+    for left_at, left in enumerate(survivors):
+        for right in survivors[:left_at]:
+            j = end_index[left]
+            i = end_index[right]
+            if system.masses[i] <= 0 or system.masses[j] <= 0:
+                continue
+            start_rj, start_vj = start_state[left]
+            start_ri, start_vi = start_state[right]
+            distance = _crossing_distance(
+                np.asarray(start_rj) - np.asarray(start_ri), np.asarray(start_vj) - np.asarray(start_vi),
+                system.r[j] - system.r[i], system.v[j] - system.v[i])
+            if distance is None:
+                continue
+            radius_i = prepared.body_specs[i].radius or 0.0
+            radius_j = prepared.body_specs[j].radius or 0.0
+            larger = max(radius_i, radius_j)
+            if larger <= 0.0 or distance > policy.reach * larger:
+                continue
+            pairs.append((tuple(sorted((right, left))), j, i, distance, radius_j, radius_i))
+    events = []
     for pair, j, i, distance, radius_j, radius_i in sorted(pairs):
         loss = pair_energy_loss(system.masses[j], radius_j, system.masses[i], radius_i, distance, policy.strength)
         removed, unmodeled = _remove_energy(system.r, velocities, system.masses, j, i, loss)

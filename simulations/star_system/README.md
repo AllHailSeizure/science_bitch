@@ -736,26 +736,26 @@ relative kinetic energy. The change in the pair's orbital angular momentum is
 recorded and is not stored as spin. Temperature, spin evolution, and stellar
 structure are omitted.
 
-The kick is applied to the velocity at the end of the fixed Yoshida step that
-contains the inbound-to-outbound crossing. The pericenter is estimated by
-interpolating that sign change across the step. The close-encounter guard is
-unchanged: an unresolved step still halts and keeps the last accepted state,
-and this model does not run. Collision modes `perfect_merge`, `speed_angle`, and
-`binary_star_merger` keep the contact solver and do not apply the kick, even
-if a tide policy is stored on the setup.
+The kick is applied to the velocity at the end of the step that contains the
+inbound-to-outbound crossing. The pericenter is estimated by interpolating that
+sign change across the step. On the Yoshida path (`collision_mode='none'`), an
+unresolved step still halts and keeps the last accepted state, and this model
+does not run. On the contact-solver path the same kick applies only to a pair
+that does not become a contact in that step, including in three dimensions and
+on an adaptive macro step. A contacting pair is left to the collision rule.
+That rule is unchanged.
 
-This kick is not a 3D or adaptive-step integrator and it does not call REBOUND (#70).
-A fixed step that skips the pericenter, or that estimates it poorly, understates the energy loss,
+This kick does not call REBOUND (#70).
+A step that skips the pericenter, or that estimates it poorly, understates the energy loss,
 so tides are not the dominant capture path for an unresolved encounter.
-It does not change collision rules (#69): perfect merge, speed and angle, and the binary-star merger still use the contact solver,
-and a stored tide choice is not applied on that path.
+It does not change collision rules (#69): perfect merge, speed and angle, ignore, stop on contact, and the binary-star merger keep their own responses.
 Fragmentation, hit-and-run, and merger remnants are not tidal outcomes.
 Where an impact would dominate, this model is not the capture path.
-It is not gas drag (#71). There is no disk, and a pass outside the tidal reach loses no energy here.
+It is not gas drag (#71). There is no disk in this kick, and a pass outside the tidal reach loses no energy here.
 Gas drag, fragmenting collisions, and a close-encounter integrator can outweigh this kick;
 none of those are implied by a tidal result.
-A longer encounter in this model is still planar, spin-free, and reversible by a later scattering.
-It is not a permanent capture.
+A longer encounter in this model is still spin-free and can be reversed by a later scattering.
+It is not, by itself, a permanent capture.
 
 The documented comparison is catalog Jupiter and catalog Earth, with the Sun
 omitted so the energy change is only this kick. Both runs use the same vectors.

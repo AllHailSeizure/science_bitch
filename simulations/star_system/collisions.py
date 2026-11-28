@@ -4,9 +4,11 @@ No rendering coordinates enter this module. The swept path is each Verlet
 drift's quadratic, not an assertion of exact continuous Newtonian trajectories.
 
 A collision logs its time, participants, rule, and outcome, then the macro step
-finishes. Numerical failure still raises and leaves the caller unchanged.
-Stellar contact is not a nonstellar merge: unless the binary-star scenario
-handles it, the contact is logged as unmodeled and the bodies continue.
+finishes. ``stop_on_contact`` is the exception: that choice ends the run at the
+contact and does not build a remnant. Numerical failure still raises and leaves
+the caller unchanged. Stellar contact is not a nonstellar merge: unless the
+binary-star scenario handles it, or stop on contact was chosen, the contact is
+logged as unmodeled and the bodies continue.
 """
 from dataclasses import dataclass, replace
 import hashlib
@@ -28,7 +30,7 @@ FRAGMENT_KINETIC_RETAINED = 0.25
 ENCOUNTER_FACTOR = 3.
 ORBITAL_ECCENTRICITY_TOLERANCE = 0.02
 ORBITAL_AXIS_RTOL = 0.05
-_DYNAMIC_KINDS = ('merge', 'fragment', 'graze', 'unmodeled', 'absorption', 'stellar_merger')
+_DYNAMIC_KINDS = ('merge', 'fragment', 'graze', 'unmodeled', 'absorption', 'stellar_merger', 'ignored', 'stop')
 
 
 @dataclass(frozen=True)
@@ -56,6 +58,7 @@ class CollisionEvent:
 class AdvanceResult:
     prepared: PreparedSystem
     event_frames: tuple[StateFrame, ...] = ()
+    stopped: bool = False
 
 
 def validate_collision_state(prepared):
@@ -528,12 +531,74 @@ def _absorb_tracers(prepared, absorbed, target_map):
     return prepared
 
 
+def _ignore_contacts(prepared, contacts):
+    """Let the bodies overlap. Masses and velocities stay as the gravity step left them."""
+    specs = dict(zip(prepared.body_ids, prepared.body_specs))
+    stellar = [contact for contact in contacts if specs[contact[1]].kind == 'star' or specs[contact[2]].kind == 'star']
+    if stellar:
+        return _unmodeled_star(prepared, stellar[0])
+    passages = list(prepared.open_passages)
+    events = []
+    system = prepared.system
+    for contact in contacts:
+        ids = tuple(sorted((contact[1], contact[2])))
+        if ids in passages:
+            continue
+        passages.append(ids)
+        i, j, _direction, distance, _speed, _parameter = _impact_geometry(prepared, ids[0], ids[1])
+        origin = .5*(system.r[i]+system.r[j])
+        message = (f'Ignored contact ({_rule_name(prepared)}): {ids[0]} and {ids[1]} overlap at '
+                   f'{distance:.6g} AU. Masses and velocities are unchanged and the run continues.')
+        events.append(CollisionEvent(float(system.time), 'ignored', ids, None, ids, 0., 0., message,
+                                     rule=_rule_name(prepared), outcome='ignored', descendant_ids=ids,
+                                     approach_distance=float(distance),
+                                     location=tuple(float(component) for component in origin)))
+    if not events:
+        return prepared
+    return replace(prepared, events=prepared.events+tuple(events), open_passages=tuple(passages))
+
+
+def _stop_contact(prepared, contacts):
+    """End the run at the first contact. No remnant is built."""
+    contact = min(contacts, key=lambda item: (item[0], tuple(sorted(item[1:]))))
+    first_id, second_id = contact[1], contact[2]
+    i, j, _direction, distance, _speed, _parameter = _impact_geometry(prepared, first_id, second_id)
+    system = prepared.system
+    ids = tuple(sorted((first_id, second_id)))
+    origin = .5*(system.r[i]+system.r[j])
+    message = (f'Stop on contact: {ids[0]} and {ids[1]} met at {float(distance):.6g} AU. '
+               'The run ends at this contact. No remnant is built.')
+    event = CollisionEvent(float(system.time), 'stop', ids, None, ids, 0., 0., message,
+                           rule='stop_on_contact', outcome='stop', descendant_ids=ids,
+                           approach_distance=float(distance),
+                           location=tuple(float(component) for component in origin))
+    return replace(prepared, events=prepared.events+(event,))
+
+
+def _contains_stop(events):
+    return any(isinstance(event, CollisionEvent) and event.kind == 'stop' for event in events)
+
+
+def _contacted_ids(events):
+    contacted = set()
+    for event in events:
+        if isinstance(event, CollisionEvent) and event.kind in (
+                'merge', 'fragment', 'graze', 'unmodeled', 'absorption', 'stellar_merger', 'ignored', 'stop'):
+            contacted.update(key for key in event.parent_ids if isinstance(key, str))
+    return contacted
+
+
 def _respond(prepared, contacts):
     """One disclosed response. Stars are logged and kept unless the #14 scenario handles them."""
     from .stellar_merger import respond_if_stellar_scenario
     handled = respond_if_stellar_scenario(prepared, contacts)
     if handled is not None:
         return handled
+    rule = _rule_name(prepared)
+    if rule == 'ignore':
+        return _ignore_contacts(prepared, contacts)
+    if rule == 'stop_on_contact':
+        return _stop_contact(prepared, contacts)
     masses = dict(zip(prepared.body_ids, prepared.system.masses))
     specs = dict(zip(prepared.body_ids, prepared.body_specs))
     stellar = [contact for contact in contacts if specs[contact[1]].kind == 'star' or specs[contact[2]].kind == 'star']
@@ -747,6 +812,8 @@ def advance_prepared(prepared):
     approaches, resolved = {}, set()
     event_frames = []
     attempts = 0
+    stopped = False
+    initial_events = len(prepared.events)
     while trial.system.time < end:
         trial = _refresh_passages(trial)
         floor = _passage_floor(trial)
@@ -763,6 +830,9 @@ def advance_prepared(prepared):
             _remember_resolved(resolved, trial.events[old_count:])
             event_frames.append(replace(before, event_phase='pre', events=before.events+trial.events[old_count:]))
             event_frames.append(replace(StateFrame.capture(trial), event_phase='post'))
+            if _contains_stop(trial.events[old_count:]):
+                stopped = True
+                break
             continue
         remaining = end-s.time
         limit = s.resolution_limit(floor)
@@ -815,12 +885,19 @@ def advance_prepared(prepared):
             _remember_resolved(resolved, trial.events[old_count:])
             event_frames.append(replace(before, event_phase='pre', events=before.events+trial.events[old_count:]))
             event_frames.append(replace(StateFrame.capture(trial), event_phase='post'))
+            if _contains_stop(trial.events[old_count:]):
+                stopped = True
+                break
         elif remaining == h:
             trial.system.time = end
-    trial = _refresh_passages(trial)
-    _note_approaches(trial, approaches)
-    trial = _append_passage_logs(trial, start_state, approaches, resolved)
-    return AdvanceResult(trial, tuple(event_frames))
+    if not stopped:
+        trial = _refresh_passages(trial)
+        _note_approaches(trial, approaches)
+        if prepared.setup is not None and prepared.setup.tides.enabled:
+            from .tides import dissipate_surviving_passes
+            trial = dissipate_surviving_passes(trial, start_state, _contacted_ids(trial.events[initial_events:]))
+        trial = _append_passage_logs(trial, start_state, approaches, resolved)
+    return AdvanceResult(trial, tuple(event_frames), stopped)
 
 
 def mapped_selection(body_id, events):
