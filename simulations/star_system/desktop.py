@@ -1725,8 +1725,12 @@ class Observatory(QMainWindow):
         super().closeEvent(event)
 
 
-def main():
-    application = QApplication.instance() or QApplication(sys.argv)
+def main(argv=None):
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    from .experiment_file import is_experiment_command, main as experiment_main
+    if is_experiment_command(arguments):
+        return experiment_main(arguments)
+    application = QApplication.instance() or QApplication(sys.argv if argv is None else [sys.argv[0], *arguments])
     application.setApplicationName('Sidereel')
     application.setOrganizationName('Sidereel')
     window = Observatory()
