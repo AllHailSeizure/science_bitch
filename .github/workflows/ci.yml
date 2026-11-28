@@ -4,7 +4,6 @@ on:
   push:
     branches: [master]
   pull_request:
-  # Also started by the automerge workflow after it updates a PR branch that fell behind master.
   workflow_dispatch:
 
 permissions:
