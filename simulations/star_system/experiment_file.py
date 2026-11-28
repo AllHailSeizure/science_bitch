@@ -159,12 +159,15 @@ def write_empty(path):
 
 
 def load_experiment(path):
+    return _decode(_read_document(path))
+
+
+def _read_document(path):
     try:
         with Path(path).open(encoding='utf-8') as handle:
-            document = json.load(handle, object_pairs_hook=_pairs, parse_constant=_reject_constant)
+            return json.load(handle, object_pairs_hook=_pairs, parse_constant=_reject_constant)
     except (OSError, UnicodeError, json.JSONDecodeError, RecursionError) as exc:
         raise ValueError(f'Invalid experiment JSON: {exc}') from exc
-    return _decode(document)
 
 
 def playback_path(source):
@@ -248,8 +251,12 @@ def main(argv=None):
             print(destination)
             return 0
         source = args.build
-        experiment = load_experiment(source)
-        playback = build_experiment(experiment)
+        document = _read_document(source)
+        if isinstance(document, dict) and document.get('schema') == 'sidereel-preset-sweep-v1':
+            from .preset_sweeps import build_preset_playback
+            playback = build_preset_playback(document)
+        else:
+            playback = build_experiment(_decode(document))
         playback['source_name'] = source.name
         destination = playback_path(source)
         _atomic_text(destination, _dumps(playback))

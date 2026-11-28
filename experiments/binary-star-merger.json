@@ -1,0 +1,21 @@
+{
+  "schema": "sidereel-preset-sweep-v1",
+  "preset": "binary-star-merger",
+  "dimensions": 2,
+  "physics": {
+    "collision": "binary_star_merger",
+    "tides": null,
+    "gas_dust_drag": null
+  },
+  "experiment": {
+    "independent_variable": null,
+    "fixed_duration": {
+      "years": 0.005244899395525179
+    },
+    "open_scan": null,
+    "watch_for": [
+      "collision"
+    ]
+  },
+  "proposal": "A sweep of one. There is no swept variable. The duration is the published head-on window."
+}

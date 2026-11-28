@@ -1730,9 +1730,5 @@ def main(argv=None):
     from .experiment_file import is_experiment_command, main as experiment_main
     if is_experiment_command(arguments):
         return experiment_main(arguments)
-    application = QApplication.instance() or QApplication(sys.argv if argv is None else [sys.argv[0], *arguments])
-    application.setApplicationName('Sidereel')
-    application.setOrganizationName('Sidereel')
-    window = Observatory()
-    window.show()
-    return application.exec()
+    from .player_window import launch
+    return launch(arguments)

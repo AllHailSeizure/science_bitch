@@ -1,0 +1,39 @@
+{
+  "schema": "sidereel-experiment-v1",
+  "dimensions": 2,
+  "bodies": {
+    "catalog": [
+      "sun",
+      "mercury",
+      "venus",
+      "earth",
+      "mars",
+      "jupiter",
+      "saturn",
+      "uranus",
+      "neptune"
+    ],
+    "new": null
+  },
+  "physics": {
+    "collision": null,
+    "tides": null,
+    "gas_dust_drag": null
+  },
+  "experiment": {
+    "independent_variable": {
+      "parameter": "mass",
+      "body": "sun",
+      "start": 1.0,
+      "stop": 2.0,
+      "step": 0.1
+    },
+    "fixed_duration": {
+      "years": 1.0
+    },
+    "open_scan": null,
+    "watch_for": [
+      "collision"
+    ]
+  }
+}

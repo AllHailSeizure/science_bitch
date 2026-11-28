@@ -2,7 +2,7 @@
 
 This note is the dimensionality, radius, and close-encounter schedule for late-stage formation. The code is `simulations.star_system.formation`. Gravity is the base. Collision handling, gas drag, and close-pass tides are separate switches on that path. Perfect merge remains the default collision rule and its remnant is unchanged. The inflated planar benchmark and its measurements stay in [formation-feasibility.md](formation-feasibility.md).
 
-The overhead observatory draws planar motion. A three-dimensional sample is refused there instead of being projected. Tree gravity is not in this schedule.
+The overhead view projects a three-dimensional sample onto the horizontal plane, using the first two components, for the 2D plots. It does not draw a perspective render of the third component. Tree gravity is not in this schedule.
 
 ## Dimensionality
 

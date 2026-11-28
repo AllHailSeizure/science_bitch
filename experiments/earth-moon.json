@@ -1,0 +1,27 @@
+{
+  "schema": "sidereel-preset-sweep-v1",
+  "preset": "earth-moon",
+  "dimensions": 2,
+  "physics": {
+    "collision": null,
+    "tides": null,
+    "gas_dust_drag": null
+  },
+  "experiment": {
+    "independent_variable": {
+      "parameter": "mass",
+      "body": "earth",
+      "start": 3.002308307392115e-06,
+      "stop": 3.002308307392115e-06,
+      "step": 3.002308307392115e-06
+    },
+    "fixed_duration": {
+      "years": 1.0
+    },
+    "open_scan": null,
+    "watch_for": [
+      "collision"
+    ]
+  },
+  "proposal": "Earth's mass range is not fixed by the preset. This file is one run at the catalog mass. The Moon stays at 384,400 km."
+}
