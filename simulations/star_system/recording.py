@@ -183,6 +183,7 @@ class Calculation:
         deadline = None if budget_seconds is None else time.perf_counter()+budget_seconds
         advanced = 0
         while not self.done and advanced < max_steps:
+            detail_before = None if self.prepared.system.detail is None else self.prepared.system.detail.copy()
             previous_dt = float(self.prepared.system.dt)
             if self.adaptive:
                 scheduled = adaptive_macro_step(
@@ -231,6 +232,7 @@ class Calculation:
                     previous.r.copy(), previous.v.copy(), previous.time, masses=previous.masses.copy(), dt=previous.dt),
                     body_ids=previous.body_ids,
                     body_specs=previous.body_specs, events=previous.events, reference_ids=previous.reference_ids)
+                self.prepared.system.detail = detail_before
                 self._finish('halted', 'Recording memory budget reached. Reduce duration or body/count settings, '
                              'increase sample stride, or choose a larger budget. Last accepted step retained.')
                 break

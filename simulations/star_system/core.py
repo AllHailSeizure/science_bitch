@@ -78,19 +78,29 @@ class System:
     dt: float
     time: float = 0.
     external_acceleration: object = None
+    # Body-detail and lasting-tide state. Unset on a point-mass run, so the
+    # Newtonian acceleration below is unchanged.
+    detail: object = None
 
     def with_state(self, r, v, time, masses=None, dt=None):
-        """A new system with this state that keeps an attached external acceleration."""
+        """A new system with this state that keeps attached forces and body-detail state."""
         return System(
             self.masses if masses is None else masses,
             r,
             v,
             self.dt if dt is None else dt,
             time,
-            self.external_acceleration,
+            external_acceleration=self.external_acceleration,
+            detail=self.detail,
         )
 
     def accelerations(self, separation_floor=None):
+        gravity = self._newtonian_accelerations(separation_floor)
+        if self.detail is None:
+            return gravity
+        return gravity + self.detail.acceleration(self)
+
+    def _newtonian_accelerations(self, separation_floor=None):
         sources = np.flatnonzero(self.masses > 0)
         delta = self.r[None, sources, :] - self.r[:, None, :]
         d2 = np.sum(delta**2, axis=-1)
@@ -160,6 +170,8 @@ class System:
             self.r[:] = trial.r
             self.v[:] = trial.v
             self.time += self.dt
+            if self.detail is not None:
+                self.detail.advance(self, self.dt)
 
     def invariants(self):
         energy = .5*np.sum(self.masses[:,None]*self.v**2)

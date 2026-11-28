@@ -11,7 +11,7 @@ from collections.abc import Mapping
 import numpy as np
 
 from .model import (
-    CONTACT_SOLVER_MODES, BodySpec, CollisionPolicy, DragPolicy, InitialBody, InitialSetup,
+    CONTACT_SOLVER_MODES, BodyDetailPolicy, LastingTidePolicy, BodySpec, CollisionPolicy, DragPolicy, InitialBody, InitialSetup,
     PopulationSpec, PropertySource, RelativisticPolicy, StellarMassLossPolicy, TidalPolicy,
 )
 from .populations import Population
@@ -106,6 +106,11 @@ def _document(setup):
     # Absent when off, so a drag-free document and its digest stay as they were.
     if setup.drag.enabled:
         document['setup']['drag'] = _record(setup.drag)
+    # Absent at point mass, so a point-mass document and its digest stay as they were.
+    if setup.body_detail.level != 'point_mass':
+        document['setup']['body_detail'] = _record(setup.body_detail)
+    if setup.lasting_tides.enabled:
+        document['setup']['lasting_tides'] = _record(setup.lasting_tides)
     # Absent when off, so a fixed-step document and its digest stay as they were.
     if setup.adaptive:
         document['setup']['adaptive'] = True
@@ -222,6 +227,10 @@ def _decode(document):
         keys.add('tides')
     if type(document['setup']) is dict and 'drag' in document['setup']:
         keys.add('drag')
+    if type(document['setup']) is dict and 'body_detail' in document['setup']:
+        keys.add('body_detail')
+    if type(document['setup']) is dict and 'lasting_tides' in document['setup']:
+        keys.add('lasting_tides')
     if type(document['setup']) is dict and 'adaptive' in document['setup']:
         keys.add('adaptive')
     if type(document['setup']) is dict and 'relativistic' in document['setup']:
@@ -249,6 +258,20 @@ def _decode(document):
         drag = DragPolicy(**raw)
     else:
         drag = DragPolicy()
+    if 'body_detail' in value:
+        raw = _object(value['body_detail'], {field.name for field in fields(BodyDetailPolicy)}, 'Body detail policy')
+        if raw['level'] == 'point_mass':
+            raise ValueError('Omit body_detail to leave the point-mass level.')
+        body_detail = BodyDetailPolicy(**raw)
+    else:
+        body_detail = BodyDetailPolicy()
+    if 'lasting_tides' in value:
+        raw = _object(value['lasting_tides'], {field.name for field in fields(LastingTidePolicy)}, 'Lasting tide policy')
+        if raw['enabled'] is not True:
+            raise ValueError('A stored lasting-tide policy is the enabled model. Omit lasting_tides to leave it off.')
+        lasting_tides = LastingTidePolicy(**raw)
+    else:
+        lasting_tides = LastingTidePolicy()
     if 'adaptive' in value:
         if value['adaptive'] is not True:
             raise ValueError('A stored adaptive step is on. Omit adaptive to leave the fixed step.')
@@ -293,7 +316,7 @@ def _decode(document):
     setup = InitialSetup(value['name'], tuple(bodies), value['dt'], value['preset_id'],
                          population, value['collision_mode'], value['provenance'], policy,
                          source_environment={'numpy': document['environment']['numpy']}, tides=tides, drag=drag,
-                         relativistic=relativistic, stellar_mass_loss=stellar_mass_loss, adaptive=adaptive)
+                         relativistic=relativistic, stellar_mass_loss=stellar_mass_loss, adaptive=adaptive, body_detail=body_detail, lasting_tides=lasting_tides)
     # Validate references, overlap, known masses and numerical resolution before install.
     build_system(setup)
     return setup

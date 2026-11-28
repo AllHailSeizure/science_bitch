@@ -60,7 +60,8 @@ INTERACTION = (
     'Gas drag, fragmenting collisions, and a close-encounter integrator can outweigh this kick; '
     'none of those are implied by a tidal result. '
     'A longer encounter in this model is still spin-free and can be reversed by a later scattering. '
-    'It is not, by itself, a permanent capture.'
+    'It is not, by itself, a permanent capture. '
+    'Lasting tides are a separate module. Both may be on in one run, and when they are, the energy losses add.'
 )
 
 

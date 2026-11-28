@@ -154,6 +154,8 @@ def _shared_dimension(setup):
 
 
 def build_system(setup):
+    from .body_detail import attach, require_runnable
+    require_runnable(setup)
     _shared_dimension(setup)
     _validate_particles(tuple(body.spec for body in setup.bodies))
     bodies = {body.id: body for body in setup.bodies}
@@ -206,6 +208,7 @@ def build_system(setup):
     if system.dt > moon_limit*(1+1e-12):
         raise ValueError(f'Moon timescale unresolved: fixed dt must be <= {moon_limit:.9g} yr (initial relative period / 600).')
     prepared = PreparedSystem(system, ids, specs, setup, reference_ids=references)
+    attach(prepared)
     if setup.collision_mode in CONTACT_SOLVER_MODES:
         from .collisions import validate_collision_state
         validate_collision_state(prepared)
@@ -214,6 +217,9 @@ def build_system(setup):
     return prepared
 
 def insert_body(prepared, body):
+    from .body_detail import INSERT_UNSUPPORTED
+    if prepared.system.detail is not None:
+        raise ValueError(INSERT_UNSUPPORTED)
     if body.id in prepared.body_ids:
         raise ValueError('Body ID already exists; choose a unique instance ID.')
     if body.spec.mass is None:

@@ -16,6 +16,7 @@ together on the combined formation path. Post-Newtonian terms are
 modules run on that path and on the Yoshida path. Outside pulls are an opt-in
 galactic tide plus optional seeded stellar flybys, off unless the physics
 section stores them, and they run only in three dimensions.
+Body detail and lasting tides are separate opt-in keys in the same physics section.
 """
 import argparse
 import json
@@ -62,7 +63,7 @@ _CONTACT_KINDS = {
 _MAX_RUNS = 100
 _DOCUMENT_KEYS = ('schema', 'dimensions', 'bodies', 'physics', 'experiment')
 _BODY_KEYS = ('catalog', 'new')
-_PHYSICS_KEYS = ('collision', 'tides', 'gas_dust_drag', 'relativistic_corrections', 'stellar_mass_loss', 'outside_pulls')
+_PHYSICS_KEYS = ('collision', 'tides', 'gas_dust_drag', 'relativistic_corrections', 'stellar_mass_loss', 'outside_pulls', 'body_detail', 'lasting_tides')
 _EXPERIMENT_KEYS = ('independent_variable', 'fixed_duration', 'open_scan', 'watch_for')
 _SWEEP_KEYS = ('parameter', 'body', 'start', 'stop', 'step')
 _SCAN_VARIABLE_KEYS = ('parameter', 'body', 'start')
@@ -88,6 +89,7 @@ def empty_experiment():
             'relativistic_corrections': None,
             'stellar_mass_loss': None,
             'outside_pulls': None,
+            'body_detail': None, 'lasting_tides': None,
         },
         'experiment': {
             'independent_variable': None,
@@ -143,6 +145,8 @@ class Experiment:
     years: float | None
     scan: _Scan | None
     watch_for: tuple[str, ...]
+    body_detail: str | None
+    lasting_tides: bool | None
     adaptive: bool = False
     outside: object | None = None
 
@@ -174,6 +178,7 @@ class Experiment:
                 'relativistic_corrections': self.relativistic_corrections,
                 'stellar_mass_loss': self.stellar_mass_loss,
                 'outside_pulls': None if self.outside is None else self.outside.document(),
+                'body_detail': self.body_detail, 'lasting_tides': self.lasting_tides,
             },
             'experiment': self._experiment_section(),
         }
@@ -336,16 +341,18 @@ def _decode(document):
         raise ValueError(f'Unsupported experiment schema. Expected {EXPERIMENT_SCHEMA}.')
     dimensions = _dimensions(document['dimensions'])
     catalog = _bodies(document['bodies'])
-    collision, tides, drag, relativistic, mass_loss, outside = _physics(document['physics'])
+    collision, tides, drag, relativistic, mass_loss, outside, body_detail, lasting = _physics(document['physics'])
     if outside is not None and dimensions != 3:
         raise ValueError(
             'Outside pulls are a three-dimensional galactic field for very wide orbits. Choose dimensions 3.')
+    from .body_detail import require_experiment_selection
+    require_experiment_selection(body_detail, lasting is True, dimensions, collision)
     variable, years, scan, watch, adaptive = _details(document['experiment'])
     if variable is not None and variable.body not in catalog:
         raise ValueError(f'independent_variable.body {variable.body!r} is not in bodies.catalog.')
     return Experiment(
         dimensions, catalog, collision, tides, drag, relativistic, mass_loss,
-        variable, years, scan, watch, adaptive, outside)
+        variable, years, scan, watch, body_detail, lasting, adaptive, outside)
 
 
 def _dimensions(value):
@@ -403,7 +410,7 @@ def _physics(value):
         raise ValueError('Physics: expected an object.')
     # Older files omit the later modules. A missing key is off. --new still writes every key.
     filled = dict(value)
-    for key in ('relativistic_corrections', 'stellar_mass_loss', 'outside_pulls'):
+    for key in ('relativistic_corrections', 'stellar_mass_loss', 'outside_pulls', 'body_detail', 'lasting_tides'):
         filled.setdefault(key, None)
     _object(filled, _PHYSICS_KEYS, 'Physics')
     value = filled
@@ -421,7 +428,17 @@ def _physics(value):
     relativistic = _optional_bool(value['relativistic_corrections'], 'physics.relativistic_corrections')
     mass_loss = _optional_bool(value['stellar_mass_loss'], 'physics.stellar_mass_loss')
     outside = parse_outside_pulls(value['outside_pulls'])
-    return collision, tides, drag, relativistic, mass_loss, outside
+    body_detail = _body_detail(value['body_detail'])
+    lasting = _optional_bool(value['lasting_tides'], 'physics.lasting_tides')
+    return collision, tides, drag, relativistic, mass_loss, outside, body_detail, lasting
+
+
+def _body_detail(value):
+    if value is None:
+        return None
+    if type(value) is str and value in ('point_mass', 'fixed_oblateness', 'spin'):
+        return value
+    raise ValueError("physics.body_detail must be null, 'point_mass', 'fixed_oblateness', or 'spin'.")
 
 
 def _details(value):
@@ -508,8 +525,10 @@ def _variable(value, keys, increment):
 
 
 def _uses_combined_path(experiment):
-    """Drag, or tides with a contact rule or a 3D state, uses the formation path."""
+    """Drag, tides with a contact rule or a 3D state, or a 3D body-detail level, uses formation."""
     if experiment.drag_on:
+        return True
+    if experiment.lasting_tides is True or (experiment.body_detail not in (None, 'point_mass') and experiment.dimensions == 3):
         return True
     if not experiment.tides_on:
         return False
@@ -554,9 +573,13 @@ def _setup_for_value(experiment, base, value):
     setup = base
     if experiment.variable is not None:
         setup = _apply_variable(setup, experiment.variable.parameter, experiment.variable.body, value)
+    from .body_detail import resolved_level
+    from .model import BodyDetailPolicy, LastingTidePolicy
     mode = _engine_mode(experiment)
     tides = TidalPolicy(enabled=True) if experiment.tides_on else TidalPolicy()
     drag = DragPolicy(enabled=True) if experiment.drag_on else DragPolicy()
+    detail = BodyDetailPolicy(resolved_level(experiment.body_detail))
+    lasting = LastingTidePolicy(enabled=experiment.lasting_tides is True)
     relativistic = RelativisticPolicy(enabled=True) if experiment.relativistic_on else RelativisticPolicy()
     mass_loss = StellarMassLossPolicy(enabled=True) if experiment.mass_loss_on else StellarMassLossPolicy()
     probed = build_system(replace(setup, dt=1e-12, collision_mode='none', tides=TidalPolicy()))
@@ -571,7 +594,7 @@ def _setup_for_value(experiment, base, value):
         raise ValueError('The varied initial state has no usable fixed step.')
     prepared = replace(
         setup, dt=dt, collision_mode=mode, tides=tides, drag=drag,
-        relativistic=relativistic, stellar_mass_loss=mass_loss, adaptive=experiment.adaptive)
+        relativistic=relativistic, stellar_mass_loss=mass_loss, adaptive=experiment.adaptive, body_detail=detail, lasting_tides=lasting)
     build_system(prepared)
     return prepared
 
@@ -788,11 +811,21 @@ def _physics_report(experiment, runs):
         note += ' Stellar mass loss is off, so stellar masses, including a merger remnant, stay constant.'
     if experiment.outside is not None:
         note += ' Outside pulls are on along the 3D path.'
+    from .body_detail import resolved_level
+    level = resolved_level(experiment.body_detail)
+    lasting_on = experiment.lasting_tides is True
+    note += f' Body detail is {level}.'
+    if lasting_on:
+        note += ' Lasting tides are on (constant-time-lag-v1).'
+    if experiment.tides_on and lasting_on:
+        note += ' Close-pass tides and lasting tides are both on. Their energy losses add.'
     return {
         'collision': mode,
         'engine_collision_mode': engine,
         'tides': experiment.tides_on,
         'gas_dust_drag': experiment.drag_on if combined else False,
+        'body_detail': level,
+        'lasting_tides': lasting_on,
         'adaptive': experiment.adaptive,
         'relativistic_corrections': experiment.relativistic_on,
         'stellar_mass_loss': experiment.mass_loss_on,
