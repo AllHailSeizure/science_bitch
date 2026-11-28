@@ -8,7 +8,7 @@ from types import MappingProxyType
 
 import numpy as np
 
-from .core import ADAPTIVE_DT_MIN, ADAPTIVE_GROWTH, System, adaptive_floor_reason, adaptive_macro_step
+from .core import ADAPTIVE_DT_MIN, ADAPTIVE_GROWTH, adaptive_floor_reason, adaptive_macro_step
 from .history import StateFrame
 from .initialization import build_system
 from .persistence import SOLVER_BUILD, _current_environment, setup_digest
@@ -226,8 +226,10 @@ class Calculation:
             if self._bytes + required > self.request.max_bytes:
                 previous = self._checkpoint
                 from dataclasses import replace
-                self.prepared = replace(self.prepared, system=System(previous.masses.copy(), previous.r.copy(),
-                    previous.v.copy(), previous.dt, previous.time), body_ids=previous.body_ids,
+                live = self.prepared.system
+                self.prepared = replace(self.prepared, system=live.with_state(
+                    previous.r.copy(), previous.v.copy(), previous.time, masses=previous.masses.copy(), dt=previous.dt),
+                    body_ids=previous.body_ids,
                     body_specs=previous.body_specs, events=previous.events, reference_ids=previous.reference_ids)
                 self._finish('halted', 'Recording memory budget reached. Reduce duration or body/count settings, '
                              'increase sample stride, or choose a larger budget. Last accepted step retained.')
