@@ -10,7 +10,10 @@ from collections.abc import Mapping
 
 import numpy as np
 
-from .model import BodySpec, InitialBody, InitialSetup, PopulationSpec, PropertySource, CollisionPolicy, TidalPolicy
+from .model import (
+    CONTACT_SOLVER_MODES, BodySpec, CollisionPolicy, DragPolicy, InitialBody, InitialSetup,
+    PopulationSpec, PropertySource, TidalPolicy,
+)
 from .populations import Population
 from .initialization import build_system
 
@@ -49,7 +52,7 @@ def _population(pop):
 
 def _numerical_version(setup):
     # Physical contact modes share the positive-time Verlet solver. Mode none stays on Yoshida.
-    if setup.collision_mode in ('perfect_merge', 'speed_angle', 'binary_star_merger'):
+    if setup.collision_mode in CONTACT_SOLVER_MODES:
         return setup.collision_policy.numerical
     return NUMERICAL_VERSION
 
@@ -98,6 +101,9 @@ def _document(setup):
     # Absent when off, so a tide-free document and its digest stay as they were.
     if setup.tides.enabled:
         document['setup']['tides'] = _record(setup.tides)
+    # Absent when off, so a drag-free document and its digest stay as they were.
+    if setup.drag.enabled:
+        document['setup']['drag'] = _record(setup.drag)
     return document
 
 
@@ -203,11 +209,13 @@ def _decode(document):
         keys.add('collision_policy')
     if type(document['setup']) is dict and 'tides' in document['setup']:
         keys.add('tides')
+    if type(document['setup']) is dict and 'drag' in document['setup']:
+        keys.add('drag')
     value = _object(document['setup'], keys, 'Setup')
     _string(value['name'], 'Setup name')
     _string(value['preset_id'], 'Preset ID', nullable=True)
     _string(value['collision_mode'], 'Collision mode')
-    if value['collision_mode'] in ('perfect_merge', 'speed_angle', 'binary_star_merger') and 'collision_policy' not in value:
+    if value['collision_mode'] in CONTACT_SOLVER_MODES and 'collision_policy' not in value:
         raise ValueError('Physical collision mode requires an explicit versioned collision policy.')
     policy = CollisionPolicy(**_object(value['collision_policy'], {field.name for field in fields(CollisionPolicy)}, 'Collision policy')) if 'collision_policy' in value else CollisionPolicy()
     if 'tides' in value:
@@ -217,7 +225,14 @@ def _decode(document):
         tides = TidalPolicy(**raw)
     else:
         tides = TidalPolicy()
-    contact = value['collision_mode'] in ('perfect_merge', 'speed_angle', 'binary_star_merger')
+    if 'drag' in value:
+        raw = _object(value['drag'], {field.name for field in fields(DragPolicy)}, 'Drag policy')
+        if raw['enabled'] is not True:
+            raise ValueError('A stored drag policy is the enabled model. Omit drag to leave drag off.')
+        drag = DragPolicy(**raw)
+    else:
+        drag = DragPolicy()
+    contact = value['collision_mode'] in CONTACT_SOLVER_MODES
     if document['numerical_version'] != (policy.numerical if contact else NUMERICAL_VERSION):
         raise ValueError('Unsupported numerical_version for selected collision mode.')
     _number(value['dt'], 'Fixed dt', positive=True)
@@ -237,7 +252,7 @@ def _decode(document):
                                   _string(body['reference_id'], 'Body reference', nullable=True)))
     setup = InitialSetup(value['name'], tuple(bodies), value['dt'], value['preset_id'],
                          _decode_population(value['population']), value['collision_mode'], value['provenance'], policy,
-                         source_environment={'numpy': document['environment']['numpy']}, tides=tides)
+                         source_environment={'numpy': document['environment']['numpy']}, tides=tides, drag=drag)
     # Validate references, overlap, known masses and numerical resolution before install.
     build_system(setup)
     return setup
