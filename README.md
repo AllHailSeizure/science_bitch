@@ -60,7 +60,7 @@ sidereel --new experiment.json
 sidereel --build experiment.json
 ```
 
-`--new` writes a blank experiment: dimensions, gravity, catalog bodies, opt-in physics, and the run. Edit that file, then `--build` checks it and writes `experiment.sidereel` beside it. The playback file holds the samples and duration for one run, or for each run of a sweep or an open scan. Starting `sidereel` with no arguments still opens the desktop. `sidereel-cli` still renders a catalog system, and it accepts the same two commands.
+`--new` writes a blank experiment: dimensions, catalog bodies, opt-in physics, and the run. Newtonian gravity is what Sidereel uses. Edit that file, then `--build` checks it and writes `experiment.sidereel` beside it. The playback file holds the samples and duration for one run, or for each run of a sweep or an open scan. Starting `sidereel` with no arguments still opens the desktop. `sidereel-cli` still renders a catalog system, and it accepts the same two commands.
 
 You get the experiment list, including the Solar System and a Sun–Jupiter ring. Save initial setup stores the beginning. Save current state as new setup stores the evolved system under a new name. `sidereel-cli` with no arguments opens the same window.
 

@@ -150,7 +150,6 @@ def test_three_dimensional_sweep_keeps_the_shared_base_and_duration(tmp_path):
     source.write_text(json.dumps({
         'schema': 'sidereel-experiment-v1',
         'dimensions': 3,
-        'gravity_model': 'newtonian',
         'bodies': {'catalog': ['sun', 'earth', 'jupiter'], 'new': None},
         'physics': {'collision': None, 'tides': False, 'gas_dust_drag': False},
         'experiment': {
@@ -188,7 +187,6 @@ def test_experiment_file_can_select_the_adaptive_step(tmp_path):
     document = {
         'schema': 'sidereel-experiment-v1',
         'dimensions': 3,
-        'gravity_model': 'newtonian',
         'bodies': {'catalog': ['sun', 'earth'], 'new': None},
         'physics': {'collision': None, 'tides': False, 'gas_dust_drag': False},
         'experiment': {
